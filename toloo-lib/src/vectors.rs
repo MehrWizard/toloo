@@ -49,10 +49,7 @@ pub const EPH_PRIV_SEED_HEX: &str =
 // ---- Helpers ----
 
 pub fn hex_to_bytes(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-        .collect()
+    crate::hex::decode(s).expect("vector hex must be valid")
 }
 
 fn x25519_pub_from_seed_hex(seed_hex: &str) -> Vec<u8> {

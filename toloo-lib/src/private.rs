@@ -114,7 +114,7 @@ mod tests {
     
     // Helper: derive X25519 public key from a 32-byte seed.
     fn x25519_pub_from_seed(seed_hex: &str) -> (String, String) {
-        let priv_bytes: [u8; 32] = crate::vectors::hex_to_bytes(seed_hex).try_into().unwrap();
+        let priv_bytes: [u8; 32] = crate::hex::decode(seed_hex).unwrap().try_into().unwrap();
         let pub_b64 = crate::base64url::encode(&crate::crypto::x25519_pub_from_seed(&priv_bytes));
         let priv_b64 = crate::base64url::encode(&priv_bytes);
         (pub_b64, priv_b64)

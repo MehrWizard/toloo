@@ -25,6 +25,16 @@ git. Current remaining work, in priority order:
 - [ ] `toloo-js` `selfTest()` against the regenerated Appendix E vectors
       (the JS client still has zero tests)
 
+## Design gap: app relay identity is not persistent
+
+The app generates a fresh relay keypair and a fresh self-signed TLS cert
+on every relay start. Consequences: every saved invite URI breaks on
+restart, TOFU cert pinning never stabilizes, and relay trust history
+(attestations) resets. Fix direction: persist the relay identity per
+relay config (generated once, stored — ideally passphrase-wrapped via
+keystore), and derive the TLS cert deterministically from it so the
+fingerprint is stable.
+
 ## Notes
 
 - `Trust/attestations`, `room.flag`, and blob pieces are implemented stubs,
