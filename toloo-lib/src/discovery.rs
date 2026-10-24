@@ -63,11 +63,10 @@ fn encode_segments(envelopes: &[Envelope]) -> Result<Vec<String>> {
 /// Returns only envelopes that pass signature verification.
 /// Returns an error if no valid envelopes are found.
 pub fn decode(input: &str) -> Result<Vec<Envelope>> {
-    let normalized = if input.starts_with(URI_PREFIX) {
-        input[URI_PREFIX.len()..].replace('.', "\n")
-    } else {
-        input.to_owned()
-    };
+    let normalized = input
+        .strip_prefix(URI_PREFIX)
+        .unwrap_or(input)
+        .replace('.', "\n");
 
     let mut results = Vec::new();
     for line in normalized.lines() {
@@ -76,13 +75,13 @@ pub fn decode(input: &str) -> Result<Vec<Envelope>> {
             continue;
         }
         let bytes = base64url::decode(line)
-            .with_context(|| format!("base64url decode failed for segment"))?;
+            .with_context(|| "base64url decode failed for segment".to_string())?;
         let value: serde_json::Value = serde_json::from_slice(&bytes)
-            .with_context(|| format!("JSON parse failed for segment"))?;
+            .with_context(|| "JSON parse failed for segment".to_string())?;
         let env = parse_envelope(value)
-            .with_context(|| format!("envelope parse failed for segment"))?;
+            .with_context(|| "envelope parse failed for segment".to_string())?;
         verify_chain(&env)
-            .with_context(|| format!("signature verification failed for segment"))?;
+            .with_context(|| "signature verification failed for segment".to_string())?;
         results.push(env);
     }
 

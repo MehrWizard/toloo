@@ -1,7 +1,6 @@
 /// Hexadecimal encoding/decoding — self-implemented, no external dependency.
 ///
 /// `encode` produces lowercase hex. `decode` accepts both upper and lower case.
-
 const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
 
 fn hex_val(c: u8) -> Option<u8> {
@@ -27,13 +26,13 @@ pub fn encode<T: AsRef<[u8]>>(input: T) -> String {
 /// Decode a hexadecimal string to bytes.
 /// Accepts both upper and lower case hex digits.
 pub fn decode(s: &str) -> anyhow::Result<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         anyhow::bail!("hex string has odd length");
     }
 
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len() / 2);
-    for chunk in bytes.chunks_exact(2) {
+    for chunk in bytes.as_chunks::<2>().0 {
         let hi = hex_val(chunk[0]).ok_or_else(|| anyhow::anyhow!("invalid hex character: {:?}", chunk[0] as char))?;
         let lo = hex_val(chunk[1]).ok_or_else(|| anyhow::anyhow!("invalid hex character: {:?}", chunk[1] as char))?;
         out.push((hi << 4) | lo);

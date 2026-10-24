@@ -31,6 +31,9 @@ use crate::ids::{channel_of, datum_id};
 use crate::rules::RuleSet;
 use crate::types::Envelope;
 
+/// A blocklist row: (node_pub, kind, reason, blocked_at).
+pub type BlocklistEntry = (String, String, Option<String>, u64);
+
 pub struct Pool {
     state: RwLock<PoolState>,
     persist: Option<Persist>,
@@ -301,12 +304,10 @@ impl Pool {
                 .truncate(true)
                 .open(&tmp)
                 .with_context(|| format!("failed to open {}", tmp.display()))?;
-            for slot in &state.events {
-                if let Some(entry) = slot {
-                    let json = canonical(&entry.env)?;
-                    f.write_all(json.as_bytes())?;
-                    f.write_all(b"\n")?;
-                }
+            for entry in state.events.iter().flatten() {
+                let json = canonical(&entry.env)?;
+                f.write_all(json.as_bytes())?;
+                f.write_all(b"\n")?;
             }
             f.flush()?;
         }
@@ -405,7 +406,7 @@ impl Pool {
         let state = self.read().map_err(lock_err)?;
         Ok(state.events.iter().filter_map(|s| s.as_ref())
             .filter(|e| e.room.as_deref() == Some(room))
-            .filter(|e| e.channel.map_or(false, |c| c < 0))
+            .filter(|e| e.channel.is_some_and(|c| c < 0))
             .filter_map(|e| e.tc)
             .max()
             .unwrap_or(0))
@@ -707,13 +708,12 @@ impl Pool {
     }
 
     /// Get all blocked nodes.
-    pub fn get_blocklist(&self) -> Result<Vec<(String, String, Option<String>, u64)>> {
+    pub fn get_blocklist(&self) -> Result<Vec<BlocklistEntry>> {
         let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<(String, String, Option<String>, u64)> =
-            state.meta.blocklist.iter()
-                .map(|(k, v)| (k.clone(), v.kind.clone(), v.reason.clone(), v.blocked_at))
-                .collect();
-        out.sort_by(|a, b| b.3.cmp(&a.3));
+        let mut out: Vec<BlocklistEntry> = state.meta.blocklist.iter()
+            .map(|(k, v)| (k.clone(), v.kind.clone(), v.reason.clone(), v.blocked_at))
+            .collect();
+        out.sort_by_key(|(_, _, _, at)| std::cmp::Reverse(*at));
         Ok(out)
     }
 
@@ -854,7 +854,7 @@ impl Pool {
             let mut state = self.write().map_err(lock_err)?;
             let ids: Vec<String> = state.events.iter().filter_map(|s| s.as_ref())
                 .filter(|e| {
-                    let is_system = e.channel.map_or(false, |c| c < 0);
+                    let is_system = e.channel.is_some_and(|c| c < 0);
                     e.room.as_deref() == Some(room) && !is_system && e.ts < threshold
                 })
                 .map(|e| e.id.clone())
@@ -978,7 +978,7 @@ fn cmp_ts_id(a: &PoolEntry, b: &PoolEntry) -> std::cmp::Ordering {
 /// Returns an empty `RuleSet` if no metadata exists yet.
 pub fn ruleset_from_pool(pool: &Pool, room: &str) -> Result<RuleSet> {
     let meta_events = pool.get_room_channel(room, -1)?;
-    let latest_committed = meta_events.iter().filter(|e| e.tc.is_some()).last();
+    let latest_committed = meta_events.iter().rev().find(|e| e.tc.is_some());
     let Some(entry) = latest_committed else {
         return Ok(RuleSet::default());
     };

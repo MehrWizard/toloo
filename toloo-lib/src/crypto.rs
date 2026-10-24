@@ -14,8 +14,7 @@ const PRIVATE_INFO: &[u8] = b"toloo-private-v0.2";
 
 /// Generate an Ed25519 keypair (public key, seed).
 pub fn ed25519_generate() -> (Vec<u8>, Vec<u8>) {
-    let mut rng = OsRng;
-    let signing = SigningKey::generate(&mut rng);
+    let signing = SigningKey::generate(&mut OsRng);
     let verifying = signing.verifying_key();
     (verifying.to_bytes().to_vec(), signing.to_bytes().to_vec())
 }
@@ -51,8 +50,7 @@ pub fn ed25519_verify(message: &[u8], sig: &[u8], pub_key: &[u8]) -> Result<()> 
 
 /// Generate an X25519 keypair (public key, private key).
 pub fn x25519_generate() -> (Vec<u8>, Vec<u8>) {
-    let mut rng = OsRng;
-    let secret = StaticSecret::random_from_rng(&mut rng);
+    let secret = StaticSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
     (public.as_bytes().to_vec(), secret.to_bytes().to_vec())
 }

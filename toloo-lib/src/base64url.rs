@@ -2,7 +2,6 @@
 ///
 /// Self-implemented — no external `base64ct` dependency. Uses the alphabet
 /// `A-Za-z0-9-_` and emits no `=` padding.
-
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 fn char_val(c: u8) -> Option<u32> {
@@ -18,7 +17,7 @@ fn char_val(c: u8) -> Option<u32> {
 
 /// URL-safe base64 encoding without padding.
 pub fn encode(input: &[u8]) -> String {
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     let mut i = 0;
     let len = input.len();
 

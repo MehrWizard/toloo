@@ -274,7 +274,7 @@ fn handle_node_rooms(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
             responses.push(to_envelope_json(&entry.env));
         }
         // Also return the latest room.update if any (last channel -1 after create).
-        if let Some(latest) = meta_events.iter().filter(|e| e.tc.is_some()).last() {
+        if let Some(latest) = meta_events.iter().rev().find(|e| e.tc.is_some()) {
             let latest_val = to_envelope_json(&latest.env);
             if !responses.contains(&latest_val) {
                 responses.push(latest_val);
@@ -354,8 +354,8 @@ fn handle_room_summary(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> 
         let meta = pool.get_room_channel(room_pub, -1)?;
         let name = meta
             .iter()
-            .filter(|e| e.tc.is_some())
-            .last()
+            .rev()
+            .find(|e| e.tc.is_some())
             .and_then(|e| innermost(&e.env).d.c.as_ref())
             .and_then(|c| c.get("name"))
             .and_then(Value::as_str)

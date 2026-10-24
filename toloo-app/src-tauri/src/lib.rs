@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use toloo_lib::pool::BlocklistEntry;
 use toloo_lib::types::{LocalNode, LocalRoom};
 use toloo_lib::transport::server::RelayMetrics;
 
@@ -117,12 +118,12 @@ impl AppDb {
         Ok(removed)
     }
 
-    pub fn get_blocklist(&self) -> Result<Vec<(String, String, Option<String>, u64)>, String> {
+    pub fn get_blocklist(&self) -> Result<Vec<BlocklistEntry>, String> {
         let cfg = self.state.lock().unwrap();
-        let mut out: Vec<(String, String, Option<String>, u64)> = cfg.blocklist.iter()
+        let mut out: Vec<BlocklistEntry> = cfg.blocklist.iter()
             .map(|b| (b.node_pub.clone(), b.kind.clone(), b.reason.clone(), b.blocked_at))
             .collect();
-        out.sort_by(|a, b| b.3.cmp(&a.3));
+        out.sort_by_key(|(_, _, _, at)| std::cmp::Reverse(*at));
         Ok(out)
     }
 
@@ -373,8 +374,8 @@ mod commands {
         // Persist the room key so local relays can auto-commit events for this room.
         state.rooms.lock().unwrap().insert(room.sig.pub_key.clone(), room.clone());
 
-        let invite_uri    = discovery_encode_uri(&[committed.clone()]).map_err(to_err)?;
         let committed_json = serialize_env(&committed)?;
+        let invite_uri    = discovery_encode_uri(&[committed]).map_err(to_err)?;
         Ok((room.sig.pub_key.clone(), committed_json, invite_uri))
     }
 
@@ -632,8 +633,8 @@ mod commands {
         }
 
         // ws:// or wss:// — WebSocket path.
-        let (mut ws, _) = connect_async(&relay_url).await.map_err(to_err)?;
-        ws.send(Message::Text(request_json.into())).await.map_err(to_err)?;
+        let (mut ws, _) = connect_async(relay_url.clone()).await.map_err(to_err)?;
+        ws.send(Message::Text(request_json)).await.map_err(to_err)?;
 
         let mut results = Vec::new();
         while let Some(msg) = ws.next().await {
