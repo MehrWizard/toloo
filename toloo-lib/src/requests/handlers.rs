@@ -21,10 +21,11 @@ use serde_json::{json, Value};
 
 use crate::envelope::{depth, innermost, make_envelope, parse_envelope, verify_chain, wrap_commit};
 use crate::ids::{datum_id, eid};
-use crate::pow::verify_pow;
-use crate::types::Envelope;
 use crate::pool::{ruleset_from_pool, Pool};
+use crate::rules::string_array;
+use crate::pow::verify_pow;
 use crate::transport::server::RelayConfig;
+use crate::types::Envelope;
 
 const DEFAULT_LIMIT: usize = 200;
 const MAX_LIMIT: usize = 1000;
@@ -50,16 +51,19 @@ pub async fn handle_request(
 
     let d = &innermost(&envelope).d;
     let responses = match d.t.as_str() {
-        "events.sync"   => handle_events_sync(d.c.as_ref(), pool),
-        "room.sync"     => handle_room_sync(d.c.as_ref(), pool),
-        "room.compare"  => handle_room_compare(d.c.as_ref(), pool, config),
+        "events.sync" => handle_events_sync(d.c.as_ref(), pool),
+        "room.sync" => handle_room_sync(d.c.as_ref(), pool),
+        "room.compare" => handle_room_compare(d.c.as_ref(), pool, config),
         "pool.exchange" => handle_pool_exchange(d.c.as_ref(), pool, config),
-        "node.peers"    => handle_node_peers(d.c.as_ref(), pool),
-        "node.rooms"    => handle_node_rooms(d.c.as_ref(), pool),
-        "system.fetch"  => handle_system_fetch(d.c.as_ref(), pool),
-        "blob.fetch"    => handle_blob_fetch(d.c.as_ref(), pool),
-        "room.summary"  => handle_room_summary(d.c.as_ref(), pool, config),
-        _ => Ok(vec![error("invalid_request", &format!("unknown endpoint: {}", d.t))]),
+        "node.peers" => handle_node_peers(d.c.as_ref(), pool),
+        "node.rooms" => handle_node_rooms(d.c.as_ref(), pool),
+        "system.fetch" => handle_system_fetch(d.c.as_ref(), pool),
+        "blob.fetch" => handle_blob_fetch(d.c.as_ref(), pool),
+        "room.summary" => handle_room_summary(d.c.as_ref(), pool, config),
+        _ => Ok(vec![error(
+            "invalid_request",
+            &format!("unknown endpoint: {}", d.t),
+        )]),
     };
 
     responses
@@ -89,7 +93,10 @@ fn handle_room_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
     let limit = clamp_limit(c.get("limit").and_then(Value::as_u64));
 
     let entries = pool.get_room_channel_range(room, channel, start_tc, end_tc, limit)?;
-    let mut out: Vec<Value> = entries.into_iter().map(|e| to_envelope_json(&e.env)).collect();
+    let mut out: Vec<Value> = entries
+        .into_iter()
+        .map(|e| to_envelope_json(&e.env))
+        .collect();
     // Room watermark, first in the response: latest commit time across
     // room-internal channels (ch < 0). Advisory — clients compare against
     // their known value to detect a stale room-state view (§5). Enforcement
@@ -106,7 +113,12 @@ fn handle_room_compare(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> 
     let channel = c.get("channel").and_then(Value::as_i64).unwrap_or(0) as i32;
     let samples = match c.get("samples").and_then(Value::as_array) {
         Some(s) => s,
-        None => return Ok(vec![error("invalid_request", "room.compare requires c.samples")]),
+        None => {
+            return Ok(vec![error(
+                "invalid_request",
+                "room.compare requires c.samples",
+            )])
+        }
     };
 
     // Get the max seq requested so we know how many events to fetch.
@@ -120,10 +132,7 @@ fn handle_room_compare(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> 
     let entries = pool.get_room_channel_range(room, channel, 0, None, max_seq + 1)?;
 
     // Build seq→eid map (seq is 1-based position in tc-ordered list).
-    let local_eids: Vec<String> = entries
-        .iter()
-        .map(|e| eid(&e.env))
-        .collect();
+    let local_eids: Vec<String> = entries.iter().map(|e| eid(&e.env)).collect();
 
     // Compare samples: note matches and mismatches.
     let mut match_results: Vec<Value> = Vec::new();
@@ -154,7 +163,11 @@ fn handle_room_compare(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> 
 
 // ---- §10.8.1 pool.exchange ----
 
-fn handle_pool_exchange(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> Result<Vec<Value>> {
+fn handle_pool_exchange(
+    c: Option<&Value>,
+    pool: &Pool,
+    config: &RelayConfig,
+) -> Result<Vec<Value>> {
     let c = require_object(c, "pool.exchange")?;
     let mut offered_ids: HashSet<String> = HashSet::new();
 
@@ -291,10 +304,16 @@ fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
     let c = require_object(c, "system.fetch")?;
     let ids = string_array(c.get("datum_ids"));
     if ids.is_empty() {
-        return Ok(vec![error("invalid_request", "system.fetch requires c.datum_ids")]);
+        return Ok(vec![error(
+            "invalid_request",
+            "system.fetch requires c.datum_ids",
+        )]);
     }
     if ids.len() > MAX_FETCH_IDS {
-        return Ok(vec![error("payload_too_large", &format!("datum_ids limit is {MAX_FETCH_IDS}"))]);
+        return Ok(vec![error(
+            "payload_too_large",
+            &format!("datum_ids limit is {MAX_FETCH_IDS}"),
+        )]);
     }
 
     let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
@@ -345,7 +364,10 @@ fn handle_room_summary(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> 
     let c = require_object(c, "room.summary")?;
     let rooms = string_array(c.get("rooms"));
     if rooms.is_empty() {
-        return Ok(vec![error("invalid_request", "room.summary requires c.rooms")]);
+        return Ok(vec![error(
+            "invalid_request",
+            "room.summary requires c.rooms",
+        )]);
     }
 
     let mut responses: Vec<Value> = Vec::new();
@@ -416,7 +438,8 @@ fn maybe_commit(env: Envelope, pool: &Pool, config: &RelayConfig) -> Envelope {
     // Validate against room rules — but only when the pool has committed metadata.
     // If the pool has no room.create yet (relay just started, room.create not synced yet),
     // the key-holder has implicit authority and we skip the check rather than deny everything.
-    let has_committed_meta = pool.get_room_channel(&room_pub, -1)
+    let has_committed_meta = pool
+        .get_room_channel(&room_pub, -1)
         .map(|v| v.iter().any(|e| e.tc.is_some()))
         .unwrap_or(false);
     if has_committed_meta && validate_room_rules(&env, &room_pub, pool).is_err() {
@@ -458,7 +481,11 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
 
     // Administrative events skip content rules (key holder controls these directly).
     const ADMIN_EVENTS: &[&str] = &[
-        "room.create", "room.update", "room.ban", "room.unban", "room.invite",
+        "room.create",
+        "room.update",
+        "room.ban",
+        "room.unban",
+        "room.invite",
     ];
     if ADMIN_EVENTS.contains(&event_type) {
         return Ok(());
@@ -485,7 +512,10 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
                 let has_invite = ch_minus2.iter().any(|e| {
                     let inner_e = innermost(&e.env);
                     inner_e.d.t == "room.invite"
-                        && inner_e.d.c.as_ref()
+                        && inner_e
+                            .d
+                            .c
+                            .as_ref()
                             .and_then(|c| c.get("node"))
                             .and_then(|v| v.as_str())
                             == Some(author.as_str())
@@ -539,7 +569,10 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
 
 /// Serialize pool entries as the JSON envelope stream a response carries.
 fn envelopes_json(entries: Vec<crate::pool::PoolEntry>) -> Vec<Value> {
-    entries.into_iter().map(|e| to_envelope_json(&e.env)).collect()
+    entries
+        .into_iter()
+        .map(|e| to_envelope_json(&e.env))
+        .collect()
 }
 
 fn error(code: &str, message: &str) -> Value {
@@ -547,47 +580,54 @@ fn error(code: &str, message: &str) -> Value {
 }
 
 fn to_envelope_json(env: &Envelope) -> Value {
-    serde_json::to_value(env).unwrap_or_else(|_| json!({"error": "internal", "message": "envelope serialization failed"}))
+    serde_json::to_value(env).unwrap_or_else(
+        |_| json!({"error": "internal", "message": "envelope serialization failed"}),
+    )
 }
 
-fn require_object<'a>(c: Option<&'a Value>, endpoint: &str) -> Result<&'a serde_json::Map<String, Value>> {
+fn require_object<'a>(
+    c: Option<&'a Value>,
+    endpoint: &str,
+) -> Result<&'a serde_json::Map<String, Value>> {
     c.and_then(Value::as_object)
         .ok_or_else(|| anyhow::anyhow!("{endpoint} requires content object"))
 }
 
-fn require_string<'a>(obj: &'a serde_json::Map<String, Value>, field: &str, endpoint: &str) -> Result<&'a str> {
+fn require_string<'a>(
+    obj: &'a serde_json::Map<String, Value>,
+    field: &str,
+    endpoint: &str,
+) -> Result<&'a str> {
     obj.get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("{endpoint} requires c.{field}"))
 }
 
-fn string_array(v: Option<&Value>) -> Vec<String> {
-    v.and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-        .unwrap_or_default()
-}
+
 
 fn clamp_limit(v: Option<u64>) -> usize {
-    v.map(|n| n as usize).unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT)
+    v.map(|n| n as usize)
+        .unwrap_or(DEFAULT_LIMIT)
+        .min(MAX_LIMIT)
 }
 
 // ---- Tests ----
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
+    use crate::fixtures::*;
     use std::sync::Arc;
 
     use super::handle_request;
-    
-    
+
     use crate::envelope::{innermost, make_envelope, wrap_commit};
     use crate::events::{make_node_meta, make_room_create, make_room_join, make_room_message};
     use crate::ids::datum_id;
     use crate::pool::Pool;
     use crate::transport::server::RelayConfig;
     use crate::types::{LocalNode, LocalRoom};
-    use serde_json::{json, Value};    fn mk_config(node: LocalNode, pool: Arc<Pool>) -> RelayConfig {
+    use serde_json::{json, Value};
+    fn mk_config(node: LocalNode, pool: Arc<Pool>) -> RelayConfig {
         RelayConfig {
             node,
             endpoints: vec![],
@@ -597,7 +637,11 @@ mod tests {
         }
     }
 
-    fn make_request(node: &LocalNode, t: &str, content: serde_json::Value) -> crate::types::Envelope {
+    fn make_request(
+        node: &LocalNode,
+        t: &str,
+        content: serde_json::Value,
+    ) -> crate::types::Envelope {
         make_envelope(t, Some(content), node, None).expect("request envelope")
     }
 
@@ -640,7 +684,11 @@ mod tests {
         let (_d1, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
         pool.put(&commit).unwrap();
 
-        let env = make_request(&node, "events.sync", json!({"rooms": [room.sig.pub_key], "after": 0}));
+        let env = make_request(
+            &node,
+            "events.sync",
+            json!({"rooms": [room.sig.pub_key], "after": 0}),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert!(!result.is_empty(), "should return the room.create commit");
         assert!(result.iter().all(|v| v.get("error").is_none()));
@@ -659,7 +707,11 @@ mod tests {
         pool.put(&commit).unwrap();
 
         // after = tc should exclude that event (strictly greater than).
-        let env = make_request(&node, "events.sync", json!({"rooms": [room.sig.pub_key], "after": tc}));
+        let env = make_request(
+            &node,
+            "events.sync",
+            json!({"rooms": [room.sig.pub_key], "after": tc}),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert!(result.is_empty(), "after=tc should exclude that event");
     }
@@ -688,7 +740,11 @@ mod tests {
         let node = mk_node();
         let config = mk_config(relay, Arc::clone(&pool));
 
-        let env = make_request(&node, "system.fetch", json!({"datum_ids": ["a".repeat(64)]}));
+        let env = make_request(
+            &node,
+            "system.fetch",
+            json!({"datum_ids": ["a".repeat(64)]}),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert!(result.is_empty());
     }
@@ -727,10 +783,14 @@ mod tests {
         let commit_val = serde_json::to_value(&commit).unwrap();
 
         // Offer it as a full envelope in pool.exchange.
-        let env = make_request(&node, "pool.exchange", json!({
-            "offer": [commit_val],
-            "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
-        }));
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [commit_val],
+                "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
+            }),
+        );
         let _ = handle_request(env, &pool, &config).await.unwrap();
 
         // Verify the submitted envelope is now in the pool.
@@ -751,15 +811,19 @@ mod tests {
         pool.put(&commit).unwrap();
 
         let requester = mk_node();
-        let env = make_request(&requester, "pool.exchange", json!({
-            "offer": [],
-            "want": {
-                "rooms": [room.sig.pub_key],
-                "types": [],
-                "after": 0,
-                "limit": 100
-            }
-        }));
+        let env = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "offer": [],
+                "want": {
+                    "rooms": [room.sig.pub_key],
+                    "types": [],
+                    "after": 0,
+                    "limit": 100
+                }
+            }),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert!(!result.is_empty());
         assert!(result.iter().all(|v| v.get("error").is_none()));
@@ -777,15 +841,19 @@ mod tests {
         let id = pool.put(&commit).unwrap();
 
         let requester = mk_node();
-        let env = make_request(&requester, "pool.exchange", json!({
-            "offer": [{"datum_id": id}],
-            "want": {
-                "rooms": [room.sig.pub_key],
-                "types": [],
-                "after": 0,
-                "limit": 100
-            }
-        }));
+        let env = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "offer": [{"datum_id": id}],
+                "want": {
+                    "rooms": [room.sig.pub_key],
+                    "types": [],
+                    "after": 0,
+                    "limit": 100
+                }
+            }),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         // The offered datum_id should be excluded from the response.
         for val in &result {
@@ -819,17 +887,27 @@ mod tests {
         pool.put(&c2).unwrap();
 
         // Ask for only tc >= tc2.
-        let env = make_request(&node, "room.sync", json!({
-            "r": room.sig.pub_key,
-            "channel": 1,
-            "start_tc": tc2,
-            "limit": 100
-        }));
+        let env = make_request(
+            &node,
+            "room.sync",
+            json!({
+                "r": room.sig.pub_key,
+                "channel": 1,
+                "start_tc": tc2,
+                "limit": 100
+            }),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(result.len(), 2, "watermark frame + one event");
-        assert_eq!(result[0].get("wr").and_then(Value::as_u64), Some(0),
-            "no system events yet → watermark 0");
-        assert!(result[1].get("d").is_some(), "second frame is the event envelope");
+        assert_eq!(
+            result[0].get("wr").and_then(Value::as_u64),
+            Some(0),
+            "no system events yet → watermark 0"
+        );
+        assert!(
+            result[1].get("d").is_some(),
+            "second frame is the event envelope"
+        );
     }
 
     #[tokio::test]
@@ -843,17 +921,22 @@ mod tests {
         // A membership commit advances the watermark; a content commit does not.
         let join = make_room_join(&node, &room.sig.pub_key, None).unwrap();
         let join_tc = join.d.ts;
-        pool.put(&wrap_commit(join, &room, join_tc).unwrap()).unwrap();
+        pool.put(&wrap_commit(join, &room, join_tc).unwrap())
+            .unwrap();
         let msg = make_room_message(&node, &room.sig.pub_key, 1, "hi", vec![]).unwrap();
         let msg_tc = msg.d.ts;
         pool.put(&wrap_commit(msg, &room, msg_tc).unwrap()).unwrap();
 
-        let env = make_request(&node, "room.sync", json!({
-            "r": room.sig.pub_key,
-            "channel": 1,
-            "start_tc": 0,
-            "limit": 100
-        }));
+        let env = make_request(
+            &node,
+            "room.sync",
+            json!({
+                "r": room.sig.pub_key,
+                "channel": 1,
+                "start_tc": 0,
+                "limit": 100
+            }),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(
             result[0].get("wr").and_then(Value::as_u64),
@@ -875,11 +958,15 @@ mod tests {
         let c = wrap_commit(msg, &room, tc).unwrap();
         pool.put(&c).unwrap();
 
-        let env = make_request(&node, "room.compare", json!({
-            "r": room.sig.pub_key,
-            "channel": 1,
-            "samples": [{"seq": 1, "eid": "intentionally_wrong"}]
-        }));
+        let env = make_request(
+            &node,
+            "room.compare",
+            json!({
+                "r": room.sig.pub_key,
+                "channel": 1,
+                "samples": [{"seq": 1, "eid": "intentionally_wrong"}]
+            }),
+        );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(result.len(), 1);
         // Result is a room.compare.result envelope signed by the relay.
@@ -899,7 +986,8 @@ mod tests {
         let room = mk_room();
         let config = mk_config(relay, Arc::clone(&pool));
 
-        let (_d1, commit) = make_room_create(&node, &room, Some("Test Room"), Some(json!([]))).unwrap();
+        let (_d1, commit) =
+            make_room_create(&node, &room, Some("Test Room"), Some(json!([]))).unwrap();
         pool.put(&commit).unwrap();
 
         let msg = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
@@ -945,10 +1033,14 @@ mod tests {
         let d1_val = serde_json::to_value(&d1).unwrap();
 
         // Submit d1 via pool.exchange — relay should auto-commit it.
-        let env = make_request(&node, "pool.exchange", json!({
-            "offer": [d1_val],
-            "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
-        }));
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [d1_val],
+                "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
+            }),
+        );
         handle_request(env, &pool, &config).await.unwrap();
 
         // The event should now be in the pool as a committed (depth-2) envelope.
@@ -969,17 +1061,24 @@ mod tests {
         let (d1, _) = make_room_create(&node, &room, Some("No-Key Room"), Some(json!([]))).unwrap();
         let d1_val = serde_json::to_value(&d1).unwrap();
 
-        let env = make_request(&node, "pool.exchange", json!({
-            "offer": [d1_val],
-            "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
-        }));
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [d1_val],
+                "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
+            }),
+        );
         handle_request(env, &pool, &config).await.unwrap();
 
         // Event is stored but uncommitted (tc = None).
         let all = pool.get_room_channel(&room.sig.pub_key, -1).unwrap();
         assert!(!all.is_empty(), "event should still be stored");
         let has_committed = all.iter().any(|e| e.tc.is_some());
-        assert!(!has_committed, "relay without room key must not auto-commit");
+        assert!(
+            !has_committed,
+            "relay without room key must not auto-commit"
+        );
     }
 
     #[tokio::test]
@@ -994,19 +1093,32 @@ mod tests {
         // Seed a committed room.create first.
         let (d1, _) = make_room_create(&node, &room, Some("Banned Room"), Some(json!([]))).unwrap();
         let d1_val = serde_json::to_value(&d1).unwrap();
-        let seed_req = make_request(&node, "pool.exchange", json!({
-            "offer": [d1_val], "want": {}
-        }));
+        let seed_req = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [d1_val], "want": {}
+            }),
+        );
         handle_request(seed_req, &pool, &config).await.unwrap();
 
         // Manually insert a committed room.ban for banned_node.
-        let ban_event = make_envelope("room.ban", Some(json!({
-            "r": room.sig.pub_key,
-            "banned": banned_node.sig.pub_key
-        })), &node, Some(crate::envelope::DatumBodyExtra {
-            r: Some(room.sig.pub_key.clone()),
-            to: None, tc: None, exp: None, nonce: None,
-        })).unwrap();
+        let ban_event = make_envelope(
+            "room.ban",
+            Some(json!({
+                "r": room.sig.pub_key,
+                "banned": banned_node.sig.pub_key
+            })),
+            &node,
+            Some(crate::envelope::DatumBodyExtra {
+                r: Some(room.sig.pub_key.clone()),
+                to: None,
+                tc: None,
+                exp: None,
+                nonce: None,
+            }),
+        )
+        .unwrap();
         let ban_tc = ban_event.d.ts;
         let ban_commit = wrap_commit(ban_event, &room, ban_tc).unwrap();
         pool.put(&ban_commit).unwrap();
@@ -1018,17 +1130,25 @@ mod tests {
         // Now banned_node tries to post a message.
         let msg = make_room_message(&banned_node, &room.sig.pub_key, 1, "spam", vec![]).unwrap();
         let msg_val = serde_json::to_value(&msg).unwrap();
-        let req = make_request(&banned_node, "pool.exchange", json!({
-            "offer": [msg_val], "want": {}
-        }));
+        let req = make_request(
+            &banned_node,
+            "pool.exchange",
+            json!({
+                "offer": [msg_val], "want": {}
+            }),
+        );
         handle_request(req, &pool, &config).await.unwrap();
 
         // The banned_node's message should be stored uncommitted (validate fails, wrap_commit not called).
         let chat = pool.get_room_channel(&room.sig.pub_key, 1).unwrap();
-        let banned_committed = chat.iter()
+        let banned_committed = chat
+            .iter()
             .filter(|e| innermost(&e.env).d.n == banned_node.sig.pub_key)
             .any(|e| e.tc.is_some());
-        assert!(!banned_committed, "banned author's event must not be auto-committed");
+        assert!(
+            !banned_committed,
+            "banned author's event must not be auto-committed"
+        );
     }
 
     #[tokio::test]
@@ -1038,27 +1158,40 @@ mod tests {
         // so the sender can confirm the message in a single round-trip.
         let pool = Arc::new(Pool::memory().unwrap());
         let relay = mk_node();
-        let node  = mk_node();
-        let room  = mk_room();
+        let node = mk_node();
+        let room = mk_room();
         let config = mk_config_with_room(relay, Arc::clone(&pool), &room);
 
         // Seed committed room.create; allow all to post so the message passes rule validation.
-        let (d1_create, _) = make_room_create(&node, &room, Some("RT Room"),
-            Some(json!([{"t": "post", "allow": "*"}]))).unwrap();
-        let seed = make_request(&node, "pool.exchange", json!({
-            "offer": [serde_json::to_value(&d1_create).unwrap()],
-            "want": {}
-        }));
+        let (d1_create, _) = make_room_create(
+            &node,
+            &room,
+            Some("RT Room"),
+            Some(json!([{"t": "post", "allow": "*"}])),
+        )
+        .unwrap();
+        let seed = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [serde_json::to_value(&d1_create).unwrap()],
+                "want": {}
+            }),
+        );
         handle_request(seed, &pool, &config).await.unwrap();
 
         // Now submit a depth-1 message and want back the room's events.
         let msg = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
         let msg_val = serde_json::to_value(&msg).unwrap();
 
-        let req = make_request(&node, "pool.exchange", json!({
-            "offer": [msg_val],
-            "want": {"rooms": [room.sig.pub_key], "types": [], "after": 0, "limit": 100}
-        }));
+        let req = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [msg_val],
+                "want": {"rooms": [room.sig.pub_key], "types": [], "after": 0, "limit": 100}
+            }),
+        );
         let result = handle_request(req, &pool, &config).await.unwrap();
 
         // The response must contain the committed (depth-2) version of the message.
@@ -1067,10 +1200,14 @@ mod tests {
                 let d = crate::envelope::depth(&env);
                 let t = &crate::envelope::innermost(&env).d.t;
                 d == 2 && t == "room.message"
-            } else { false }
+            } else {
+                false
+            }
         });
-        assert!(has_committed_msg,
-            "pool.exchange response must include the auto-committed depth-2 message");
+        assert!(
+            has_committed_msg,
+            "pool.exchange response must include the auto-committed depth-2 message"
+        );
     }
 
     #[tokio::test]
@@ -1085,15 +1222,22 @@ mod tests {
         let (_, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
         let commit_val = serde_json::to_value(&commit).unwrap();
 
-        let env = make_request(&node, "pool.exchange", json!({
-            "offer": [commit_val],
-            "want": {}
-        }));
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [commit_val],
+                "want": {}
+            }),
+        );
         handle_request(env, &pool, &config).await.unwrap();
 
         // Should be stored as depth-2, not wrapped again into depth-3.
         let all = pool.get_room_channel(&room.sig.pub_key, -1).unwrap();
         let depth3 = all.iter().any(|e| crate::envelope::depth(&e.env) == 3);
-        assert!(!depth3, "committed events must not be re-committed to depth-3");
+        assert!(
+            !depth3,
+            "committed events must not be re-committed to depth-3"
+        );
     }
 }

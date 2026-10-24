@@ -10,8 +10,7 @@ use serde_json::{json, Value};
 use crate::base64url;
 use crate::canonical::canonical_bytes;
 use crate::crypto::{
-    ed25519_pub_from_seed, ed25519_sign, hkdf_sha256, sha256,
-    x25519_shared_secret,
+    ed25519_pub_from_seed, ed25519_sign, hkdf_sha256, sha256, x25519_shared_secret,
 };
 use crate::envelope::{sign_envelope, wrap_commit};
 use crate::ids::{datum_id, eid};
@@ -58,8 +57,7 @@ pub fn hex_to_bytes(s: &str) -> Vec<u8> {
 
 fn x25519_pub_from_seed_hex(seed_hex: &str) -> Vec<u8> {
     let priv_bytes: [u8; 32] = hex_to_bytes(seed_hex).try_into().unwrap();
-    let secret = x25519_dalek::StaticSecret::from(priv_bytes);
-    x25519_dalek::PublicKey::from(&secret).as_bytes().to_vec()
+    crate::crypto::x25519_pub_from_seed(&priv_bytes).to_vec()
 }
 
 pub fn mk_node(sig_seed_hex: &str, enc_seed_hex: &str) -> LocalNode {
@@ -163,7 +161,8 @@ impl VectorSet {
         // ---- §E.3 Canonical JSON ----
         let e3_1_canonical = String::from_utf8(canonical_bytes(&json!({
             "ts": 1710000000000_u64, "n": "ARTA_SIG", "v": "0.2", "t": "room.message"
-        }))?).unwrap();
+        }))?)
+        .unwrap();
 
         let e3_2_canonical = String::from_utf8(canonical_bytes(&json!({
             "v": "0.2", "t": "commit", "n": "ROOM_SIG",
@@ -176,23 +175,27 @@ impl VectorSet {
                     "n": "ARTA_SIG", "v": "0.2", "t": "room.message", "r": "ROOM_SIG"
                 }
             }
-        }))?).unwrap();
+        }))?)
+        .unwrap();
 
         let e3_3_canonical = String::from_utf8(canonical_bytes(&json!({
             "t": "room.message", "n": "TEST", "v": "0.2",
             "ts": 0_u64, "c": {"body": "سلام"}
-        }))?).unwrap();
+        }))?)
+        .unwrap();
 
         let e3_4_canonical = String::from_utf8(canonical_bytes(&json!({
             "n": "X", "v": "0.2", "t": "test",
             "ts": 1710000000000_u64,
             "c": {"a": 0, "b": -1, "c": 1.5, "d": 100}
-        }))?).unwrap();
+        }))?)
+        .unwrap();
 
         let e3_5_canonical = String::from_utf8(canonical_bytes(&json!({
             "n": "X", "v": "0.2", "t": "test", "ts": 0_u64,
             "c": {"empty": "", "list": [], "obj": {}, "null_val": Value::Null, "bool": true}
-        }))?).unwrap();
+        }))?)
+        .unwrap();
 
         // ---- §E.4.1 Room message ----
         let e4_1_d = DatumBody {
@@ -201,13 +204,8 @@ impl VectorSet {
             t: "room.message".into(),
             ts: 1710000000000,
             r: Some(room.sig.pub_key.clone()),
-            to: None,
             c: Some(json!({"ch": 1, "body": "Hello, world!"})),
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-            extra: Default::default(),
+            ..DatumBody::default()
         };
         let e4_1_d_val = serde_json::to_value(&e4_1_d)?;
         let e4_1_canonical_bytes = canonical_bytes(&e4_1_d_val)?;
@@ -221,8 +219,7 @@ impl VectorSet {
         // ---- §E.5.1 Depth-2 commit ----
         let e5_1_commit = wrap_commit(e4_1_envelope.clone(), &room, 1710000100000)?;
         let e5_1_outer_d_val = serde_json::to_value(&e5_1_commit.d)?;
-        let e5_1_outer_canonical =
-            String::from_utf8(canonical_bytes(&e5_1_outer_d_val)?).unwrap();
+        let e5_1_outer_canonical = String::from_utf8(canonical_bytes(&e5_1_outer_d_val)?).unwrap();
         let e5_1_outer_sig_b64 = e5_1_commit.p.clone();
 
         // ---- §E.6 Identity ----
@@ -240,9 +237,8 @@ impl VectorSet {
         let e7_shared = x25519_shared_secret(&eph_priv, &babak_enc_pub_bytes)?;
         let e7_shared_hex = crate::hex::encode(&e7_shared);
 
-        let e7_salt_bytes = sha256(
-            &[eph_pub_bytes.as_slice(), babak_enc_pub_bytes.as_slice()].concat(),
-        );
+        let e7_salt_bytes =
+            sha256(&[eph_pub_bytes.as_slice(), babak_enc_pub_bytes.as_slice()].concat());
         let e7_salt_hex = crate::hex::encode(e7_salt_bytes);
 
         let e7_okm = hkdf_sha256(&e7_shared, &e7_salt_bytes, b"toloo-private-v0.2", 44);
@@ -265,9 +261,13 @@ impl VectorSet {
             t: "room.join".into(),
             ts: 1710000200000,
             r: Some(room.sig.pub_key.clone()),
-            to: None, c: None, env: None, tc: None, exp: None,
+            to: None,
+            c: None,
+            env: None,
+            tc: None,
+            exp: None,
             nonce: Some(0),
-            extra: Default::default(),
+            ..DatumBody::default()
         };
         let e9_winning_nonce = find_pow_nonce(&mut pow_d, 16) as u64;
         let pow_d_val = serde_json::to_value(&pow_d)?;
@@ -276,12 +276,15 @@ impl VectorSet {
 
         // ---- §E.13 base64url ----
         let e13_cases = vec![
-            (String::new(),             String::new()),
-            ("00".to_owned(),           base64url::encode(&[0x00u8])),
-            ("ff".to_owned(),           base64url::encode(&[0xffu8])),
-            ("00ff".to_owned(),         base64url::encode(&[0x00u8, 0xff])),
-            ("deadbeef".to_owned(),     base64url::encode(&[0xde, 0xad, 0xbe, 0xef])),
-            ("00".repeat(32),           base64url::encode(&[0u8; 32])),
+            (String::new(), String::new()),
+            ("00".to_owned(), base64url::encode(&[0x00u8])),
+            ("ff".to_owned(), base64url::encode(&[0xffu8])),
+            ("00ff".to_owned(), base64url::encode(&[0x00u8, 0xff])),
+            (
+                "deadbeef".to_owned(),
+                base64url::encode(&[0xde, 0xad, 0xbe, 0xef]),
+            ),
+            ("00".repeat(32), base64url::encode(&[0u8; 32])),
         ];
 
         Ok(VectorSet {

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -7,8 +5,10 @@ use serde_json::{json, Map, Value};
 
 use crate::base64url;
 use crate::canonical::canonical;
-use crate::crypto::{chacha20_encrypt, derive_private_message_key, sha256, x25519_generate, x25519_shared_secret};
-use crate::envelope::{innermost, make_envelope, sign_envelope, wrap_commit, DatumBodyExtra};
+use crate::crypto::{
+    chacha20_encrypt, derive_private_message_key, sha256, x25519_generate, x25519_shared_secret,
+};
+use crate::envelope::{innermost, make_envelope, now_ms, sign_envelope, wrap_commit, DatumBodyExtra};
 use crate::types::{DatumBody, EndpointDescriptor, Envelope, LocalNode, LocalRoom};
 
 const MAX_MESSAGE_BODY: usize = 4096;
@@ -54,7 +54,12 @@ pub fn make_room_create(
         content.insert("rules".to_owned(), rules);
     }
 
-    let depth1 = make_room_scoped("room.create", node, &room.sig.pub_key, Some(Value::Object(content)))?;
+    let depth1 = make_room_scoped(
+        "room.create",
+        node,
+        &room.sig.pub_key,
+        Some(Value::Object(content)),
+    )?;
     validate_event_content(&depth1)?;
     let tc = now_ms()?.max(depth1.d.ts);
     let depth2 = wrap_commit(depth1.clone(), room, tc)?;
@@ -77,17 +82,11 @@ pub fn make_room_announcement(room: &LocalRoom, body: &str) -> Result<(Envelope,
     });
     let d = DatumBody {
         n: room.sig.pub_key.clone(),
-        v: "0.2".to_owned(),
         t: "room.announce".to_owned(),
         ts: now_ms()?,
         r: Some(room.sig.pub_key.clone()),
-        to: None,
         c: Some(content),
-        env: None,
-        tc: None,
-        exp: None,
-        nonce: None,
-        extra: HashMap::new(),
+        ..DatumBody::default()
     };
     let depth1 = sign_envelope(d, &room.sig.priv_key)?;
     validate_event_content(&depth1)?;
@@ -108,7 +107,12 @@ pub fn make_room_leave(node: &LocalNode, room_pub: &str) -> Result<Envelope> {
 }
 
 pub fn make_room_invite(node: &LocalNode, room_pub: &str, invitee: &str) -> Result<Envelope> {
-    make_room_scoped("room.invite", node, room_pub, Some(json!({ "invitee": invitee })))
+    make_room_scoped(
+        "room.invite",
+        node,
+        room_pub,
+        Some(json!({ "invitee": invitee })),
+    )
 }
 
 /// Pass `reason` for an optional human-readable ban reason (spec §A.6.6, max 250 chars).
@@ -173,12 +177,7 @@ pub fn make_room_message(
     if !blobs.is_empty() {
         content.insert("blobs".to_owned(), json!(blobs));
     }
-    make_room_scoped(
-        "room.message",
-        node,
-        room_pub,
-        Some(Value::Object(content)),
-    )
+    make_room_scoped("room.message", node, room_pub, Some(Value::Object(content)))
 }
 
 pub fn make_room_react(
@@ -332,7 +331,10 @@ pub fn make_side_fork(
     reason: Option<&str>,
 ) -> Result<Envelope> {
     let mut content = Map::new();
-    content.insert("forked_from".to_owned(), Value::String(forked_from.to_owned()));
+    content.insert(
+        "forked_from".to_owned(),
+        Value::String(forked_from.to_owned()),
+    );
     if let Some(r) = reason {
         if r.len() > MAX_REASON {
             bail!("side.fork reason exceeds {} chars", MAX_REASON);
@@ -392,14 +394,22 @@ pub fn make_room_migrate(
     reason: Option<&str>,
 ) -> Result<Envelope> {
     let mut content = Map::new();
-    content.insert("new_room".to_owned(), Value::String(new_room_pub.to_owned()));
+    content.insert(
+        "new_room".to_owned(),
+        Value::String(new_room_pub.to_owned()),
+    );
     if let Some(r) = reason {
         if r.len() > MAX_REASON {
             bail!("room.migrate reason exceeds {} chars", MAX_REASON);
         }
         content.insert("reason".to_owned(), Value::String(r.to_owned()));
     }
-    make_room_scoped("room.migrate", node, &room.sig.pub_key, Some(Value::Object(content)))
+    make_room_scoped(
+        "room.migrate",
+        node,
+        &room.sig.pub_key,
+        Some(Value::Object(content)),
+    )
 }
 
 pub fn validate_event_content(env: &Envelope) -> Result<()> {
@@ -532,13 +542,7 @@ fn validate_room_update(d: &DatumBody) -> Result<()> {
 
 fn validate_room_message(d: &DatumBody) -> Result<()> {
     let c = content_object(d)?;
-    let body = c
-        .get("body")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("room.message requires c.body"))?;
-    if body.chars().count() > MAX_MESSAGE_BODY {
-        bail!("room.message body too long");
-    }
+    ensure_body(c, "room.message")?;
     validate_chat_channel(c, "room.message")?;
     if let Some(blobs) = c.get("blobs") {
         let arr = blobs
@@ -603,13 +607,7 @@ fn validate_room_edit(d: &DatumBody) -> Result<()> {
     if target.is_empty() {
         bail!("room.edit target must be non-empty");
     }
-    let body = c
-        .get("body")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("room.edit requires c.body"))?;
-    if body.chars().count() > MAX_MESSAGE_BODY {
-        bail!("room.edit body too long");
-    }
+    ensure_body(c, "room.edit")?;
     Ok(())
 }
 
@@ -671,7 +669,8 @@ fn validate_private_payload(d: &DatumBody) -> Result<()> {
         .get("encrypted")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("private payload requires c.encrypted"))?;
-    base64url::decode(encrypted).map_err(|_| anyhow!("private payload encrypted must be base64url"))?;
+    base64url::decode(encrypted)
+        .map_err(|_| anyhow!("private payload encrypted must be base64url"))?;
     Ok(())
 }
 
@@ -704,7 +703,6 @@ fn validate_required_string_field(d: &DatumBody, field: &str) -> Result<()> {
     Ok(())
 }
 
-
 fn validate_object_or_empty(d: &DatumBody) -> Result<()> {
     if let Some(c) = d.c.as_ref() {
         if !c.is_object() {
@@ -714,19 +712,25 @@ fn validate_object_or_empty(d: &DatumBody) -> Result<()> {
     Ok(())
 }
 
+/// Extract `c.body` and enforce the message length limit.
+fn ensure_body<'a>(c: &'a Map<String, Value>, event: &str) -> Result<&'a str> {
+    let body = c
+        .get("body")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("{event} requires c.body"))?;
+    if body.chars().count() > MAX_MESSAGE_BODY {
+        bail!("{event} body too long");
+    }
+    Ok(body)
+}
+
 /// Official announcements: authored by the room key, on channel 0 only.
 fn validate_room_announce(d: &DatumBody) -> Result<()> {
     if d.n != d.r.as_deref().unwrap_or_default() {
         bail!("room.announce must be authored by the room key (d.n == d.r)");
     }
     let c = content_object(d)?;
-    let body = c
-        .get("body")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("room.announce requires c.body"))?;
-    if body.chars().count() > MAX_MESSAGE_BODY {
-        bail!("room.announce body too long");
-    }
+    ensure_body(c, "room.announce")?;
     let ch = c.get("ch").and_then(Value::as_i64).unwrap_or(0);
     if ch != 0 {
         bail!("room.announce is only valid on channel 0");
@@ -737,9 +741,7 @@ fn validate_room_announce(d: &DatumBody) -> Result<()> {
 /// Reject reserved channel numbers on outbound member content.
 fn ensure_chat_channel(channel: i32, event: &str) {
     if channel < 1 {
-        panic!(
-            "{event} channel must be >= 1 (0 is reserved for official announcements)"
-        );
+        panic!("{event} channel must be >= 1 (0 is reserved for official announcements)");
     }
 }
 
@@ -778,32 +780,30 @@ fn ensure_base64url_key(v: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn now_ms() -> Result<u64> {
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| anyhow!("system clock is before Unix epoch"))?;
-    Ok(dur.as_millis() as u64)
-}
+
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
     use super::{
         make_node_meta, make_private_message, make_room_announcement, make_room_blob,
         make_room_create, make_room_message, validate_event_content, BlobManifest,
     };
-    
-    
+    use crate::fixtures::*;
+
     use crate::envelope::{depth, sign_envelope, verify_chain};
     use crate::types::DatumBody;
     use serde_json::json;
-    use std::collections::HashMap;    #[test]
+    
+    #[test]
     fn make_node_meta_puts_enc_in_content() {
         let node = mk_node();
         let env = make_node_meta(&node, vec![]).expect("node.meta builder should work");
         assert_eq!(env.d.t, "node.meta");
         let c = env.d.c.as_ref().unwrap();
-        assert_eq!(c.get("enc").and_then(|v| v.as_str()), Some(node.enc.pub_key.as_str()));
+        assert_eq!(
+            c.get("enc").and_then(|v| v.as_str()),
+            Some(node.enc.pub_key.as_str())
+        );
         validate_event_content(&env).expect("node.meta should validate");
     }
 
@@ -895,11 +895,17 @@ mod tests {
         // c.eph must be a fresh ephemeral key — not the recipient's permanent enc pub.
         let c = env.d.c.as_ref().unwrap();
         let eph = c.get("eph").and_then(|v| v.as_str()).unwrap();
-        assert_ne!(eph, recipient.enc.pub_key, "c.eph must be ephemeral, not recipient's permanent enc pub");
+        assert_ne!(
+            eph, recipient.enc.pub_key,
+            "c.eph must be ephemeral, not recipient's permanent enc pub"
+        );
         // c.encrypted must be non-empty base64url (real ciphertext, not plaintext).
         let encrypted = c.get("encrypted").and_then(|v| v.as_str()).unwrap();
         let decoded = crate::base64url::decode(encrypted).expect("must be valid base64url");
-        assert!(decoded.len() > 16, "ciphertext must be longer than AEAD tag alone");
+        assert!(
+            decoded.len() > 16,
+            "ciphertext must be longer than AEAD tag alone"
+        );
     }
 
     #[test]
@@ -911,18 +917,11 @@ mod tests {
 
         let bad_commit_d = DatumBody {
             n: room.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "commit".to_owned(),
             ts: inner.d.ts.saturating_sub(1),
-            r: None,
-            to: None,
-            c: None,
             env: Some(Box::new(inner)),
             tc: Some(1),
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         let bad_commit = sign_envelope(bad_commit_d, &room.sig.priv_key).expect("sign commit");
         assert!(validate_event_content(&bad_commit).is_err());
@@ -936,7 +935,10 @@ mod tests {
             .expect("side.fork builder should work");
         assert_eq!(env.d.t, "side.fork");
         let c = env.d.c.as_ref().unwrap();
-        assert_eq!(c.get("forked_from").and_then(|v| v.as_str()), Some("some_eid"));
+        assert_eq!(
+            c.get("forked_from").and_then(|v| v.as_str()),
+            Some("some_eid")
+        );
         validate_event_content(&env).expect("side.fork should validate");
     }
 
@@ -944,8 +946,9 @@ mod tests {
     fn side_attestation_builder_emits_valid_shape() {
         let node = mk_node();
         let target = mk_node();
-        let env = super::make_side_attestation(&node, &target.sig.pub_key, "positive", Some("trusted"))
-            .expect("side.attestation builder should work");
+        let env =
+            super::make_side_attestation(&node, &target.sig.pub_key, "positive", Some("trusted"))
+                .expect("side.attestation builder should work");
         assert_eq!(env.d.t, "side.attestation");
         let c = env.d.c.as_ref().unwrap();
         assert_eq!(c.get("level").and_then(|v| v.as_str()), Some("positive"));
@@ -980,7 +983,10 @@ mod tests {
             .expect("room.migrate builder should work");
         assert_eq!(env.d.t, "room.migrate");
         let c = env.d.c.as_ref().unwrap();
-        assert_eq!(c.get("new_room").and_then(|v| v.as_str()), Some(new_room.sig.pub_key.as_str()));
+        assert_eq!(
+            c.get("new_room").and_then(|v| v.as_str()),
+            Some(new_room.sig.pub_key.as_str())
+        );
         validate_event_content(&env).expect("room.migrate should validate");
     }
 
@@ -999,29 +1005,31 @@ mod tests {
 
         // Self-committed by the room; chain verifies.
         assert_eq!(depth(&commit), 2);
-        assert!(verify_chain(&commit).is_ok(), "self-committed chain must verify");
+        assert!(
+            verify_chain(&commit).is_ok(),
+            "self-committed chain must verify"
+        );
 
         // Channel 0 + the official marker (author == room).
-        assert_eq!(crate::ids::channel_of(&crate::envelope::innermost(&commit).d), Some(0));
+        assert_eq!(
+            crate::ids::channel_of(&crate::envelope::innermost(&commit).d),
+            Some(0)
+        );
 
         // Tampering: a member cannot publish an announcement.
         let member = mk_node();
         let forged_d = crate::types::DatumBody {
             n: member.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "room.announce".to_owned(),
             ts: 1234,
             r: Some(room.sig.pub_key.clone()),
-            to: None,
             c: Some(serde_json::json!({"ch": 0, "body": "fake news"})),
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         let forged = crate::envelope::sign_envelope(forged_d, &member.sig.priv_key).unwrap();
-        assert!(validate_event_content(&forged).is_err(),
-            "non-room author must be rejected");
+        assert!(
+            validate_event_content(&forged).is_err(),
+            "non-room author must be rejected"
+        );
     }
 }

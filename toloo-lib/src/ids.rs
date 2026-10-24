@@ -60,31 +60,23 @@ fn channel_from_content(c: Option<&Value>) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
-    use std::collections::HashMap;
+    use crate::fixtures::*;
+    
 
     use serde_json::json;
 
-    
-    
     use crate::envelope::{sign_envelope, wrap_commit};
     use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
-    use super::{channel_of, datum_id, eid};    fn mk_inner_room_event(node: &LocalNode, room: &LocalRoom, ts: u64, ch: i32) -> Envelope {
+    use super::{channel_of, datum_id, eid};
+    fn mk_inner_room_event(node: &LocalNode, room: &LocalRoom, ts: u64, ch: i32) -> Envelope {
         let d = DatumBody {
             n: node.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "room.message".to_owned(),
             ts,
             r: Some(room.sig.pub_key.clone()),
-            to: None,
             c: Some(json!({"ch": ch, "body": "hello"})),
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         sign_envelope(d, &node.sig.priv_key).expect("inner sign should succeed")
     }
@@ -93,18 +85,10 @@ mod tests {
     fn channel_mapping_for_reserved_types() {
         let meta = DatumBody {
             n: "n".to_owned(),
-            v: "0.2".to_owned(),
             t: "room.create".to_owned(),
             ts: 1,
             r: Some("room".to_owned()),
-            to: None,
-            c: None,
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         assert_eq!(channel_of(&meta), Some(-1));
 
@@ -119,18 +103,11 @@ mod tests {
     fn content_events_use_c_ch_or_default_one() {
         let with_ch = DatumBody {
             n: "n".to_owned(),
-            v: "0.2".to_owned(),
             t: "room.message".to_owned(),
             ts: 1,
             r: Some("room".to_owned()),
-            to: None,
             c: Some(json!({"ch": 7})),
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         assert_eq!(channel_of(&with_ch), Some(7));
 
@@ -138,26 +115,22 @@ mod tests {
             c: Some(json!({"body": "hello"})),
             ..with_ch.clone()
         };
-        assert_eq!(channel_of(&missing_ch), Some(1),
-            "member content without ch defaults to channel 1, never 0 (official)");
+        assert_eq!(
+            channel_of(&missing_ch),
+            Some(1),
+            "member content without ch defaults to channel 1, never 0 (official)"
+        );
     }
 
     #[test]
     fn announcements_are_always_channel_zero() {
         let announce = DatumBody {
             n: "room".to_owned(),
-            v: "0.2".to_owned(),
             t: "room.announce".to_owned(),
             ts: 1,
             r: Some("room".to_owned()),
-            to: None,
             c: Some(json!({"ch": 0, "body": "news"})),
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         assert_eq!(channel_of(&announce), Some(0));
     }
@@ -175,25 +148,23 @@ mod tests {
     fn private_message_types_have_no_channel() {
         let base = DatumBody {
             n: "n".to_owned(),
-            v: "0.2".to_owned(),
             t: "private.message".to_owned(),
             ts: 1,
-            r: None,
             to: Some("recipient".to_owned()),
-            c: None,
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         assert_eq!(channel_of(&base), None);
 
-        let read = DatumBody { t: "private.read".to_owned(), ..base.clone() };
+        let read = DatumBody {
+            t: "private.read".to_owned(),
+            ..base.clone()
+        };
         assert_eq!(channel_of(&read), None);
 
-        let blob = DatumBody { t: "private.blob".to_owned(), ..base.clone() };
+        let blob = DatumBody {
+            t: "private.blob".to_owned(),
+            ..base.clone()
+        };
         assert_eq!(channel_of(&blob), None);
     }
 
@@ -207,10 +178,7 @@ mod tests {
         let eid_inner = eid(&inner);
         let eid_commit = eid(&commit);
 
-        assert_eq!(
-            eid_inner,
-            format!("3:1710000000000:{}", node.sig.pub_key)
-        );
+        assert_eq!(eid_inner, format!("3:1710000000000:{}", node.sig.pub_key));
         assert_eq!(eid_inner, eid_commit);
     }
 
@@ -219,18 +187,11 @@ mod tests {
         let node = mk_node();
         let d = DatumBody {
             n: node.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "private.message".to_owned(),
             ts: 42,
-            r: None,
             to: Some("recipient".to_owned()),
             c: Some(json!({"msg": "x"})),
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         let env = sign_envelope(d, &node.sig.priv_key).expect("sign should succeed");
         assert_eq!(eid(&env), format!("42:{}", node.sig.pub_key));
@@ -248,7 +209,11 @@ mod tests {
         assert_eq!(d1.len(), 64);
         assert_eq!(d2.len(), 64);
         assert_ne!(d1, d2);
-        assert!(d1.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
-        assert!(d2.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(d1
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(d2
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 }

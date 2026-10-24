@@ -12,12 +12,9 @@ use toloo_lib::ids::eid;
 use toloo_lib::pow::count_leading_zero_bits;
 use toloo_lib::private::decrypt_private;
 use toloo_lib::vectors::{
-    hex_to_bytes, mk_node, mk_room, VectorSet,
-    ARTA_ENC_SEED_HEX, ARTA_SIG_SEED_HEX,
-    BABAK_ENC_SEED_HEX, BABAK_SIG_SEED_HEX,
-    MITHRA_ENC_SEED_HEX, MITHRA_SIG_SEED_HEX,
-    EPH_PRIV_SEED_HEX,
-    ROOM_SIG_SEED_HEX,
+    hex_to_bytes, mk_node, mk_room, VectorSet, ARTA_ENC_SEED_HEX, ARTA_SIG_SEED_HEX,
+    BABAK_ENC_SEED_HEX, BABAK_SIG_SEED_HEX, EPH_PRIV_SEED_HEX, MITHRA_ENC_SEED_HEX,
+    MITHRA_SIG_SEED_HEX, ROOM_SIG_SEED_HEX,
 };
 
 // Shared fixture: compute once, test many
@@ -34,7 +31,11 @@ fn e2_arta_sig_pub_derived_from_seed() {
     let v = vectors();
     assert_eq!(toloo_lib::hex::encode(&pub_bytes), v.arta.sig_pub_hex);
     assert_eq!(base64url::encode(&pub_bytes), v.arta.sig_pub_b64);
-    assert_eq!(v.arta.sig_pub_b64.len(), 43, "Ed25519 pub = 43 base64url chars");
+    assert_eq!(
+        v.arta.sig_pub_b64.len(),
+        43,
+        "Ed25519 pub = 43 base64url chars"
+    );
 }
 
 #[test]
@@ -57,7 +58,11 @@ fn e2_enc_pub_length() {
     let v = vectors();
     for node in [&v.arta, &v.babak, &v.mithra, &v.relay] {
         let enc_b64 = node.enc_pub_b64.as_ref().unwrap();
-        assert_eq!(enc_b64.len(), 43, "X25519 pub = 43 base64url chars: {enc_b64}");
+        assert_eq!(
+            enc_b64.len(),
+            43,
+            "X25519 pub = 43 base64url chars: {enc_b64}"
+        );
     }
 }
 
@@ -89,7 +94,10 @@ fn e3_3_unicode_preserved() {
         v.e3_3_canonical,
         "{\"c\":{\"body\":\"سلام\"},\"n\":\"TEST\",\"t\":\"room.message\",\"ts\":0,\"v\":\"0.2\"}"
     );
-    assert!(v.e3_3_canonical.contains("سلام"), "Arabic chars must not be escaped");
+    assert!(
+        v.e3_3_canonical.contains("سلام"),
+        "Arabic chars must not be escaped"
+    );
 }
 
 #[test]
@@ -136,14 +144,20 @@ fn e4_1_tampered_body_fails() {
     let mut env = vectors().e4_1_envelope.clone();
     // Modify body without re-signing.
     env.d.c = Some(serde_json::json!({"ch": 0, "body": "Hello, world!!"}));
-    assert!(verify_chain(&env).is_err(), "tampered body must fail verification");
+    assert!(
+        verify_chain(&env).is_err(),
+        "tampered body must fail verification"
+    );
 }
 
 #[test]
 fn e4_1_tampered_sig_fails() {
     let mut env = vectors().e4_1_envelope.clone();
     env.p = "a".repeat(86);
-    assert!(verify_chain(&env).is_err(), "tampered sig must fail verification");
+    assert!(
+        verify_chain(&env).is_err(),
+        "tampered sig must fail verification"
+    );
 }
 
 #[test]
@@ -190,7 +204,10 @@ fn e5_1_signer_alternation() {
     let inner_n = &innermost(&v.e5_1_commit).d.n;
     assert_ne!(outer_n, inner_n, "depth-1 and depth-2 signers must differ");
     // Outer signer (room) == inner's d.r
-    assert_eq!(Some(outer_n.as_str()), innermost(&v.e5_1_commit).d.r.as_deref());
+    assert_eq!(
+        Some(outer_n.as_str()),
+        innermost(&v.e5_1_commit).d.r.as_deref()
+    );
 }
 
 #[test]
@@ -216,16 +233,22 @@ fn e6_1_eid_stable_across_depths() {
 fn e6_1_eid_format_channel_prefixed() {
     let v = vectors();
     // Room message eid: ch:ts:n
-    assert!(v.e6_1_eid.starts_with("1:"), "room eid starts with channel: {}", v.e6_1_eid);
-    assert!(v.e6_1_eid.contains("1710000000000"), "eid contains timestamp");
+    assert!(
+        v.e6_1_eid.starts_with("1:"),
+        "room eid starts with channel: {}",
+        v.e6_1_eid
+    );
+    assert!(
+        v.e6_1_eid.contains("1710000000000"),
+        "eid contains timestamp"
+    );
 }
 
 #[test]
 fn e6_3_datum_id_differs_between_depths() {
     let v = vectors();
     assert_ne!(
-        v.e6_3_datum_id_d1,
-        v.e6_3_datum_id_d2,
+        v.e6_3_datum_id_d1, v.e6_3_datum_id_d2,
         "datum_id changes when envelope is wrapped"
     );
     // datum_id is a SHA-256 hex string (64 hex chars)
@@ -304,7 +327,10 @@ fn e9_winning_nonce_produces_16_leading_zero_bits() {
     let hash_bytes = toloo_lib::hex::decode(&v.e9_winning_hash_hex).unwrap();
     let hash_array: [u8; 32] = hash_bytes.try_into().unwrap();
     let zeros = count_leading_zero_bits(&hash_array);
-    assert!(zeros >= 16, "winning nonce hash must have >=16 leading zero bits, got {zeros}");
+    assert!(
+        zeros >= 16,
+        "winning nonce hash must have >=16 leading zero bits, got {zeros}"
+    );
 }
 
 #[test]
@@ -341,8 +367,8 @@ fn e9_leading_zero_bit_cases() {
 
 #[test]
 fn e10_basic_membership_sequence() {
-    use toloo_lib::events::{make_room_join, make_room_leave};
     use toloo_lib::envelope::wrap_commit;
+    use toloo_lib::events::{make_room_join, make_room_leave};
     use toloo_lib::pool::Pool;
 
     let pool = Pool::memory().unwrap();
@@ -356,46 +382,87 @@ fn e10_basic_membership_sequence() {
     let dave = mk_node(dave_seed, dave_enc_seed);
 
     let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let mut tc = now;
     let commit = |env, tc| wrap_commit(env, &room, tc).unwrap();
 
     // seq 1: Arta joins
-    pool.put(&commit(make_room_join(&arta, &room.sig.pub_key, None).unwrap(), tc)).unwrap();
+    pool.put(&commit(
+        make_room_join(&arta, &room.sig.pub_key, None).unwrap(),
+        tc,
+    ))
+    .unwrap();
     tc += 100000;
     // seq 2: Babak joins
-    pool.put(&commit(make_room_join(&babak, &room.sig.pub_key, None).unwrap(), tc)).unwrap();
+    pool.put(&commit(
+        make_room_join(&babak, &room.sig.pub_key, None).unwrap(),
+        tc,
+    ))
+    .unwrap();
     tc += 100000;
     // seq 3: Mithra joins
-    pool.put(&commit(make_room_join(&mithra, &room.sig.pub_key, None).unwrap(), tc)).unwrap();
+    pool.put(&commit(
+        make_room_join(&mithra, &room.sig.pub_key, None).unwrap(),
+        tc,
+    ))
+    .unwrap();
     tc += 100000;
     // seq 4: Babak leaves
-    pool.put(&commit(make_room_leave(&babak, &room.sig.pub_key).unwrap(), tc)).unwrap();
+    pool.put(&commit(
+        make_room_leave(&babak, &room.sig.pub_key).unwrap(),
+        tc,
+    ))
+    .unwrap();
     tc += 100000;
     // seq 5: Mithra bans Arta
     let ban = toloo_lib::envelope::make_envelope(
         "room.ban",
         Some(serde_json::json!({"r": room.sig.pub_key, "banned": arta.sig.pub_key})),
         &mithra,
-        Some(toloo_lib::envelope::DatumBodyExtra { r: Some(room.sig.pub_key.clone()), to: None, tc: None, exp: None, nonce: None }),
-    ).unwrap();
+        Some(toloo_lib::envelope::DatumBodyExtra {
+            r: Some(room.sig.pub_key.clone()),
+            to: None,
+            tc: None,
+            exp: None,
+            nonce: None,
+        }),
+    )
+    .unwrap();
     pool.put(&commit(ban, tc)).unwrap();
     tc += 100000;
     // seq 6: Dave joins
-    pool.put(&commit(make_room_join(&dave, &room.sig.pub_key, None).unwrap(), tc)).unwrap();
+    pool.put(&commit(
+        make_room_join(&dave, &room.sig.pub_key, None).unwrap(),
+        tc,
+    ))
+    .unwrap();
 
     let state = pool.build_membership(&room.sig.pub_key).unwrap();
-    assert!(state.members.contains(&mithra.sig.pub_key), "Mithra should be member");
-    assert!(state.members.contains(&dave.sig.pub_key), "Dave should be member");
-    assert!(!state.members.contains(&arta.sig.pub_key), "Arta should be banned out");
+    assert!(
+        state.members.contains(&mithra.sig.pub_key),
+        "Mithra should be member"
+    );
+    assert!(
+        state.members.contains(&dave.sig.pub_key),
+        "Dave should be member"
+    );
+    assert!(
+        !state.members.contains(&arta.sig.pub_key),
+        "Arta should be banned out"
+    );
     assert!(!state.members.contains(&babak.sig.pub_key), "Babak left");
-    assert!(state.banned.contains(&arta.sig.pub_key), "Arta should be in banned set");
+    assert!(
+        state.banned.contains(&arta.sig.pub_key),
+        "Arta should be in banned set"
+    );
 }
 
 #[test]
 fn e10_unban_then_rejoin() {
-    use toloo_lib::events::make_room_join;
     use toloo_lib::envelope::{make_envelope, wrap_commit, DatumBodyExtra};
+    use toloo_lib::events::make_room_join;
     use toloo_lib::pool::Pool;
 
     let pool = Pool::memory().unwrap();
@@ -405,7 +472,9 @@ fn e10_unban_then_rejoin() {
     let commit = |env, tc| wrap_commit(env, &room, tc).unwrap();
 
     let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
     let mut tc = now;
 
     // Ban Arta
@@ -413,8 +482,15 @@ fn e10_unban_then_rejoin() {
         "room.ban",
         Some(serde_json::json!({"r": room.sig.pub_key, "banned": arta.sig.pub_key})),
         &mithra,
-        Some(DatumBodyExtra { r: Some(room.sig.pub_key.clone()), to: None, tc: None, exp: None, nonce: None }),
-    ).unwrap();
+        Some(DatumBodyExtra {
+            r: Some(room.sig.pub_key.clone()),
+            to: None,
+            tc: None,
+            exp: None,
+            nonce: None,
+        }),
+    )
+    .unwrap();
     pool.put(&commit(ban, tc)).unwrap();
     tc += 100000;
 
@@ -423,16 +499,30 @@ fn e10_unban_then_rejoin() {
         "room.unban",
         Some(serde_json::json!({"r": room.sig.pub_key, "unbanned": arta.sig.pub_key})),
         &mithra,
-        Some(DatumBodyExtra { r: Some(room.sig.pub_key.clone()), to: None, tc: None, exp: None, nonce: None }),
-    ).unwrap();
+        Some(DatumBodyExtra {
+            r: Some(room.sig.pub_key.clone()),
+            to: None,
+            tc: None,
+            exp: None,
+            nonce: None,
+        }),
+    )
+    .unwrap();
     pool.put(&commit(unban, tc)).unwrap();
     tc += 100000;
 
     // Arta rejoins
-    pool.put(&commit(make_room_join(&arta, &room.sig.pub_key, None).unwrap(), tc)).unwrap();
+    pool.put(&commit(
+        make_room_join(&arta, &room.sig.pub_key, None).unwrap(),
+        tc,
+    ))
+    .unwrap();
 
     let state = pool.build_membership(&room.sig.pub_key).unwrap();
-    assert!(state.members.contains(&arta.sig.pub_key), "Arta should be a member after unban+rejoin");
+    assert!(
+        state.members.contains(&arta.sig.pub_key),
+        "Arta should be a member after unban+rejoin"
+    );
     assert!(state.banned.is_empty(), "banned set should be empty");
 }
 
@@ -453,8 +543,14 @@ fn e11_last_matching_rule_wins() {
     ]);
     let rs = RuleSet::from_json(&rules);
 
-    assert!(!rs.can_post_node(&arta.sig.pub_key, &[]), "Arta denied by last matching rule");
-    assert!(rs.can_post_node(&babak.sig.pub_key, &[]), "Babak allowed by wildcard rule");
+    assert!(
+        !rs.can_post_node(&arta.sig.pub_key, &[]),
+        "Arta denied by last matching rule"
+    );
+    assert!(
+        rs.can_post_node(&babak.sig.pub_key, &[]),
+        "Babak allowed by wildcard rule"
+    );
 }
 
 #[test]
@@ -468,9 +564,15 @@ fn e11_rate_limit_rule() {
     let arta = mk_node(ARTA_SIG_SEED_HEX, ARTA_ENC_SEED_HEX);
 
     // 9 events in window: at 9, max is 10 → allowed
-    assert!(rs.check_rate_limit(&arta.sig.pub_key, 9), "9 events allows one more (9 <= 10)");
+    assert!(
+        rs.check_rate_limit(&arta.sig.pub_key, 9),
+        "9 events allows one more (9 <= 10)"
+    );
     // 11 events in window: over limit → denied
-    assert!(!rs.check_rate_limit(&arta.sig.pub_key, 11), "11 events in window = over limit, denied (11 > 10)");
+    assert!(
+        !rs.check_rate_limit(&arta.sig.pub_key, 11),
+        "11 events in window = over limit, denied (11 > 10)"
+    );
 }
 
 // ---- §E.13 Base64url Encoding ----
@@ -488,7 +590,12 @@ fn e13_encoding_cases() {
 
     for (input_bytes, expected_b64) in &expected {
         let got = base64url::encode(input_bytes);
-        assert_eq!(&got, expected_b64, "base64url({}) = {expected_b64}", toloo_lib::hex::encode(input_bytes));
+        assert_eq!(
+            &got,
+            expected_b64,
+            "base64url({}) = {expected_b64}",
+            toloo_lib::hex::encode(input_bytes)
+        );
     }
 
     // 32 zero bytes → 43-character base64url
@@ -530,9 +637,18 @@ fn e13_no_padding_chars() {
     let cases = &[b"a".as_ref(), b"ab", b"abc", b"abcd"];
     for input in cases {
         let encoded = base64url::encode(input);
-        assert!(!encoded.contains('='), "base64url must not contain padding: {encoded}");
-        assert!(!encoded.contains('+'), "base64url must not contain +: {encoded}");
-        assert!(!encoded.contains('/'), "base64url must not contain /: {encoded}");
+        assert!(
+            !encoded.contains('='),
+            "base64url must not contain padding: {encoded}"
+        );
+        assert!(
+            !encoded.contains('+'),
+            "base64url must not contain +: {encoded}"
+        );
+        assert!(
+            !encoded.contains('/'),
+            "base64url must not contain /: {encoded}"
+        );
     }
 }
 
@@ -544,5 +660,8 @@ fn e14_envelope_canonical_d_before_p() {
     let env_val = serde_json::to_value(&v.e4_1_envelope).unwrap();
     let canonical = canonical_bytes(&env_val).unwrap();
     let s = std::str::from_utf8(&canonical).unwrap();
-    assert!(s.starts_with("{\"d\":"), "canonical envelope must start with {{\"d\": — got: {s}");
+    assert!(
+        s.starts_with("{\"d\":"),
+        "canonical envelope must start with {{\"d\": — got: {s}"
+    );
 }

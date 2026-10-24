@@ -71,8 +71,7 @@ pub fn encrypt_private_with_eph(
 ///
 /// Returns the original content JSON value.
 pub fn decrypt_private(c: &PrivateCiphertext, recipient_enc_priv: &str) -> Result<Value> {
-    let eph_pub_bytes =
-        base64url::decode(&c.eph).context("invalid eph base64url")?;
+    let eph_pub_bytes = base64url::decode(&c.eph).context("invalid eph base64url")?;
     let rec_enc_priv_bytes =
         base64url::decode(recipient_enc_priv).context("invalid recipient enc priv base64url")?;
     let rec_enc_pub_bytes = {
@@ -107,26 +106,18 @@ pub fn decrypt_private(c: &PrivateCiphertext, recipient_enc_priv: &str) -> Resul
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
     use super::{decrypt_private, encrypt_private, encrypt_private_with_eph, PrivateCiphertext};
     use crate::base64url;
-    
-    
+    use crate::fixtures::*;
+
     use serde_json::json;
-    use x25519_dalek::{PublicKey, StaticSecret};
+    
     // Helper: derive X25519 public key from a 32-byte seed.
     fn x25519_pub_from_seed(seed_hex: &str) -> (String, String) {
-        let seed_bytes: Vec<u8> = (0..seed_hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&seed_hex[i..i + 2], 16).unwrap())
-            .collect();
-        let seed_arr: [u8; 32] = seed_bytes.try_into().unwrap();
-        let secret = StaticSecret::from(seed_arr);
-        let public = PublicKey::from(&secret);
-        (
-            base64url::encode(public.as_bytes()),
-            base64url::encode(&secret.to_bytes()),
-        )
+        let priv_bytes: [u8; 32] = crate::vectors::hex_to_bytes(seed_hex).try_into().unwrap();
+        let pub_b64 = crate::base64url::encode(&crate::crypto::x25519_pub_from_seed(&priv_bytes));
+        let priv_b64 = crate::base64url::encode(&priv_bytes);
+        (pub_b64, priv_b64)
     }
 
     #[test]
@@ -151,8 +142,8 @@ mod tests {
         let recipient = mk_node();
         let content = json!({"body": "secret"});
 
-        let mut ct = encrypt_private(&content, &recipient.enc.pub_key)
-            .expect("encrypt should succeed");
+        let mut ct =
+            encrypt_private(&content, &recipient.enc.pub_key).expect("encrypt should succeed");
 
         // Corrupt the last character of the ciphertext.
         let mut bytes = base64url::decode(&ct.encrypted).unwrap();
@@ -169,8 +160,7 @@ mod tests {
         let wrong = mk_node();
         let content = json!({"body": "top secret"});
 
-        let ct = encrypt_private(&content, &recipient.enc.pub_key)
-            .expect("encrypt should succeed");
+        let ct = encrypt_private(&content, &recipient.enc.pub_key).expect("encrypt should succeed");
 
         assert!(decrypt_private(&ct, &wrong.enc.priv_key).is_err());
     }
@@ -183,12 +173,21 @@ mod tests {
         let ct1 = encrypt_private(&content, &recipient.enc.pub_key).unwrap();
         let ct2 = encrypt_private(&content, &recipient.enc.pub_key).unwrap();
 
-        assert_ne!(ct1.eph, ct2.eph, "each call must generate a fresh ephemeral key");
+        assert_ne!(
+            ct1.eph, ct2.eph,
+            "each call must generate a fresh ephemeral key"
+        );
         assert_ne!(ct1.encrypted, ct2.encrypted);
 
         // Both must decrypt to same content.
-        assert_eq!(decrypt_private(&ct1, &recipient.enc.priv_key).unwrap(), content);
-        assert_eq!(decrypt_private(&ct2, &recipient.enc.priv_key).unwrap(), content);
+        assert_eq!(
+            decrypt_private(&ct1, &recipient.enc.priv_key).unwrap(),
+            content
+        );
+        assert_eq!(
+            decrypt_private(&ct2, &recipient.enc.priv_key).unwrap(),
+            content
+        );
     }
 
     /// Test vector: §E.7 — deterministic encryption using fixed ephemeral seed.
@@ -216,8 +215,7 @@ mod tests {
         assert_eq!(ct.eph.len(), 43);
 
         // Decryption must recover original content.
-        let decrypted = decrypt_private(&ct, &babak_enc_priv)
-            .expect("decrypt should succeed");
+        let decrypted = decrypt_private(&ct, &babak_enc_priv).expect("decrypt should succeed");
         assert_eq!(decrypted, content);
 
         // Encrypting again with same seed must produce identical output.

@@ -53,6 +53,11 @@ pub fn x25519_generate() -> (Vec<u8>, Vec<u8>) {
     (public.as_bytes().to_vec(), secret.to_bytes().to_vec())
 }
 
+/// Derive an X25519 public key from a 32-byte private key.
+pub fn x25519_pub_from_seed(priv_key: &[u8; 32]) -> [u8; 32] {
+    *PublicKey::from(&StaticSecret::from(*priv_key)).as_bytes()
+}
+
 /// Compute X25519 shared secret.
 pub fn x25519_shared_secret(my_priv: &[u8], their_pub: &[u8]) -> Result<Vec<u8>> {
     let my_priv_bytes = exact_bytes(my_priv, "X25519 private key")?;
@@ -120,9 +125,9 @@ mod tests {
     use crate::hex::encode as hex_encode;
 
     use super::{
-        chacha20_decrypt, chacha20_encrypt, derive_private_message_key,
-        ed25519_generate, ed25519_pub_from_seed, ed25519_sign, ed25519_verify,
-        sha256, x25519_generate, x25519_shared_secret,
+        chacha20_decrypt, chacha20_encrypt, derive_private_message_key, ed25519_generate,
+        ed25519_pub_from_seed, ed25519_sign, ed25519_verify, sha256, x25519_generate,
+        x25519_shared_secret,
     };
 
     #[test]

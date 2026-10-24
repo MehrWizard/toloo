@@ -17,7 +17,11 @@ pub enum Rule {
     /// `{"t": "post_pow", "difficulty": N}`
     PostPow { bits: u32 },
     /// `{"t": "rate_limit", "max": N, "per": N, "for": [...]?}`
-    RateLimit { max: u32, per_ms: u64, for_nodes: Option<Vec<String>> },
+    RateLimit {
+        max: u32,
+        per_ms: u64,
+        for_nodes: Option<Vec<String>>,
+    },
     /// `{"t": "retention", "days": N}`
     Retention { days: u64 },
     /// `{"t": "uncommitted_ttl", "ms": N}`
@@ -140,7 +144,12 @@ impl RuleSet {
         // Simplified: return the last rate_limit that applies to everyone (no `for_nodes`).
         let mut result = None;
         for rule in &self.0 {
-            if let Rule::RateLimit { max, per_ms: _, for_nodes: None } = rule {
+            if let Rule::RateLimit {
+                max,
+                per_ms: _,
+                for_nodes: None,
+            } = rule
+            {
                 result = Some(*max);
             }
         }
@@ -152,7 +161,12 @@ impl RuleSet {
     pub fn check_rate_limit(&self, node: &str, events_in_window: u32) -> bool {
         let mut result = true; // no rate limit = allow
         for rule in &self.0 {
-            if let Rule::RateLimit { max, per_ms: _, for_nodes } = rule {
+            if let Rule::RateLimit {
+                max,
+                per_ms: _,
+                for_nodes,
+            } = rule
+            {
                 let applies = match for_nodes {
                     None => true,
                     Some(list) => list.iter().any(|s| s == node),
@@ -234,7 +248,11 @@ fn parse_rule(v: &Value) -> Rule {
             let max = v.get("max").and_then(Value::as_u64).unwrap_or(0) as u32;
             let per_ms = v.get("per").and_then(Value::as_u64).unwrap_or(0);
             let for_nodes = v.get("for").map(|f| string_array(Some(f)));
-            Rule::RateLimit { max, per_ms, for_nodes }
+            Rule::RateLimit {
+                max,
+                per_ms,
+                for_nodes,
+            }
         }
         "retention" => {
             let days = v.get("days").and_then(Value::as_u64).unwrap_or(0);
@@ -280,7 +298,7 @@ fn parse_target(v: &Value) -> (RuleTarget, bool) {
     }
 }
 
-fn string_array(v: Option<&Value>) -> Vec<String> {
+pub(crate) fn string_array(v: Option<&Value>) -> Vec<String> {
     v.and_then(Value::as_array)
         .map(|arr| {
             arr.iter()
@@ -300,13 +318,25 @@ mod tests {
     #[test]
     fn parse_join_allow_star() {
         let rs = RuleSet::from_json(&json!([{"t": "join", "allow": "*"}]));
-        assert_eq!(rs.rules(), &[Rule::Join { who: RuleTarget::Anyone, allow: true }]);
+        assert_eq!(
+            rs.rules(),
+            &[Rule::Join {
+                who: RuleTarget::Anyone,
+                allow: true
+            }]
+        );
     }
 
     #[test]
     fn parse_post_allow_members() {
         let rs = RuleSet::from_json(&json!([{"t": "post", "allow": "members"}]));
-        assert_eq!(rs.rules(), &[Rule::Post { who: RuleTarget::Members, allow: true }]);
+        assert_eq!(
+            rs.rules(),
+            &[Rule::Post {
+                who: RuleTarget::Members,
+                allow: true
+            }]
+        );
     }
 
     #[test]
@@ -314,7 +344,10 @@ mod tests {
         let rs = RuleSet::from_json(&json!([{"t": "join", "deny": ["SIG_A"]}]));
         assert_eq!(
             rs.rules(),
-            &[Rule::Join { who: RuleTarget::List(vec!["SIG_A".to_owned()]), allow: false }]
+            &[Rule::Join {
+                who: RuleTarget::List(vec!["SIG_A".to_owned()]),
+                allow: false
+            }]
         );
     }
 
@@ -323,7 +356,9 @@ mod tests {
         let rs = RuleSet::from_json(&json!([{"t": "invite_only", "inviters": ["SIG_CREATOR"]}]));
         assert_eq!(
             rs.rules(),
-            &[Rule::InviteOnly { inviters: vec!["SIG_CREATOR".to_owned()] }]
+            &[Rule::InviteOnly {
+                inviters: vec!["SIG_CREATOR".to_owned()]
+            }]
         );
     }
 
@@ -342,7 +377,11 @@ mod tests {
         let rs = RuleSet::from_json(&json!([{"t": "rate_limit", "max": 10, "per": 60000}]));
         assert_eq!(
             rs.rules(),
-            &[Rule::RateLimit { max: 10, per_ms: 60000, for_nodes: None }]
+            &[Rule::RateLimit {
+                max: 10,
+                per_ms: 60000,
+                for_nodes: None
+            }]
         );
     }
 
@@ -354,7 +393,8 @@ mod tests {
         assert_eq!(
             rs.rules(),
             &[Rule::RateLimit {
-                max: 100, per_ms: 60000,
+                max: 100,
+                per_ms: 60000,
                 for_nodes: Some(vec!["SIG_ADMIN".to_owned()])
             }]
         );
@@ -379,7 +419,13 @@ mod tests {
         // Unknown rules are kept as Unknown variant — they don't affect evaluation.
         assert_eq!(rs.rules().len(), 2);
         assert_eq!(rs.rules()[0], Rule::Unknown);
-        assert_eq!(rs.rules()[1], Rule::Join { who: RuleTarget::Anyone, allow: true });
+        assert_eq!(
+            rs.rules()[1],
+            Rule::Join {
+                who: RuleTarget::Anyone,
+                allow: true
+            }
+        );
     }
 
     #[test]
@@ -442,7 +488,7 @@ mod tests {
     fn rate_limit_check() {
         let rs = RuleSet::from_json(&json!([{"t": "rate_limit", "max": 10, "per": 60000}]));
         assert_eq!(rs.max_events_per_hour(), Some(10));
-        assert!(rs.check_rate_limit("any_node", 10));  // at limit = allow
+        assert!(rs.check_rate_limit("any_node", 10)); // at limit = allow
         assert!(!rs.check_rate_limit("any_node", 11)); // over limit = deny
     }
 
@@ -455,5 +501,4 @@ mod tests {
             Some(&["SIG_CREATOR".to_owned()][..])
         );
     }
-
 }

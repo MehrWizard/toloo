@@ -41,8 +41,7 @@ pub fn encrypt_key(private_key: &[u8], passphrase: &str) -> Result<EncryptedKey>
 
 /// Decrypt a private key from an encrypted blob using a passphrase.
 pub fn decrypt_key(encrypted: &EncryptedKey, passphrase: &str) -> Result<Vec<u8>> {
-    let raw = base64url::decode(&encrypted.blob)
-        .context("invalid encrypted key blob encoding")?;
+    let raw = base64url::decode(&encrypted.blob).context("invalid encrypted key blob encoding")?;
 
     if raw.len() < SALT_LEN + NONCE_LEN + 16 {
         bail!("encrypted key blob too short");
@@ -61,14 +60,15 @@ pub fn decrypt_key(encrypted: &EncryptedKey, passphrase: &str) -> Result<Vec<u8>
 
 /// Derive a 32-byte key from a passphrase and salt using Argon2id.
 fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
-    use argon2::{Argon2, Algorithm, Version, Params};
+    use argon2::{Algorithm, Argon2, Params, Version};
 
     let params = Params::new(
-        19_456,  // 19 MiB memory
-        2,       // 2 iterations
-        1,       // 1 lane
+        19_456, // 19 MiB memory
+        2,      // 2 iterations
+        1,      // 1 lane
         Some(32),
-    ).map_err(|e| anyhow!("argon2 params error: {e}"))?;
+    )
+    .map_err(|e| anyhow!("argon2 params error: {e}"))?;
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut output = [0u8; 32];
@@ -124,6 +124,9 @@ mod tests {
         let key = b"same_key_different_salt";
         let enc1 = encrypt_key(key, "pass").unwrap();
         let enc2 = encrypt_key(key, "pass").unwrap();
-        assert_ne!(enc1.blob, enc2.blob, "random salt should produce different blobs");
+        assert_ne!(
+            enc1.blob, enc2.blob,
+            "random salt should produce different blobs"
+        );
     }
 }

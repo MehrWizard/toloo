@@ -34,51 +34,53 @@ use crate::types::{LocalNode, LocalRoom};
 
 /// Live connection counters for a running relay instance.
 pub struct RelayMetrics {
-    pub active:    AtomicUsize,
-    pub total:     AtomicUsize,
-    pub bytes_in:  AtomicU64,
+    pub active: AtomicUsize,
+    pub total: AtomicUsize,
+    pub bytes_in: AtomicU64,
     pub bytes_out: AtomicU64,
 }
 
 impl RelayMetrics {
     pub fn new() -> Self {
         Self {
-            active:    AtomicUsize::new(0),
-            total:     AtomicUsize::new(0),
-            bytes_in:  AtomicU64::new(0),
+            active: AtomicUsize::new(0),
+            total: AtomicUsize::new(0),
+            bytes_in: AtomicU64::new(0),
             bytes_out: AtomicU64::new(0),
         }
     }
 }
 
 impl Default for RelayMetrics {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// One transport endpoint that this relay should listen on.
 pub struct EndpointConfig {
     /// Socket address to bind on (e.g. `0.0.0.0:17701`).
-    pub addr:  SocketAddr,
+    pub addr: SocketAddr,
     /// Transport protocol: `"ws"`, `"wss"`, `"http"`, `"https"`.
     pub proto: String,
     /// URL path for HTTP/HTTPS endpoints (default `/`).
-    pub path:  Option<String>,
+    pub path: Option<String>,
     /// Pre-built TLS acceptor — required for `wss` and `https`, `None` otherwise.
-    pub tls:   Option<Arc<tokio_rustls::TlsAcceptor>>,
+    pub tls: Option<Arc<tokio_rustls::TlsAcceptor>>,
 }
 
 /// Relay configuration passed to [`run_relay`].
 pub struct RelayConfig {
     /// Relay's Ed25519 + X25519 identity.
-    pub node:      LocalNode,
+    pub node: LocalNode,
     /// Transport endpoints to listen on.  At least one required.
     pub endpoints: Vec<EndpointConfig>,
     /// Shared event pool.  Not `Sync`; all access happens on the local executor.
-    pub pool:      Arc<Pool>,
+    pub pool: Arc<Pool>,
     /// Rooms for which this relay holds the private key (key-holder rooms).
-    pub rooms:     std::collections::HashMap<String, LocalRoom>,
+    pub rooms: std::collections::HashMap<String, LocalRoom>,
     /// Optional live metrics counters.
-    pub metrics:   Option<Arc<RelayMetrics>>,
+    pub metrics: Option<Arc<RelayMetrics>>,
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -97,23 +99,23 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
     let local = LocalSet::new();
 
     for ep in &config.endpoints {
-        let cfg   = Arc::clone(&config);
-        let addr  = ep.addr;
+        let cfg = Arc::clone(&config);
+        let addr = ep.addr;
         let proto = ep.proto.clone();
-        let path  = ep.path.clone().unwrap_or_else(|| "/".to_owned());
-        let tls   = ep.tls.clone();
+        let path = ep.path.clone().unwrap_or_else(|| "/".to_owned());
+        let tls = ep.tls.clone();
 
         local.spawn_local(async move {
             let result = match proto.as_str() {
                 "ws" => run_ws_accept_loop(addr, None, cfg).await,
                 "wss" => match tls {
                     Some(t) => run_ws_accept_loop(addr, Some(t), cfg).await,
-                    None    => Err(anyhow::anyhow!("wss endpoint missing TLS acceptor")),
+                    None => Err(anyhow::anyhow!("wss endpoint missing TLS acceptor")),
                 },
                 "http" => run_http_accept_loop(addr, path, None, cfg).await,
                 "https" => match tls {
                     Some(t) => run_http_accept_loop(addr, path, Some(t), cfg).await,
-                    None    => Err(anyhow::anyhow!("https endpoint missing TLS acceptor")),
+                    None => Err(anyhow::anyhow!("https endpoint missing TLS acceptor")),
                 },
                 p => {
                     log_info(format!("endpoint proto={p}: not supported, skipping"));
@@ -126,7 +128,9 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
         });
     }
 
-    local.run_until(futures_util::future::pending::<Result<()>>()).await
+    local
+        .run_until(futures_util::future::pending::<Result<()>>())
+        .await
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -134,13 +138,20 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
 // ══════════════════════════════════════════════════════════════════════
 
 async fn run_ws_accept_loop(
-    addr:   SocketAddr,
-    tls:    Option<Arc<tokio_rustls::TlsAcceptor>>,
+    addr: SocketAddr,
+    tls: Option<Arc<tokio_rustls::TlsAcceptor>>,
     config: Arc<RelayConfig>,
 ) -> Result<()> {
-    let listener = TcpListener::bind(addr).await
-        .with_context(|| format!("failed to bind {} on {addr}", if tls.is_some() { "WSS" } else { "WS" }))?;
-    log_info(format!("{} relay listening on {addr}", if tls.is_some() { "WSS" } else { "WS" }));
+    let listener = TcpListener::bind(addr).await.with_context(|| {
+        format!(
+            "failed to bind {} on {addr}",
+            if tls.is_some() { "WSS" } else { "WS" }
+        )
+    })?;
+    log_info(format!(
+        "{} relay listening on {addr}",
+        if tls.is_some() { "WSS" } else { "WS" }
+    ));
 
     loop {
         let (stream, peer_addr) = listener.accept().await.context("WS accept")?;
@@ -167,7 +178,9 @@ async fn run_ws_accept_loop(
                             }
                             bump_metrics(&cfg, false);
                         }
-                        Err(e) => log_info(format!("WSS TLS handshake error from {peer_addr}: {e}")),
+                        Err(e) => {
+                            log_info(format!("WSS TLS handshake error from {peer_addr}: {e}"))
+                        }
                     }
                 });
             }
@@ -195,14 +208,20 @@ where
                     if let Some(m) = &config.metrics {
                         m.bytes_out.fetch_add(out.len() as u64, Ordering::Relaxed);
                     }
-                    ws.send(Message::Text(out.into())).await.context("WS send")?;
+                    ws.send(Message::Text(out.into()))
+                        .await
+                        .context("WS send")?;
                 }
                 // Signal end of response batch so clients can proceed.
-                ws.send(Message::Text(r#"{"done":true}"#.into())).await.context("WS done")?;
+                ws.send(Message::Text(r#"{"done":true}"#.into()))
+                    .await
+                    .context("WS done")?;
             }
             Message::Binary(_) => {}
-            Message::Close(_)  => break,
-            Message::Ping(p)   => { ws.send(Message::Pong(p)).await.context("WS pong")?; }
+            Message::Close(_) => break,
+            Message::Ping(p) => {
+                ws.send(Message::Pong(p)).await.context("WS pong")?;
+            }
             _ => {}
         }
     }
@@ -218,19 +237,20 @@ where
 // Plain HTTP uses a raw TcpStream; HTTPS wraps it with a TlsStream first.
 
 async fn run_http_accept_loop(
-    addr:   SocketAddr,
-    path:   String,
-    tls:    Option<Arc<tokio_rustls::TlsAcceptor>>,
+    addr: SocketAddr,
+    path: String,
+    tls: Option<Arc<tokio_rustls::TlsAcceptor>>,
     config: Arc<RelayConfig>,
 ) -> Result<()> {
     let proto = if tls.is_some() { "HTTPS" } else { "HTTP" };
-    let listener = TcpListener::bind(addr).await
+    let listener = TcpListener::bind(addr)
+        .await
         .with_context(|| format!("failed to bind {proto} on {addr}"))?;
     log_info(format!("{proto} relay listening on {addr} (path={path})"));
 
     loop {
         let (stream, peer_addr) = listener.accept().await.context("HTTP(S) accept")?;
-        let cfg  = Arc::clone(&config);
+        let cfg = Arc::clone(&config);
         let path = path.clone();
 
         match &tls {
@@ -246,7 +266,9 @@ async fn run_http_accept_loop(
                 spawn_local(async move {
                     match tls_acc.accept(stream).await {
                         Ok(tls_stream) => {
-                            if let Err(e) = do_http_connection(tls_stream, peer_addr, &cfg, &path).await {
+                            if let Err(e) =
+                                do_http_connection(tls_stream, peer_addr, &cfg, &path).await
+                            {
                                 log_info(format!("HTTPS error from {peer_addr}: {e}"));
                             }
                         }
@@ -262,9 +284,9 @@ async fn run_http_accept_loop(
 /// Works over any `AsyncRead + AsyncWrite + Unpin` (TcpStream or TlsStream).
 async fn do_http_connection<S>(
     mut stream: S,
-    _peer:      SocketAddr,
-    config:     &RelayConfig,
-    want_path:  &str,
+    _peer: SocketAddr,
+    config: &RelayConfig,
+    want_path: &str,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -278,7 +300,9 @@ where
             Ok(_) => header_buf.push(byte[0]),
             Err(e) => return Err(e.into()),
         }
-        if header_buf.ends_with(b"\r\n\r\n") { break; }
+        if header_buf.ends_with(b"\r\n\r\n") {
+            break;
+        }
         if header_buf.len() > 16 * 1024 {
             anyhow::bail!("HTTP headers exceed 16 KiB");
         }
@@ -291,7 +315,7 @@ where
     let req_line = lines.next().unwrap_or("");
     let mut parts = req_line.splitn(3, ' ');
     let method = parts.next().unwrap_or("");
-    let path   = parts.next().unwrap_or("");
+    let path = parts.next().unwrap_or("");
 
     let mut content_length: usize = 0;
     for line in lines {
@@ -322,19 +346,23 @@ where
         anyhow::bail!("HTTP request body too large: {content_length} bytes");
     }
     let mut body = vec![0u8; content_length];
-    stream.read_exact(&mut body).await.context("HTTP body read")?;
+    stream
+        .read_exact(&mut body)
+        .await
+        .context("HTTP body read")?;
 
     if let Some(m) = &config.metrics {
         bump_metrics(config, true);
         m.bytes_in.fetch_add(body.len() as u64, Ordering::Relaxed);
     }
 
-    let json_str  = std::str::from_utf8(&body).context("request body not UTF-8")?;
+    let json_str = std::str::from_utf8(&body).context("request body not UTF-8")?;
     let responses = dispatch_common(json_str, config).await;
     let resp_body = serde_json::to_vec(&responses).context("response serialise")?;
 
     if let Some(m) = &config.metrics {
-        m.bytes_out.fetch_add(resp_body.len() as u64, Ordering::Relaxed);
+        m.bytes_out
+            .fetch_add(resp_body.len() as u64, Ordering::Relaxed);
         m.active.fetch_sub(1, Ordering::Relaxed);
     }
 
@@ -345,8 +373,14 @@ where
          Connection: close\r\n\r\n",
         resp_body.len()
     );
-    stream.write_all(resp_headers.as_bytes()).await.context("HTTP write headers")?;
-    stream.write_all(&resp_body).await.context("HTTP write body")?;
+    stream
+        .write_all(resp_headers.as_bytes())
+        .await
+        .context("HTTP write headers")?;
+    stream
+        .write_all(&resp_body)
+        .await
+        .context("HTTP write body")?;
     stream.flush().await.context("HTTP flush")?;
 
     Ok(())
@@ -358,8 +392,10 @@ where
 
 async fn dispatch_common(json_str: &str, config: &RelayConfig) -> Vec<Value> {
     let value: Value = match serde_json::from_str(json_str) {
-        Ok(v)  => v,
-        Err(e) => return vec![serde_json::json!({"error": "parse_error", "message": e.to_string()})],
+        Ok(v) => v,
+        Err(e) => {
+            return vec![serde_json::json!({"error": "parse_error", "message": e.to_string()})]
+        }
     };
     match crate::envelope::parse_envelope(value) {
         Ok(env) => match handle_request(env, &config.pool, config).await {

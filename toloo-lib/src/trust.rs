@@ -4,8 +4,8 @@
 //! - Direct experience (successful commits, uptime)
 //! - Attestation weight (positive/negative from other nodes, weighted by attester quality)
 
-use anyhow::Result;
 use crate::pool::Pool;
+use anyhow::Result;
 
 /// Trust score for a node.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,9 +51,7 @@ pub fn evaluate_trust(pool: &Pool, node_pub: &str) -> Result<TrustScore> {
         let entries = pool.get_room_channel(room, 0)?;
         direct_commits += entries
             .iter()
-            .filter(|e| {
-                crate::envelope::innermost(&e.env).d.n == node_pub && e.tc.is_some()
-            })
+            .filter(|e| crate::envelope::innermost(&e.env).d.n == node_pub && e.tc.is_some())
             .count() as u64;
     }
 
@@ -93,13 +91,12 @@ pub fn evaluate_trust(pool: &Pool, node_pub: &str) -> Result<TrustScore> {
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
     use super::*;
+    use crate::fixtures::*;
     use crate::pool::Pool;
-    
-    
+
     use crate::events::make_side_attestation;
-    
+
     #[test]
     fn default_score_is_neutral() {
         let pool = Pool::memory().unwrap();

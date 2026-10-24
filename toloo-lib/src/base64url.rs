@@ -60,10 +60,17 @@ pub fn decode(s: &str) -> anyhow::Result<Vec<u8>> {
     let len = bytes.len();
 
     while i + 4 <= len {
-        let n = (char_val(bytes[i]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 18)
-            | (char_val(bytes[i + 1]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 12)
-            | (char_val(bytes[i + 2]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 6)
-            | char_val(bytes[i + 3]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?;
+        let n = (char_val(bytes[i])
+            .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+            << 18)
+            | (char_val(bytes[i + 1])
+                .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+                << 12)
+            | (char_val(bytes[i + 2])
+                .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+                << 6)
+            | char_val(bytes[i + 3])
+                .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?;
         out.push((n >> 16) as u8);
         out.push(((n >> 8) & 0xff) as u8);
         out.push((n & 0xff) as u8);
@@ -72,14 +79,24 @@ pub fn decode(s: &str) -> anyhow::Result<Vec<u8>> {
 
     let rem = len - i;
     if rem == 2 {
-        let n = (char_val(bytes[i]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 18)
-            | (char_val(bytes[i + 1]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 12);
+        let n = (char_val(bytes[i])
+            .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+            << 18)
+            | (char_val(bytes[i + 1])
+                .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+                << 12);
         // Only first byte is valid; second 6-bit group is zero bits.
         out.push((n >> 16) as u8);
     } else if rem == 3 {
-        let n = (char_val(bytes[i]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 18)
-            | (char_val(bytes[i + 1]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 12)
-            | (char_val(bytes[i + 2]).ok_or_else(|| anyhow::anyhow!("invalid base64url character"))? << 6);
+        let n = (char_val(bytes[i])
+            .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+            << 18)
+            | (char_val(bytes[i + 1])
+                .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+                << 12)
+            | (char_val(bytes[i + 2])
+                .ok_or_else(|| anyhow::anyhow!("invalid base64url character"))?
+                << 6);
         out.push((n >> 16) as u8);
         out.push(((n >> 8) & 0xff) as u8);
     }

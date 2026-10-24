@@ -94,13 +94,13 @@ pub fn decode(input: &str) -> Result<Vec<Envelope>> {
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
     use super::*;
     use crate::base64url;
     use crate::crypto::ed25519_generate;
     use crate::events::make_node_meta;
+    use crate::fixtures::*;
     use crate::types::Keypair;
-    
+
     use serde_json::json;
     #[test]
     fn single_envelope_uri_roundtrip() {
@@ -142,7 +142,10 @@ mod tests {
 
         let file = encode_file(&[env1.clone(), env2.clone()]).unwrap();
         assert!(file.contains('\n'), "file format uses newlines");
-        assert!(!file.starts_with("toloo://"), "file format has no URI prefix");
+        assert!(
+            !file.starts_with("toloo://"),
+            "file format has no URI prefix"
+        );
 
         let decoded = decode(&file).unwrap();
         assert_eq!(decoded.len(), 2);
@@ -231,7 +234,8 @@ mod tests {
                 },
             }
         };
-        let (d1, commit) = make_room_create(&node, &room, Some("Test Room"), Some(json!([]))).unwrap();
+        let (d1, commit) =
+            make_room_create(&node, &room, Some("Test Room"), Some(json!([]))).unwrap();
         let _ = d1;
         let peer_meta = make_node_meta(&node, vec![]).unwrap();
 

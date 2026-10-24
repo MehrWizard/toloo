@@ -57,7 +57,7 @@ pub fn find_pow_nonce(d: &mut DatumBody, required_bits: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    
 
     use super::{count_leading_zero_bits, find_pow_nonce, verify_pow};
     use crate::types::DatumBody;
@@ -125,18 +125,10 @@ mod tests {
     fn base_datum() -> DatumBody {
         DatumBody {
             n: "ARTA_SIG_PUB".to_owned(),
-            v: "0.2".to_owned(),
             t: "room.join".to_owned(),
             ts: 1_710_000_200_000,
             r: Some("ROOM_SIG_PUB".to_owned()),
-            to: None,
-            c: None,
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         }
     }
 

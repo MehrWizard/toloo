@@ -11,6 +11,26 @@ pub struct Envelope {
     pub p: String,
 }
 
+impl Default for DatumBody {
+    /// A v0.2 datum skeleton; fill in `n`, `t`, `ts` and content fields.
+    fn default() -> Self {
+        Self {
+            n: String::new(),
+            v: "0.2".to_owned(),
+            t: String::new(),
+            ts: 0,
+            r: None,
+            to: None,
+            c: None,
+            env: None,
+            tc: None,
+            exp: None,
+            nonce: None,
+            extra: HashMap::new(),
+        }
+    }
+}
+
 /// Signed datum inside an envelope.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DatumBody {

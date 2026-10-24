@@ -145,8 +145,9 @@ impl Pool {
             meta_path: base.with_extension("meta.json"),
             blobs_dir: base.with_extension("blobs"),
         };
-        std::fs::create_dir_all(&persist.blobs_dir)
-            .with_context(|| format!("failed to create blob dir {}", persist.blobs_dir.display()))?;
+        std::fs::create_dir_all(&persist.blobs_dir).with_context(|| {
+            format!("failed to create blob dir {}", persist.blobs_dir.display())
+        })?;
 
         let pool = Pool {
             state: RwLock::new(PoolState::default()),
@@ -177,7 +178,10 @@ impl Pool {
     /// Collect clones of all live entries matching `pred`.
     pub(crate) fn select<F: Fn(&PoolEntry) -> bool>(&self, pred: F) -> Result<Vec<PoolEntry>> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.events.iter().filter_map(|s| s.as_ref())
+        Ok(state
+            .events
+            .iter()
+            .filter_map(|s| s.as_ref())
             .filter(|e| pred(e))
             .cloned()
             .collect())
@@ -192,7 +196,9 @@ impl Pool {
     // ── Persistence ────────────────────────────────────────────────────
 
     fn load_meta(&self) -> Result<()> {
-        let Some(p) = &self.persist else { return Ok(()) };
+        let Some(p) = &self.persist else {
+            return Ok(());
+        };
         if !p.meta_path.exists() {
             return Ok(());
         }
@@ -205,11 +211,12 @@ impl Pool {
     }
 
     fn save_meta(&self, meta: &MetaState) -> Result<()> {
-        let Some(p) = &self.persist else { return Ok(()) };
+        let Some(p) = &self.persist else {
+            return Ok(());
+        };
         let tmp = p.meta_path.with_extension("meta.json.tmp");
         let json = serde_json::to_string_pretty(meta).context("meta serialization")?;
-        std::fs::write(&tmp, json)
-            .with_context(|| format!("failed to write {}", tmp.display()))?;
+        std::fs::write(&tmp, json).with_context(|| format!("failed to write {}", tmp.display()))?;
         std::fs::rename(&tmp, &p.meta_path)
             .with_context(|| format!("failed to replace {}", p.meta_path.display()))?;
         Ok(())
@@ -218,7 +225,9 @@ impl Pool {
     /// Rebuild memory state from the event log. A truncated final line
     /// (crash mid-append) is discarded; corruption anywhere else is fatal.
     fn replay_events(&self) -> Result<()> {
-        let Some(p) = &self.persist else { return Ok(()) };
+        let Some(p) = &self.persist else {
+            return Ok(());
+        };
         if !p.events_path.exists() {
             return Ok(());
         }
@@ -269,7 +278,9 @@ impl Pool {
     }
 
     fn load_blob_files(&self) -> Result<()> {
-        let Some(p) = &self.persist else { return Ok(()) };
+        let Some(p) = &self.persist else {
+            return Ok(());
+        };
         let mut state = self.write().map_err(lock_err)?;
         for entry in std::fs::read_dir(&p.blobs_dir)? {
             let entry = entry?;
@@ -279,8 +290,12 @@ impl Pool {
             // File name: <blob_id>.<index>
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
-            let Some((blob_id, idx)) = name.rsplit_once('.') else { continue };
-            let Ok(index) = idx.parse::<u32>() else { continue };
+            let Some((blob_id, idx)) = name.rsplit_once('.') else {
+                continue;
+            };
+            let Ok(index) = idx.parse::<u32>() else {
+                continue;
+            };
             let data = std::fs::read(entry.path())?;
             state.blob_pieces.insert((blob_id.to_owned(), index), data);
         }
@@ -288,7 +303,9 @@ impl Pool {
     }
 
     fn append_event(&self, json: &str) -> Result<()> {
-        let Some(p) = &self.persist else { return Ok(()) };
+        let Some(p) = &self.persist else {
+            return Ok(());
+        };
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -301,7 +318,9 @@ impl Pool {
     }
 
     fn write_blob_file(&self, blob_id: &str, piece_index: u32, data: &[u8]) -> Result<()> {
-        let Some(p) = &self.persist else { return Ok(()) };
+        let Some(p) = &self.persist else {
+            return Ok(());
+        };
         let path = p.blobs_dir.join(format!("{blob_id}.{piece_index}"));
         std::fs::write(path, data)?;
         Ok(())
@@ -309,7 +328,9 @@ impl Pool {
 
     /// Rewrite the event log from memory, dropping superseded and pruned events.
     pub fn compact(&self) -> Result<()> {
-        let Some(p) = &self.persist else { return Ok(()) };
+        let Some(p) = &self.persist else {
+            return Ok(());
+        };
         let state = self.read().map_err(lock_err)?;
         let tmp = p.events_path.with_extension("jsonl.tmp");
         {
@@ -349,7 +370,9 @@ impl Pool {
             let key_room = inner.d.r.clone();
             let superseded: Vec<String> = if let Some(room) = &key_room {
                 let channel = channel_of(&inner.d);
-                state.events.iter()
+                state
+                    .events
+                    .iter()
                     .filter_map(|s| s.as_ref())
                     .filter(|e| {
                         // eid match: same room + signer + ts + channel.
@@ -387,11 +410,16 @@ impl Pool {
 
     pub fn get(&self, id: &str) -> Result<Option<Envelope>> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.by_id.get(id).and_then(|&i| state.events[i].as_ref()).map(|e| e.env.clone()))
+        Ok(state
+            .by_id
+            .get(id)
+            .and_then(|&i| state.events[i].as_ref())
+            .map(|e| e.env.clone()))
     }
 
     pub fn get_room_channel(&self, room: &str, channel: i32) -> Result<Vec<PoolEntry>> {
-                let mut out = self.select(|e| e.room.as_deref() == Some(room) && e.channel == Some(channel))?;
+        let mut out =
+            self.select(|e| e.room.as_deref() == Some(room) && e.channel == Some(channel))?;
         out.sort_by(cmp_committed_first);
         Ok(out)
     }
@@ -399,7 +427,10 @@ impl Pool {
     /// Returns the latest commit timestamp (tc) for committed events in a room.
     pub fn latest_tc(&self, room: &str) -> Result<u64> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.events.iter().filter_map(|s| s.as_ref())
+        Ok(state
+            .events
+            .iter()
+            .filter_map(|s| s.as_ref())
             .filter(|e| e.room.as_deref() == Some(room))
             .filter_map(|e| e.tc)
             .max()
@@ -416,7 +447,10 @@ impl Pool {
     /// extra syncs or delayed refusals, never false acceptance.
     pub fn room_watermark(&self, room: &str) -> Result<u64> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.events.iter().filter_map(|s| s.as_ref())
+        Ok(state
+            .events
+            .iter()
+            .filter_map(|s| s.as_ref())
             .filter(|e| e.room.as_deref() == Some(room))
             .filter(|e| e.channel.is_some_and(|c| c < 0))
             .filter_map(|e| e.tc)
@@ -426,7 +460,10 @@ impl Pool {
 
     pub fn get_room_ids(&self, room: &str) -> Result<Vec<String>> {
         let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<&PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
+        let mut out: Vec<&PoolEntry> = state
+            .events
+            .iter()
+            .filter_map(|s| s.as_ref())
             .filter(|e| e.room.as_deref() == Some(room))
             .collect();
         out.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.id.cmp(&b.id)));
@@ -434,7 +471,12 @@ impl Pool {
     }
 
     pub fn get_private(&self, node_pub: &str) -> Result<Vec<PoolEntry>> {
-                let mut out = self.select(|e| { matches!(e.event_type.as_str(), "private.message" | "private.read" | "private.blob") && (e.n == node_pub || e.to_node.as_deref() == Some(node_pub)) })?;
+        let mut out = self.select(|e| {
+            matches!(
+                e.event_type.as_str(),
+                "private.message" | "private.read" | "private.blob"
+            ) && (e.n == node_pub || e.to_node.as_deref() == Some(node_pub))
+        })?;
         out.sort_by(cmp_committed_first);
         Ok(out)
     }
@@ -458,22 +500,20 @@ impl Pool {
                     state.members.remove(&d.n);
                 }
                 "room.ban" => {
-                    if let Some(target) = d
-                        .c
-                        .as_ref()
-                        .and_then(|c| c.get("banned"))
-                        .and_then(|v| v.as_str())
+                    if let Some(target) =
+                        d.c.as_ref()
+                            .and_then(|c| c.get("banned"))
+                            .and_then(|v| v.as_str())
                     {
                         state.members.remove(target);
                         state.banned.insert(target.to_owned());
                     }
                 }
                 "room.unban" => {
-                    if let Some(target) = d
-                        .c
-                        .as_ref()
-                        .and_then(|c| c.get("unbanned"))
-                        .and_then(|v| v.as_str())
+                    if let Some(target) =
+                        d.c.as_ref()
+                            .and_then(|c| c.get("unbanned"))
+                            .and_then(|v| v.as_str())
                     {
                         state.banned.remove(target);
                     }
@@ -487,7 +527,7 @@ impl Pool {
     }
 
     pub fn get_uncommitted(&self, room: &str) -> Result<Vec<PoolEntry>> {
-                let mut out = self.select(|e| e.room.as_deref() == Some(room) && e.tc.is_none())?;
+        let mut out = self.select(|e| e.room.as_deref() == Some(room) && e.tc.is_none())?;
         out.sort_by(cmp_ts_id);
         Ok(out)
     }
@@ -505,7 +545,17 @@ impl Pool {
         after_tc: u64,
         limit: usize,
     ) -> Result<Vec<PoolEntry>> {
-                let mut out = self.select(|e| { if e.tc.is_none() || e.tc.unwrap_or(0) <= after_tc { return false; } (rooms.is_empty() || e.room.as_deref().map(|r| rooms.contains(&r)).unwrap_or(false)) && (types.is_empty() || types.contains(&e.event_type.as_str())) })?;
+        let mut out = self.select(|e| {
+            if e.tc.is_none() || e.tc.unwrap_or(0) <= after_tc {
+                return false;
+            }
+            (rooms.is_empty()
+                || e.room
+                    .as_deref()
+                    .map(|r| rooms.contains(&r))
+                    .unwrap_or(false))
+                && (types.is_empty() || types.contains(&e.event_type.as_str()))
+        })?;
         out.sort_by(cmp_tc);
         out.truncate(limit);
         Ok(out)
@@ -520,7 +570,18 @@ impl Pool {
         end_tc: Option<u64>,
         limit: usize,
     ) -> Result<Vec<PoolEntry>> {
-                let mut out = self.select(|e| { let tc = match e.tc { Some(tc) if tc >= start_tc => tc, _ => return false, }; if let Some(end) = end_tc { if tc > end { return false; } } e.room.as_deref() == Some(room) && e.channel == Some(channel) })?;
+        let mut out = self.select(|e| {
+            let tc = match e.tc {
+                Some(tc) if tc >= start_tc => tc,
+                _ => return false,
+            };
+            if let Some(end) = end_tc {
+                if tc > end {
+                    return false;
+                }
+            }
+            e.room.as_deref() == Some(room) && e.channel == Some(channel)
+        })?;
         out.sort_by(cmp_tc);
         out.truncate(limit);
         Ok(out)
@@ -531,7 +592,7 @@ impl Pool {
         if ids.is_empty() {
             return Ok(vec![]);
         }
-                let mut out = self.select(|e| ids.contains(&e.id.as_str()))?;
+        let mut out = self.select(|e| ids.contains(&e.id.as_str()))?;
         out.sort_by(cmp_tc);
         Ok(out)
     }
@@ -551,8 +612,10 @@ impl Pool {
             slot.0 += 1;
             slot.1 = slot.1.max(tc);
         }
-        let mut out: Vec<(i32, u64, u64)> =
-            per_channel.into_iter().map(|(ch, (c, tc))| (ch, c, tc)).collect();
+        let mut out: Vec<(i32, u64, u64)> = per_channel
+            .into_iter()
+            .map(|(ch, (c, tc))| (ch, c, tc))
+            .collect();
         out.sort_by_key(|(ch, _, _)| *ch);
         Ok(out)
     }
@@ -577,7 +640,12 @@ impl Pool {
 
     /// Check (and optionally record) a TOFU pin for a node.
     /// `fingerprint` is the hex-encoded SHA-256 of the node's public key.
-    pub fn check_tofu_pin(&self, node_pub: &str, fingerprint: &str, now: u64) -> Result<TofuResult> {
+    pub fn check_tofu_pin(
+        &self,
+        node_pub: &str,
+        fingerprint: &str,
+        now: u64,
+    ) -> Result<TofuResult> {
         let mut state = self.write().map_err(lock_err)?;
         match state.meta.tofu_pins.get(node_pub) {
             Some(pin) => {
@@ -593,7 +661,10 @@ impl Pool {
             None => {
                 state.meta.tofu_pins.insert(
                     node_pub.to_owned(),
-                    TofuPin { first_seen_at: now, fingerprint: fingerprint.to_owned() },
+                    TofuPin {
+                        first_seen_at: now,
+                        fingerprint: fingerprint.to_owned(),
+                    },
                 );
                 drop(state);
                 self.persist_meta()?;
@@ -605,7 +676,10 @@ impl Pool {
     /// Get the stored TOFU pin for a node, if any.
     pub fn get_tofu_pin(&self, node_pub: &str) -> Result<Option<(String, u64)>> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.meta.tofu_pins.get(node_pub)
+        Ok(state
+            .meta
+            .tofu_pins
+            .get(node_pub)
             .map(|p| (p.fingerprint.clone(), p.first_seen_at)))
     }
 
@@ -613,22 +687,31 @@ impl Pool {
 
     /// Store a single blob piece.
     pub fn put_blob_piece(&self, blob_id: &str, piece_index: u32, data: &[u8]) -> Result<()> {
-        self.write().map_err(lock_err)?
-            .blob_pieces.insert((blob_id.to_owned(), piece_index), data.to_vec());
+        self.write()
+            .map_err(lock_err)?
+            .blob_pieces
+            .insert((blob_id.to_owned(), piece_index), data.to_vec());
         self.write_blob_file(blob_id, piece_index, data)
     }
 
     /// Fetch a single blob piece.
     pub fn get_blob_piece(&self, blob_id: &str, piece_index: u32) -> Result<Option<Vec<u8>>> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.blob_pieces.get(&(blob_id.to_owned(), piece_index)).cloned())
+        Ok(state
+            .blob_pieces
+            .get(&(blob_id.to_owned(), piece_index))
+            .cloned())
     }
 
     /// Fetch all pieces for a blob, ordered by index. Returns None unless
     /// exactly `expected_pieces` pieces (indexed 0..N with no gaps) are stored.
     pub fn get_blob(&self, blob_id: &str, expected_pieces: u32) -> Result<Option<Vec<Vec<u8>>>> {
         let state = self.read().map_err(lock_err)?;
-        let stored = state.blob_pieces.keys().filter(|(id, _)| id == blob_id).count();
+        let stored = state
+            .blob_pieces
+            .keys()
+            .filter(|(id, _)| id == blob_id)
+            .count();
         if stored != expected_pieces as usize {
             return Ok(None);
         }
@@ -645,7 +728,9 @@ impl Pool {
     /// Count stored pieces for a blob.
     pub fn blob_piece_count(&self, blob_id: &str) -> Result<u32> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.blob_pieces.keys()
+        Ok(state
+            .blob_pieces
+            .keys()
             .filter(|(id, _)| id == blob_id)
             .count() as u32)
     }
@@ -653,14 +738,23 @@ impl Pool {
     // ── Local Moderation / Blocklist (§13.3) ───────────────────────────
 
     /// Block a node. `kind` is "block" or "spam".
-    pub fn block_node(&self, node_pub: &str, kind: &str, reason: Option<&str>, now: u64) -> Result<()> {
+    pub fn block_node(
+        &self,
+        node_pub: &str,
+        kind: &str,
+        reason: Option<&str>,
+        now: u64,
+    ) -> Result<()> {
         {
             let mut state = self.write().map_err(lock_err)?;
-            state.meta.blocklist.insert(node_pub.to_owned(), BlockRecord {
-                kind: kind.to_owned(),
-                reason: reason.map(|r| r.to_owned()),
-                blocked_at: now,
-            });
+            state.meta.blocklist.insert(
+                node_pub.to_owned(),
+                BlockRecord {
+                    kind: kind.to_owned(),
+                    reason: reason.map(|r| r.to_owned()),
+                    blocked_at: now,
+                },
+            );
         }
         self.persist_meta()?;
         Ok(())
@@ -687,7 +781,10 @@ impl Pool {
     /// Get all blocked nodes.
     pub fn get_blocklist(&self) -> Result<Vec<BlocklistEntry>> {
         let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<BlocklistEntry> = state.meta.blocklist.iter()
+        let mut out: Vec<BlocklistEntry> = state
+            .meta
+            .blocklist
+            .iter()
             .map(|(k, v)| (k.clone(), v.kind.clone(), v.reason.clone(), v.blocked_at))
             .collect();
         out.sort_by_key(|(_, _, _, at)| std::cmp::Reverse(*at));
@@ -700,10 +797,18 @@ impl Pool {
     pub fn put_attestation(&self, env: &Envelope) -> Result<String> {
         let id = datum_id(env);
         let inner = innermost(env);
-        let c = inner.d.c.as_ref().ok_or_else(|| anyhow!("attestation missing content"))?;
-        let target = c.get("target").and_then(|v| v.as_str())
+        let c = inner
+            .d
+            .c
+            .as_ref()
+            .ok_or_else(|| anyhow!("attestation missing content"))?;
+        let target = c
+            .get("target")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("attestation missing c.target"))?;
-        let level = c.get("level").and_then(|v| v.as_str())
+        let level = c
+            .get("level")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("attestation missing c.level"))?;
 
         {
@@ -728,7 +833,10 @@ impl Pool {
     /// Get all attestations about a target node.
     pub fn get_attestations_for(&self, target: &str) -> Result<Vec<Envelope>> {
         let state = self.read().map_err(lock_err)?;
-        let mut recs: Vec<&AttestationRecord> = state.meta.attestations.iter()
+        let mut recs: Vec<&AttestationRecord> = state
+            .meta
+            .attestations
+            .iter()
             .filter(|a| a.target == target)
             .collect();
         recs.sort_by_key(|a| a.ts);
@@ -763,12 +871,23 @@ impl Pool {
     pub fn put_flag(&self, env: &Envelope) -> Result<String> {
         let id = datum_id(env);
         let inner = innermost(env);
-        let room = inner.d.r.as_deref()
+        let room = inner
+            .d
+            .r
+            .as_deref()
             .ok_or_else(|| anyhow!("room.flag missing room"))?;
-        let c = inner.d.c.as_ref().ok_or_else(|| anyhow!("room.flag missing content"))?;
-        let target_eid = c.get("target").and_then(|v| v.as_str())
+        let c = inner
+            .d
+            .c
+            .as_ref()
+            .ok_or_else(|| anyhow!("room.flag missing content"))?;
+        let target_eid = c
+            .get("target")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("room.flag missing c.target"))?;
-        let category = c.get("category").and_then(|v| v.as_str())
+        let category = c
+            .get("category")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("room.flag missing c.category"))?;
 
         {
@@ -793,13 +912,20 @@ impl Pool {
     /// Get flag count for a specific event in a room.
     pub fn flag_count(&self, room: &str, target_eid: &str) -> Result<u64> {
         let state = self.read().map_err(lock_err)?;
-        Ok(state.meta.flags.iter()
+        Ok(state
+            .meta
+            .flags
+            .iter()
             .filter(|f| f.room == room && f.target_eid == target_eid)
             .count() as u64)
     }
 
     /// Get flag counts by category for a specific event.
-    pub fn flag_counts_by_category(&self, room: &str, target_eid: &str) -> Result<Vec<(String, u64)>> {
+    pub fn flag_counts_by_category(
+        &self,
+        room: &str,
+        target_eid: &str,
+    ) -> Result<Vec<(String, u64)>> {
         let state = self.read().map_err(lock_err)?;
         let mut counts: HashMap<String, u64> = HashMap::new();
         for f in &state.meta.flags {
@@ -829,7 +955,10 @@ impl Pool {
 
         let removed = {
             let mut state = self.write().map_err(lock_err)?;
-            let ids: Vec<String> = state.events.iter().filter_map(|s| s.as_ref())
+            let ids: Vec<String> = state
+                .events
+                .iter()
+                .filter_map(|s| s.as_ref())
                 .filter(|e| {
                     let is_system = e.channel.is_some_and(|c| c < 0);
                     e.room.as_deref() == Some(room) && !is_system && e.ts < threshold
@@ -857,7 +986,10 @@ impl Pool {
 
         let removed = {
             let mut state = self.write().map_err(lock_err)?;
-            let ids: Vec<String> = state.events.iter().filter_map(|s| s.as_ref())
+            let ids: Vec<String> = state
+                .events
+                .iter()
+                .filter_map(|s| s.as_ref())
                 .filter(|e| e.room.as_deref() == Some(room) && e.tc.is_none() && e.ts < threshold)
                 .map(|e| e.id.clone())
                 .collect();
@@ -877,7 +1009,10 @@ impl Pool {
     /// Export all envelopes for a room ordered by (ts, id).
     pub fn export_room(&self, room: &str) -> Result<Vec<Envelope>> {
         let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<&PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
+        let mut out: Vec<&PoolEntry> = state
+            .events
+            .iter()
+            .filter_map(|s| s.as_ref())
             .filter(|e| e.room.as_deref() == Some(room))
             .collect();
         out.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.id.cmp(&b.id)));
@@ -934,7 +1069,10 @@ fn remove_id(state: &mut PoolState, id: &str) {
 fn cmp_committed_first(a: &PoolEntry, b: &PoolEntry) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     match (a.tc, b.tc) {
-        (Some(x), Some(y)) => x.cmp(&y).then_with(|| a.ts.cmp(&b.ts)).then_with(|| a.id.cmp(&b.id)),
+        (Some(x), Some(y)) => x
+            .cmp(&y)
+            .then_with(|| a.ts.cmp(&b.ts))
+            .then_with(|| a.id.cmp(&b.id)),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (None, None) => a.ts.cmp(&b.ts).then_with(|| a.id.cmp(&b.id)),
@@ -969,16 +1107,12 @@ pub fn ruleset_from_pool(pool: &Pool, room: &str) -> Result<RuleSet> {
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
-    
+    use crate::fixtures::*;
 
     use serde_json::json;
 
-    
-    
     use crate::envelope::wrap_commit;
     use crate::events::{make_room_create, make_room_update};
-    
 
     use super::{ruleset_from_pool, Pool};
     // ---- Persistence helpers ----
@@ -1001,13 +1135,22 @@ mod tests {
         let pool = Pool::memory().expect("pool should initialize");
         let node = mk_node();
         let room = mk_room();
-        let env = mk_room_event(&node, &room, "room.message", 100, json!({"ch": 1, "body": "x"}));
+        let env = mk_room_event(
+            &node,
+            &room,
+            "room.message",
+            100,
+            json!({"ch": 1, "body": "x"}),
+        );
 
         let id1 = pool.put(&env).expect("put should succeed");
         let id2 = pool.put(&env).expect("duplicate put should succeed");
         assert_eq!(id1, id2);
 
-        let got = pool.get(&id1).expect("get should succeed").expect("must exist");
+        let got = pool
+            .get(&id1)
+            .expect("get should succeed")
+            .expect("must exist");
         assert_eq!(got.p, env.p);
 
         let entries = pool
@@ -1021,8 +1164,13 @@ mod tests {
         let pool = Pool::memory().expect("pool should initialize");
         let author = mk_node();
         let room = mk_room();
-        let inner =
-            mk_room_event(&author, &room, "room.message", 101, json!({"ch": 2, "body": "hello"}));
+        let inner = mk_room_event(
+            &author,
+            &room,
+            "room.message",
+            101,
+            json!({"ch": 2, "body": "hello"}),
+        );
 
         pool.put(&inner).expect("put depth1");
         assert_eq!(
@@ -1054,8 +1202,20 @@ mod tests {
         let author = mk_node();
         let room = mk_room();
 
-        let e1 = mk_room_event(&author, &room, "room.message", 1000, json!({"ch": 1, "body": "a"}));
-        let e2 = mk_room_event(&author, &room, "room.message", 2000, json!({"ch": 1, "body": "b"}));
+        let e1 = mk_room_event(
+            &author,
+            &room,
+            "room.message",
+            1000,
+            json!({"ch": 1, "body": "a"}),
+        );
+        let e2 = mk_room_event(
+            &author,
+            &room,
+            "room.message",
+            2000,
+            json!({"ch": 1, "body": "b"}),
+        );
         let c1 = wrap_commit(e1, &room, 3000).expect("commit");
         let c2 = wrap_commit(e2, &room, 4000).expect("commit");
 
@@ -1135,7 +1295,9 @@ mod tests {
             pool.put(&committed).expect("put committed");
         }
 
-        let state = pool.build_membership(&key_holder.sig.pub_key).expect("membership");
+        let state = pool
+            .build_membership(&key_holder.sig.pub_key)
+            .expect("membership");
         assert!(state.members.contains(&arta.sig.pub_key));
         assert!(!state.banned.contains(&arta.sig.pub_key));
     }
@@ -1157,8 +1319,8 @@ mod tests {
         let room = mk_room();
         let rules = json!([{"t": "join", "allow": "*"}, {"t": "post", "allow": "*"}]);
 
-        let (_d1, commit) = make_room_create(&node, &room, Some("Test Room"), Some(rules))
-            .expect("room.create");
+        let (_d1, commit) =
+            make_room_create(&node, &room, Some("Test Room"), Some(rules)).expect("room.create");
         pool.put(&commit).expect("put");
 
         let rs = ruleset_from_pool(&pool, &room.sig.pub_key).expect("from_room_meta");
@@ -1173,8 +1335,8 @@ mod tests {
         let room = mk_room();
 
         let rules1 = json!([{"t": "join", "allow": "*"}]);
-        let (_d1, commit1) = make_room_create(&node, &room, Some("Room"), Some(rules1))
-            .expect("room.create");
+        let (_d1, commit1) =
+            make_room_create(&node, &room, Some("Room"), Some(rules1)).expect("room.create");
         pool.put(&commit1).expect("put c1");
 
         let rules2 = json!([{"t": "join", "allow": "*"}, {"t": "post", "allow": "*"}]);
@@ -1206,7 +1368,10 @@ mod tests {
         pool.check_tofu_pin("NODE_B", "fp_original", 100).unwrap();
         let result = pool.check_tofu_pin("NODE_B", "fp_changed", 200).unwrap();
         match result {
-            super::TofuResult::Mismatch { expected, first_seen_at } => {
+            super::TofuResult::Mismatch {
+                expected,
+                first_seen_at,
+            } => {
                 assert_eq!(expected, "fp_original");
                 assert_eq!(first_seen_at, 100);
             }
@@ -1251,7 +1416,8 @@ mod tests {
         let pool = Pool::memory().expect("pool");
         assert!(!pool.is_blocked("NODE_X").unwrap());
 
-        pool.block_node("NODE_X", "block", Some("spam"), 1000).unwrap();
+        pool.block_node("NODE_X", "block", Some("spam"), 1000)
+            .unwrap();
         assert!(pool.is_blocked("NODE_X").unwrap());
 
         let list = pool.get_blocklist().unwrap();
@@ -1272,8 +1438,12 @@ mod tests {
         let target = mk_node();
 
         let att = crate::events::make_side_attestation(
-            &attester, &target.sig.pub_key, "positive", Some("good peer"),
-        ).unwrap();
+            &attester,
+            &target.sig.pub_key,
+            "positive",
+            Some("good peer"),
+        )
+        .unwrap();
         pool.put_attestation(&att).unwrap();
 
         let atts = pool.get_attestations_for(&target.sig.pub_key).unwrap();
@@ -1294,13 +1464,20 @@ mod tests {
         let room = mk_room();
 
         let flag = crate::events::make_room_flag(
-            &node, &room.sig.pub_key, "eid_123", "spam", Some("offensive"),
-        ).unwrap();
+            &node,
+            &room.sig.pub_key,
+            "eid_123",
+            "spam",
+            Some("offensive"),
+        )
+        .unwrap();
         pool.put_flag(&flag).unwrap();
 
         assert_eq!(pool.flag_count(&room.sig.pub_key, "eid_123").unwrap(), 1);
 
-        let by_cat = pool.flag_counts_by_category(&room.sig.pub_key, "eid_123").unwrap();
+        let by_cat = pool
+            .flag_counts_by_category(&room.sig.pub_key, "eid_123")
+            .unwrap();
         assert_eq!(by_cat.len(), 1);
         assert_eq!(by_cat[0], ("spam".to_owned(), 1));
     }
@@ -1338,13 +1515,24 @@ mod tests {
 
         // System events (membership + metadata) with ancient timestamps.
         let join = mk_room_event(&node, &room, "room.join", 1, json!({}));
-        let meta = mk_room_event(&node, &room, "room.update", 2,
-            json!({"name": "Old Name", "rules": []}));
+        let meta = mk_room_event(
+            &node,
+            &room,
+            "room.update",
+            2,
+            json!({"name": "Old Name", "rules": []}),
+        );
         pool.put(&wrap_commit(join, &room, 10).unwrap()).unwrap();
         pool.put(&wrap_commit(meta, &room, 11).unwrap()).unwrap();
 
         // Ancient content event.
-        let msg = mk_room_event(&node, &room, "room.message", 3, json!({"ch": 1, "body": "old"}));
+        let msg = mk_room_event(
+            &node,
+            &room,
+            "room.message",
+            3,
+            json!({"ch": 1, "body": "old"}),
+        );
         pool.put(&wrap_commit(msg, &room, 12).unwrap()).unwrap();
 
         // Retention window that expires everything.
@@ -1352,8 +1540,10 @@ mod tests {
         assert_eq!(pruned, 1, "only the content event is prunable");
 
         let state = pool.build_membership(&room.sig.pub_key).unwrap();
-        assert!(state.members.contains(&node.sig.pub_key),
-            "membership must survive retention pruning");
+        assert!(
+            state.members.contains(&node.sig.pub_key),
+            "membership must survive retention pruning"
+        );
         assert_eq!(
             pool.get_room_channel(&room.sig.pub_key, -1).unwrap().len(),
             1,
@@ -1367,24 +1557,41 @@ mod tests {
         let node = mk_node();
         let room = mk_room();
 
-        assert_eq!(pool.room_watermark(&room.sig.pub_key).unwrap(), 0,
-            "empty room has watermark 0");
+        assert_eq!(
+            pool.room_watermark(&room.sig.pub_key).unwrap(),
+            0,
+            "empty room has watermark 0"
+        );
 
         let join = mk_room_event(&node, &room, "room.join", 100, json!({}));
         pool.put(&wrap_commit(join, &room, 500).unwrap()).unwrap();
         assert_eq!(pool.room_watermark(&room.sig.pub_key).unwrap(), 500);
 
         // Newer metadata commit advances the watermark.
-        let meta = mk_room_event(&node, &room, "room.update", 900,
-            json!({"name": "Renamed", "rules": []}));
+        let meta = mk_room_event(
+            &node,
+            &room,
+            "room.update",
+            900,
+            json!({"name": "Renamed", "rules": []}),
+        );
         pool.put(&wrap_commit(meta, &room, 1000).unwrap()).unwrap();
         assert_eq!(pool.room_watermark(&room.sig.pub_key).unwrap(), 1000);
 
         // Content commits do not advance the room watermark.
-        let msg = mk_room_event(&node, &room, "room.message", 2000, json!({"ch": 1, "body": "x"}));
+        let msg = mk_room_event(
+            &node,
+            &room,
+            "room.message",
+            2000,
+            json!({"ch": 1, "body": "x"}),
+        );
         pool.put(&wrap_commit(msg, &room, 5000).unwrap()).unwrap();
-        assert_eq!(pool.room_watermark(&room.sig.pub_key).unwrap(), 1000,
-            "content channel commits must not advance the watermark");
+        assert_eq!(
+            pool.room_watermark(&room.sig.pub_key).unwrap(),
+            1000,
+            "content channel commits must not advance the watermark"
+        );
 
         // Uncommitted system events do not advance the watermark either.
         let join2 = mk_room_event(&node, &room, "room.join", 6000, json!({}));
@@ -1404,11 +1611,18 @@ mod tests {
             let room = mk_room();
             room_key = room.sig.pub_key.clone();
 
-            let e1 = mk_room_event(&node, &room, "room.message", 100, json!({"ch": 1, "body": "a"}));
+            let e1 = mk_room_event(
+                &node,
+                &room,
+                "room.message",
+                100,
+                json!({"ch": 1, "body": "a"}),
+            );
             let c1 = wrap_commit(e1, &room, 200).expect("commit");
             pool.put(&c1).expect("put");
             pool.check_tofu_pin("NODE_P", "fp", 5).expect("pin");
-            pool.block_node("NODE_SPAM", "block", None, 6).expect("block");
+            pool.block_node("NODE_SPAM", "block", None, 6)
+                .expect("block");
             pool.put_blob_piece("blobz", 0, b"zzz").expect("piece");
         }
 
@@ -1432,14 +1646,23 @@ mod tests {
             let pool = Pool::open(&path).expect("open");
             let node = mk_node();
             let room = mk_room();
-            let env = mk_room_event(&node, &room, "room.message", 42, json!({"ch": 1, "body": "ok"}));
+            let env = mk_room_event(
+                &node,
+                &room,
+                "room.message",
+                42,
+                json!({"ch": 1, "body": "ok"}),
+            );
             pool.put(&env).expect("put");
         }
 
         // Simulate a crash mid-append: append a partial JSON line.
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&events_path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&events_path)
+                .unwrap();
             f.write_all(b"{\"d\":{\"n\":\"BRO").unwrap();
         }
 
@@ -1464,9 +1687,27 @@ mod tests {
             room_key = room.sig.pub_key.clone();
 
             // Two old messages (ts ~ 0) and one fresh one.
-            let old1 = mk_room_event(&node, &room, "room.message", 1, json!({"ch": 1, "body": "old1"}));
-            let old2 = mk_room_event(&node, &room, "room.message", 2, json!({"ch": 1, "body": "old2"}));
-            let fresh = mk_room_event(&node, &room, "room.message", u64::MAX / 2, json!({"ch": 1, "body": "new"}));
+            let old1 = mk_room_event(
+                &node,
+                &room,
+                "room.message",
+                1,
+                json!({"ch": 1, "body": "old1"}),
+            );
+            let old2 = mk_room_event(
+                &node,
+                &room,
+                "room.message",
+                2,
+                json!({"ch": 1, "body": "old2"}),
+            );
+            let fresh = mk_room_event(
+                &node,
+                &room,
+                "room.message",
+                u64::MAX / 2,
+                json!({"ch": 1, "body": "new"}),
+            );
             for e in [old1, old2, fresh] {
                 let ts = e.d.ts;
                 pool.put(&wrap_commit(e, &room, ts).unwrap()).unwrap();

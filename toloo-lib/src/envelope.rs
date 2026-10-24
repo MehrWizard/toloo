@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -38,7 +37,8 @@ pub fn signable_bytes(d: &DatumBody) -> Vec<u8> {
 
 /// Sign a datum and produce an envelope.
 pub fn sign_envelope(d: DatumBody, signer_seed: &str) -> Result<Envelope> {
-    let signer_seed_bytes = base64url::decode(signer_seed).context("invalid signer seed base64url")?;
+    let signer_seed_bytes =
+        base64url::decode(signer_seed).context("invalid signer seed base64url")?;
     if signer_seed_bytes.len() != PUBKEY_BYTES {
         bail!("signer seed must decode to {PUBKEY_BYTES} bytes");
     }
@@ -72,11 +72,10 @@ pub fn make_envelope(
         r: extra.r,
         to: extra.to,
         c: content,
-        env: None,
         tc: extra.tc,
         exp: extra.exp,
         nonce: extra.nonce,
-        extra: HashMap::new(),
+        ..DatumBody::default()
     };
     sign_envelope(d, &node.sig.priv_key)
 }
@@ -95,14 +94,9 @@ pub fn wrap_commit(inner: Envelope, room: &LocalRoom, tc: u64) -> Result<Envelop
         v: VERSION.to_owned(),
         t: "commit".to_owned(),
         ts: tc,
-        r: None,
-        to: None,
-        c: None,
         env: Some(Box::new(inner)),
         tc: Some(tc),
-        exp: None,
-        nonce: None,
-        extra: HashMap::new(),
+        ..DatumBody::default()
     };
     sign_envelope(outer, &room.sig.priv_key)
 }
@@ -115,20 +109,22 @@ pub fn wrap_ack(commit: Envelope, node: &LocalNode) -> Result<Envelope> {
     if depth(&commit) != 2 {
         bail!("wrap_ack expects a depth-2 envelope");
     }
-    let tc = commit.d.tc.ok_or_else(|| anyhow::anyhow!("wrap_ack: commit missing tc"))?;
+    let tc = commit
+        .d
+        .tc
+        .ok_or_else(|| anyhow::anyhow!("wrap_ack: commit missing tc"))?;
     let outer = DatumBody {
-        n:     node.sig.pub_key.clone(),
-        v:     VERSION.to_owned(),
-        t:     "ack".to_owned(),
-        ts:    now_ms()?,
-        r:     None,
-        to:    None,
-        c:     None,
-        env:   Some(Box::new(commit)),
-        tc:    Some(tc),
-        exp:   None,
-        nonce: None,
-        extra: HashMap::new(),
+        n: node.sig.pub_key.clone(),
+        v: VERSION.to_owned(),
+        t: "ack".to_owned(),
+        ts: now_ms()?,
+        r: None,
+        to: None,
+        c: None,
+        env: Some(Box::new(commit)),
+        tc: Some(tc),
+        exp: None,
+        ..DatumBody::default()
     };
     sign_envelope(outer, &node.sig.priv_key)
 }
@@ -216,8 +212,7 @@ pub fn verify_chain(env: &Envelope) -> Result<()> {
 /// dropped by serde.
 pub fn parse_envelope(value: serde_json::Value) -> Result<Envelope> {
     validate_envelope_shape_recursive(&value)?;
-    let env: Envelope =
-        serde_json::from_value(value).context("envelope deserialization failed")?;
+    let env: Envelope = serde_json::from_value(value).context("envelope deserialization failed")?;
     validate_structure_inner(&env, 1)?;
     Ok(env)
 }
@@ -307,7 +302,11 @@ fn validate_datum(d: &DatumBody) -> Result<()> {
     if d.t.len() > MAX_T_LEN {
         bail!("d.t must be at most {MAX_T_LEN} chars");
     }
-    if !d.t.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_') {
+    if !d
+        .t
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+    {
         bail!("d.t must contain only alphanumeric, dot, or underscore characters");
     }
 
@@ -372,7 +371,7 @@ fn chain_outer_to_inner(env: &Envelope) -> Vec<&Envelope> {
     chain
 }
 
-fn now_ms() -> Result<u64> {
+pub(crate) fn now_ms() -> Result<u64> {
     let dur = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| anyhow!("system clock is before Unix epoch"))?;
@@ -381,33 +380,25 @@ fn now_ms() -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-        use crate::fixtures::*;
-    use std::collections::HashMap;
+    use crate::fixtures::*;
+    
 
     use serde_json::json;
 
-    
-    
     use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
     use super::{
         depth, innermost, make_envelope, parse_envelope, sign_envelope, validate_structure,
         verify_chain, verify_single, wrap_commit, DatumBodyExtra,
-    };    fn mk_inner_room_event(author: &LocalNode, room: &LocalRoom, ts: u64) -> Envelope {
+    };
+    fn mk_inner_room_event(author: &LocalNode, room: &LocalRoom, ts: u64) -> Envelope {
         let d = DatumBody {
             n: author.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "room.message".to_owned(),
             ts,
             r: Some(room.sig.pub_key.clone()),
-            to: None,
             c: Some(json!({"ch": 1, "body": "hello"})),
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         sign_envelope(d, &author.sig.priv_key).expect("inner sign should succeed")
     }
@@ -445,18 +436,12 @@ mod tests {
 
         let outer_d = DatumBody {
             n: wrong_receiver.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "commit".to_owned(),
             ts: 2001,
             r: Some(room.sig.pub_key.clone()),
-            to: None,
-            c: None,
             env: Some(Box::new(inner)),
             tc: Some(2001),
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         let outer = sign_envelope(outer_d, &wrong_receiver.sig.priv_key)
             .expect("signing outer should succeed");
@@ -472,35 +457,20 @@ mod tests {
 
         let middle_d = DatumBody {
             n: room.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "middle.wrap".to_owned(),
             ts: 3001,
             r: Some(room.sig.pub_key.clone()),
-            to: None,
-            c: None,
             env: Some(Box::new(inner)),
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         let middle = sign_envelope(middle_d, &room.sig.priv_key).expect("middle should sign");
 
         let outer_d = DatumBody {
             n: author.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "outer.wrap".to_owned(),
             ts: 3002,
-            r: None,
-            to: None,
-            c: None,
             env: Some(Box::new(middle)),
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         let outer = sign_envelope(outer_d, &author.sig.priv_key).expect("outer should sign");
         assert_eq!(depth(&outer), 3);
@@ -525,18 +495,12 @@ mod tests {
 
         let bad_commit_d = DatumBody {
             n: room.sig.pub_key.clone(),
-            v: "0.2".to_owned(),
             t: "commit".to_owned(),
             ts: 3999,
             r: Some(room.sig.pub_key.clone()),
-            to: None,
-            c: None,
             env: Some(Box::new(inner)),
             tc: Some(3999),
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
         let bad_commit =
             sign_envelope(bad_commit_d, &room.sig.priv_key).expect("bad commit can still sign");
@@ -552,18 +516,11 @@ mod tests {
         let l2 = sign_envelope(
             DatumBody {
                 n: room.sig.pub_key.clone(),
-                v: "0.2".to_owned(),
                 t: "l2".to_owned(),
                 ts: 5001,
                 r: Some(room.sig.pub_key.clone()),
-                to: None,
-                c: None,
                 env: Some(Box::new(inner)),
-                tc: None,
-                exp: None,
-                nonce: None,
-
-                extra: HashMap::new(),
+                ..DatumBody::default()
             },
             &room.sig.priv_key,
         )
@@ -572,18 +529,10 @@ mod tests {
         let l3 = sign_envelope(
             DatumBody {
                 n: author.sig.pub_key.clone(),
-                v: "0.2".to_owned(),
                 t: "l3".to_owned(),
                 ts: 5002,
-                r: None,
-                to: None,
-                c: None,
                 env: Some(Box::new(l2)),
-                tc: None,
-                exp: None,
-                nonce: None,
-
-                extra: HashMap::new(),
+                ..DatumBody::default()
             },
             &author.sig.priv_key,
         )
@@ -592,18 +541,10 @@ mod tests {
         let l4 = sign_envelope(
             DatumBody {
                 n: room.sig.pub_key.clone(),
-                v: "0.2".to_owned(),
                 t: "l4".to_owned(),
                 ts: 5003,
-                r: None,
-                to: None,
-                c: None,
                 env: Some(Box::new(l3)),
-                tc: None,
-                exp: None,
-                nonce: None,
-
-                extra: HashMap::new(),
+                ..DatumBody::default()
             },
             &room.sig.priv_key,
         )
@@ -618,7 +559,10 @@ mod tests {
         let env = make_envelope("node.meta", Some(json!({"x": 1})), &node, None)
             .expect("make_envelope should succeed");
         let mut value = serde_json::to_value(&env).expect("serialize should succeed");
-        value.as_object_mut().unwrap().insert("extra".to_owned(), json!("bad"));
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("extra".to_owned(), json!("bad"));
         assert!(parse_envelope(value).is_err());
     }
 
@@ -643,7 +587,10 @@ mod tests {
         let room = mk_room();
         let inner = mk_inner_room_event(&author, &room, 1000);
         let commit = wrap_commit(inner, &room, 1001).expect("wrap should succeed");
-        assert!(commit.d.r.is_none(), "commit outer d.r must be None per spec §6.4");
+        assert!(
+            commit.d.r.is_none(),
+            "commit outer d.r must be None per spec §6.4"
+        );
     }
 
     #[test]
@@ -675,8 +622,7 @@ mod tests {
     #[test]
     fn validate_datum_rejects_r_wrong_length() {
         let node = mk_node();
-        let mut env =
-            make_envelope("ok", None, &node, None).expect("make should succeed");
+        let mut env = make_envelope("ok", None, &node, None).expect("make should succeed");
         env.d.r = Some("tooshort".to_owned());
         assert!(validate_structure(&env).is_err());
     }
@@ -684,8 +630,7 @@ mod tests {
     #[test]
     fn validate_datum_rejects_to_wrong_length() {
         let node = mk_node();
-        let mut env =
-            make_envelope("ok", None, &node, None).expect("make should succeed");
+        let mut env = make_envelope("ok", None, &node, None).expect("make should succeed");
         env.d.to = Some("tooshort".to_owned());
         assert!(validate_structure(&env).is_err());
     }
@@ -700,9 +645,13 @@ mod tests {
             exp: Some(11),
             nonce: Some(12),
         };
-        let env =
-            make_envelope("custom.event", Some(json!({"ok": true})), &node, Some(extra))
-                .expect("make_envelope should succeed");
+        let env = make_envelope(
+            "custom.event",
+            Some(json!({"ok": true})),
+            &node,
+            Some(extra),
+        )
+        .expect("make_envelope should succeed");
 
         assert_eq!(env.d.r.as_deref(), Some("room"));
         assert_eq!(env.d.to.as_deref(), Some("recipient"));

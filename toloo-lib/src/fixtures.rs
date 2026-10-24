@@ -1,6 +1,5 @@
 //! Shared test fixtures. Compiled only for tests within this crate.
 
-use std::collections::HashMap;
 
 use serde_json::json;
 
@@ -46,17 +45,11 @@ pub fn mk_room_event(
 ) -> Envelope {
     let d = DatumBody {
         n: author.sig.pub_key.clone(),
-        v: "0.2".to_owned(),
         t: event_type.to_owned(),
         ts,
         r: Some(room.sig.pub_key.clone()),
-        to: None,
         c: Some(content),
-        env: None,
-        tc: None,
-        exp: None,
-        nonce: None,
-        extra: HashMap::new(),
+        ..DatumBody::default()
     };
     sign_envelope(d, &author.sig.priv_key).expect("sign should succeed")
 }
@@ -65,17 +58,11 @@ pub fn mk_room_event(
 pub fn mk_private_message(sender: &LocalNode, recipient_sig: &str, ts: u64) -> Envelope {
     let d = DatumBody {
         n: sender.sig.pub_key.clone(),
-        v: "0.2".to_owned(),
         t: "private.message".to_owned(),
         ts,
-        r: None,
         to: Some(recipient_sig.to_owned()),
         c: Some(json!({"encrypted": "abc", "eph": sender.enc.pub_key})),
-        env: None,
-        tc: None,
-        exp: None,
-        nonce: None,
-        extra: HashMap::new(),
+        ..DatumBody::default()
     };
     sign_envelope(d, &sender.sig.priv_key).expect("sign should succeed")
 }

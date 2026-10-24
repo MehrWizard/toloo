@@ -112,7 +112,7 @@ fn utf16_cmp(a: &str, b: &str) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    
 
     use serde_json::json;
 
@@ -148,18 +148,9 @@ mod tests {
     fn omits_none_fields_when_struct_uses_skip_serializing_if() {
         let d = DatumBody {
             n: "A".to_owned(),
-            v: "0.2".to_owned(),
             t: "room.message".to_owned(),
             ts: 1,
-            r: None,
-            to: None,
-            c: None,
-            env: None,
-            tc: None,
-            exp: None,
-            nonce: None,
-
-            extra: HashMap::new(),
+            ..DatumBody::default()
         };
 
         let got = canonical(&d).expect("canonicalization should succeed");
