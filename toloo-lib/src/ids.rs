@@ -60,43 +60,17 @@ fn channel_from_content(c: Option<&Value>) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+        use crate::fixtures::*;
     use std::collections::HashMap;
 
     use serde_json::json;
 
-    use crate::base64url;
-    use crate::crypto::{ed25519_generate, x25519_generate};
+    
+    
     use crate::envelope::{sign_envelope, wrap_commit};
-    use crate::types::{DatumBody, Envelope, Keypair, LocalNode, LocalRoom};
+    use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
-    use super::{channel_of, datum_id, eid};
-
-    fn mk_node() -> LocalNode {
-        let (sig_pub, sig_seed) = ed25519_generate();
-        let (enc_pub, enc_priv) = x25519_generate();
-        LocalNode {
-            sig: Keypair {
-                pub_key: base64url::encode(&sig_pub),
-                priv_key: base64url::encode(&sig_seed),
-            },
-            enc: Keypair {
-                pub_key: base64url::encode(&enc_pub),
-                priv_key: base64url::encode(&enc_priv),
-            },
-        }
-    }
-
-    fn mk_room() -> LocalRoom {
-        let (room_pub, room_seed) = ed25519_generate();
-        LocalRoom {
-            sig: Keypair {
-                pub_key: base64url::encode(&room_pub),
-                priv_key: base64url::encode(&room_seed),
-            },
-        }
-    }
-
-    fn mk_inner_room_event(node: &LocalNode, room: &LocalRoom, ts: u64, ch: i32) -> Envelope {
+    use super::{channel_of, datum_id, eid};    fn mk_inner_room_event(node: &LocalNode, room: &LocalRoom, ts: u64, ch: i32) -> Envelope {
         let d = DatumBody {
             n: node.sig.pub_key.clone(),
             v: "0.2".to_owned(),

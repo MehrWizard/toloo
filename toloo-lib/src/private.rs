@@ -107,28 +107,13 @@ pub fn decrypt_private(c: &PrivateCiphertext, recipient_enc_priv: &str) -> Resul
 
 #[cfg(test)]
 mod tests {
+        use crate::fixtures::*;
     use super::{decrypt_private, encrypt_private, encrypt_private_with_eph, PrivateCiphertext};
     use crate::base64url;
-    use crate::crypto::{ed25519_generate, x25519_generate};
-    use crate::types::{Keypair, LocalNode};
+    
+    
     use serde_json::json;
     use x25519_dalek::{PublicKey, StaticSecret};
-
-    fn mk_node() -> LocalNode {
-        let (sig_pub, sig_seed) = ed25519_generate();
-        let (enc_pub, enc_priv) = x25519_generate();
-        LocalNode {
-            sig: Keypair {
-                pub_key: base64url::encode(&sig_pub),
-                priv_key: base64url::encode(&sig_seed),
-            },
-            enc: Keypair {
-                pub_key: base64url::encode(&enc_pub),
-                priv_key: base64url::encode(&enc_priv),
-            },
-        }
-    }
-
     // Helper: derive X25519 public key from a 32-byte seed.
     fn x25519_pub_from_seed(seed_hex: &str) -> (String, String) {
         let seed_bytes: Vec<u8> = (0..seed_hex.len())

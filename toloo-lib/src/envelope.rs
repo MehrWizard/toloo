@@ -381,45 +381,19 @@ fn now_ms() -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+        use crate::fixtures::*;
     use std::collections::HashMap;
 
     use serde_json::json;
 
-    use crate::base64url;
-    use crate::crypto::{ed25519_generate, x25519_generate};
-    use crate::types::{DatumBody, Envelope, Keypair, LocalNode, LocalRoom};
+    
+    
+    use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
     use super::{
         depth, innermost, make_envelope, parse_envelope, sign_envelope, validate_structure,
         verify_chain, verify_single, wrap_commit, DatumBodyExtra,
-    };
-
-    fn mk_node() -> LocalNode {
-        let (sig_pub, sig_seed) = ed25519_generate();
-        let (enc_pub, enc_priv) = x25519_generate();
-        LocalNode {
-            sig: Keypair {
-                pub_key: base64url::encode(&sig_pub),
-                priv_key: base64url::encode(&sig_seed),
-            },
-            enc: Keypair {
-                pub_key: base64url::encode(&enc_pub),
-                priv_key: base64url::encode(&enc_priv),
-            },
-        }
-    }
-
-    fn mk_room() -> LocalRoom {
-        let (pub_key, seed) = ed25519_generate();
-        LocalRoom {
-            sig: Keypair {
-                pub_key: base64url::encode(&pub_key),
-                priv_key: base64url::encode(&seed),
-            },
-        }
-    }
-
-    fn mk_inner_room_event(author: &LocalNode, room: &LocalRoom, ts: u64) -> Envelope {
+    };    fn mk_inner_room_event(author: &LocalNode, room: &LocalRoom, ts: u64) -> Envelope {
         let d = DatumBody {
             n: author.sig.pub_key.clone(),
             v: "0.2".to_owned(),

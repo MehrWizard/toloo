@@ -94,34 +94,19 @@ pub fn decode(input: &str) -> Result<Vec<Envelope>> {
 
 #[cfg(test)]
 mod tests {
+        use crate::fixtures::*;
     use super::*;
     use crate::base64url;
     use crate::crypto::ed25519_generate;
     use crate::events::make_node_meta;
-    use crate::types::{Keypair, LocalNode};
-    use crate::crypto::x25519_generate;
+    use crate::types::Keypair;
+    
     use serde_json::json;
-
-    fn mk_node() -> LocalNode {
-        let (sig_pub, sig_seed) = ed25519_generate();
-        let (enc_pub, enc_priv) = x25519_generate();
-        LocalNode {
-            sig: Keypair {
-                pub_key: base64url::encode(&sig_pub),
-                priv_key: base64url::encode(&sig_seed),
-            },
-            enc: Keypair {
-                pub_key: base64url::encode(&enc_pub),
-                priv_key: base64url::encode(&enc_priv),
-            },
-        }
-    }
-
     #[test]
     fn single_envelope_uri_roundtrip() {
         let node = mk_node();
         let env = make_node_meta(&node, vec![]).unwrap();
-        let uri = encode_uri(&[env.clone()]).unwrap();
+        let uri = encode_uri(std::slice::from_ref(&env)).unwrap();
         assert!(uri.starts_with("toloo://"), "URI must have toloo:// prefix");
         assert!(!uri[8..].contains('.') || uri[8..].split('.').count() == 1);
 
@@ -169,7 +154,7 @@ mod tests {
     fn file_with_comments_and_blank_lines() {
         let node = mk_node();
         let env = make_node_meta(&node, vec![]).unwrap();
-        let segment = encode_segments(&[env.clone()]).unwrap()[0].clone();
+        let segment = encode_segments(std::slice::from_ref(&env)).unwrap()[0].clone();
 
         let file_content = format!(
             "# Toloo seed nodes — updated 2026-02-01\n\
@@ -211,8 +196,8 @@ mod tests {
         let node = mk_node();
         let env = make_node_meta(&node, vec![]).unwrap();
 
-        let uri = encode_uri(&[env.clone()]).unwrap();
-        let file = encode_file(&[env.clone()]).unwrap();
+        let uri = encode_uri(std::slice::from_ref(&env)).unwrap();
+        let file = encode_file(std::slice::from_ref(&env)).unwrap();
 
         let from_uri = decode(&uri).unwrap();
         let from_file = decode(&file).unwrap();

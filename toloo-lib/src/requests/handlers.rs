@@ -567,36 +567,19 @@ fn clamp_limit(v: Option<u64>) -> usize {
 
 #[cfg(test)]
 mod tests {
+        use crate::fixtures::*;
     use std::sync::Arc;
 
     use super::handle_request;
-    use crate::base64url;
-    use crate::crypto::{ed25519_generate, x25519_generate};
+    
+    
     use crate::envelope::{innermost, make_envelope, wrap_commit};
     use crate::events::{make_node_meta, make_room_create, make_room_join, make_room_message};
     use crate::ids::datum_id;
     use crate::pool::Pool;
     use crate::transport::server::RelayConfig;
-    use crate::types::{Keypair, LocalNode, LocalRoom};
-    use serde_json::{json, Value};
-
-    fn mk_node() -> LocalNode {
-        let (sig_pub, sig_seed) = ed25519_generate();
-        let (enc_pub, enc_priv) = x25519_generate();
-        LocalNode {
-            sig: Keypair { pub_key: base64url::encode(&sig_pub), priv_key: base64url::encode(&sig_seed) },
-            enc: Keypair { pub_key: base64url::encode(&enc_pub), priv_key: base64url::encode(&enc_priv) },
-        }
-    }
-
-    fn mk_room() -> LocalRoom {
-        let (pub_bytes, seed_bytes) = ed25519_generate();
-        LocalRoom {
-            sig: Keypair { pub_key: base64url::encode(&pub_bytes), priv_key: base64url::encode(&seed_bytes) },
-        }
-    }
-
-    fn mk_config(node: LocalNode, pool: Arc<Pool>) -> RelayConfig {
+    use crate::types::{LocalNode, LocalRoom};
+    use serde_json::{json, Value};    fn mk_config(node: LocalNode, pool: Arc<Pool>) -> RelayConfig {
         RelayConfig {
             node,
             endpoints: vec![],

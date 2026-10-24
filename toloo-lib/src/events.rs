@@ -783,43 +783,17 @@ fn now_ms() -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+        use crate::fixtures::*;
     use super::{
         make_node_meta, make_private_message, make_room_announcement, make_room_blob,
         make_room_create, make_room_message, validate_event_content, BlobManifest,
     };
-    use crate::base64url;
-    use crate::crypto::{ed25519_generate, x25519_generate};
+    
+    
     use crate::envelope::{depth, sign_envelope, verify_chain};
-    use crate::types::{DatumBody, Keypair, LocalNode, LocalRoom};
+    use crate::types::DatumBody;
     use serde_json::json;
-    use std::collections::HashMap;
-
-    fn mk_node() -> LocalNode {
-        let (sig_pub, sig_seed) = ed25519_generate();
-        let (enc_pub, enc_priv) = x25519_generate();
-        LocalNode {
-            sig: Keypair {
-                pub_key: base64url::encode(&sig_pub),
-                priv_key: base64url::encode(&sig_seed),
-            },
-            enc: Keypair {
-                pub_key: base64url::encode(&enc_pub),
-                priv_key: base64url::encode(&enc_priv),
-            },
-        }
-    }
-
-    fn mk_room() -> LocalRoom {
-        let (room_pub, room_seed) = ed25519_generate();
-        LocalRoom {
-            sig: Keypair {
-                pub_key: base64url::encode(&room_pub),
-                priv_key: base64url::encode(&room_seed),
-            },
-        }
-    }
-
-    #[test]
+    use std::collections::HashMap;    #[test]
     fn make_node_meta_puts_enc_in_content() {
         let node = mk_node();
         let env = make_node_meta(&node, vec![]).expect("node.meta builder should work");

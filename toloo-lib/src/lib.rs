@@ -15,6 +15,9 @@ pub mod rules;
 pub mod keystore;
 pub mod vectors;
 
+#[cfg(test)]
+pub(crate) mod fixtures;
+
 pub mod pool;
 pub mod transport;
 pub mod requests;

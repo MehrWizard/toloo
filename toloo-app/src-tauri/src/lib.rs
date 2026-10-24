@@ -551,50 +551,6 @@ mod commands {
         }
     }
 
-    /// pool.exchange over plain TCP (4-byte BE length-prefixed frames).
-    /// Sends one request frame, then half-closes to signal done, reads until EOF.
-    async fn pool_exchange_tcp(url: &str, request_json: &str) -> Result<Vec<String>, String> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let host_port = url.strip_prefix("tcp://").ok_or("invalid TCP URL")?;
-        let mut stream = tokio::net::TcpStream::connect(host_port).await.map_err(to_err)?;
-
-        let body   = request_json.as_bytes();
-        let prefix = (body.len() as u32).to_be_bytes();
-        stream.write_all(&prefix).await.map_err(to_err)?;
-        stream.write_all(body).await.map_err(to_err)?;
-        stream.flush().await.map_err(to_err)?;
-        // Half-close the write side: the server sees EOF on its next read and
-        // closes the connection after flushing all its response frames.
-        stream.shutdown().await.map_err(to_err)?;
-
-        let mut results = Vec::new();
-        loop {
-            let mut len_buf = [0u8; 4];
-            match stream.read_exact(&mut len_buf).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e.to_string()),
-            }
-            let len = u32::from_be_bytes(len_buf) as usize;
-            if len > 1 << 20 { return Err(format!("TCP frame too large: {len}")); }
-            let mut payload = vec![0u8; len];
-            stream.read_exact(&mut payload).await.map_err(to_err)?;
-
-            if let Ok(text) = std::str::from_utf8(&payload) {
-                if let Ok(v) = serde_json::from_str::<Value>(text) {
-                    if v.get("error").is_some() || v.get("done").is_some() { continue; }
-                    if let Ok(env) = parse_envelope(v) {
-                        if verify_chain(&env).is_ok() {
-                            results.push(serde_json::to_string(&env).map_err(to_err)?);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(results)
-    }
-
     #[tauri::command]
     pub async fn pool_exchange(
         relay_url:  String,
@@ -627,9 +583,6 @@ mod commands {
         // Route by URL scheme.
         if relay_url.starts_with("http://") || relay_url.starts_with("https://") {
             return pool_exchange_http(&relay_url, &request_json).await;
-        }
-        if relay_url.starts_with("tcp://") {
-            return pool_exchange_tcp(&relay_url, &request_json).await;
         }
 
         // ws:// or wss:// — WebSocket path.

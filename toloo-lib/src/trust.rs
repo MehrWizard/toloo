@@ -93,28 +93,13 @@ pub fn evaluate_trust(pool: &Pool, node_pub: &str) -> Result<TrustScore> {
 
 #[cfg(test)]
 mod tests {
+        use crate::fixtures::*;
     use super::*;
     use crate::pool::Pool;
-    use crate::base64url;
-    use crate::crypto::{ed25519_generate, x25519_generate};
+    
+    
     use crate::events::make_side_attestation;
-    use crate::types::{Keypair, LocalNode};
-
-    fn mk_node() -> LocalNode {
-        let (sig_pub, sig_seed) = ed25519_generate();
-        let (enc_pub, enc_priv) = x25519_generate();
-        LocalNode {
-            sig: Keypair {
-                pub_key: base64url::encode(&sig_pub),
-                priv_key: base64url::encode(&sig_seed),
-            },
-            enc: Keypair {
-                pub_key: base64url::encode(&enc_pub),
-                priv_key: base64url::encode(&enc_priv),
-            },
-        }
-    }
-
+    
     #[test]
     fn default_score_is_neutral() {
         let pool = Pool::memory().unwrap();
