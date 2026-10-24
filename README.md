@@ -52,9 +52,10 @@ toloo-lib/            Protocol + runtime — one crate
       tls.rs          rustls helpers (self-signed cert generation)
       backoff.rs      exponential retry with jitter
     requests/
-      handlers.rs     All nine endpoint handlers: pool.exchange, room.send,
-                        node.meta, room.create, room.update, room.join/leave/ban,
-                        blob.fetch; room authority + auto-commit
+      handlers.rs     All nine endpoint handlers: events.sync, room.sync,
+                        room.compare, pool.exchange, node.peers, node.rooms,
+                        system.fetch, blob.fetch, room.summary;
+                        room authority + auto-commit
     discovery.rs      toloo: URI and .toloo file encode/decode
   tests/
     vectors.rs        cross-implementation test vector assertions
