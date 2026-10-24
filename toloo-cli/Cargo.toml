@@ -15,7 +15,7 @@ toloo-lib  = { path = "../toloo-lib" }
 clap = { version = "4", features = ["derive"] }
 
 # Async runtime and networking
-tokio             = { version = "1", features = ["full"] }
+tokio             = { version = "1", default-features = false, features = ["rt", "macros", "net", "io-util"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util      = "0.3"
 
