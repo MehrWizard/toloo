@@ -587,7 +587,7 @@ mod commands {
 
         // ws:// or wss:// — WebSocket path.
         let (mut ws, _) = connect_async(relay_url.clone()).await.map_err(to_err)?;
-        ws.send(Message::Text(request_json)).await.map_err(to_err)?;
+        ws.send(Message::Text(request_json.into())).await.map_err(to_err)?;
 
         let mut results = Vec::new();
         while let Some(msg) = ws.next().await {

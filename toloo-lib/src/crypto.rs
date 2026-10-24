@@ -3,18 +3,18 @@ use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
-use rand_core::OsRng;
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 const PRIVATE_INFO: &[u8] = b"toloo-private-v0.2";
 
-/// Generate an Ed25519 keypair (public key, seed).
+/// Generate an Ed25519 keypair (public key, seed) from system randomness.
 pub fn ed25519_generate() -> (Vec<u8>, Vec<u8>) {
-    let signing = SigningKey::generate(&mut OsRng);
-    let verifying = signing.verifying_key();
-    (verifying.to_bytes().to_vec(), signing.to_bytes().to_vec())
+    let mut seed = [0u8; 32];
+    getrandom::fill(&mut seed).expect("system RNG failure");
+    let signing = SigningKey::from_bytes(&seed);
+    (signing.verifying_key().to_bytes().to_vec(), seed.to_vec())
 }
 
 /// Derive Ed25519 public key from a 32-byte seed.
@@ -46,11 +46,12 @@ pub fn ed25519_verify(message: &[u8], sig: &[u8], pub_key: &[u8]) -> Result<()> 
         .context("Ed25519 signature verification failed")
 }
 
-/// Generate an X25519 keypair (public key, private key).
+/// Generate an X25519 keypair (public key, private key) from system randomness.
 pub fn x25519_generate() -> (Vec<u8>, Vec<u8>) {
-    let secret = StaticSecret::random_from_rng(OsRng);
-    let public = PublicKey::from(&secret);
-    (public.as_bytes().to_vec(), secret.to_bytes().to_vec())
+    let mut priv_bytes = [0u8; 32];
+    getrandom::fill(&mut priv_bytes).expect("system RNG failure");
+    let secret = StaticSecret::from(priv_bytes);
+    (PublicKey::from(&secret).as_bytes().to_vec(), priv_bytes.to_vec())
 }
 
 /// Derive an X25519 public key from a 32-byte private key.
