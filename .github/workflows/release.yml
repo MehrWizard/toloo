@@ -1,0 +1,515 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+
+  # ────────────────────────────────────────────────────────────────────
+  # Check whether signing secrets are configured.
+  # The `secrets` context is unavailable in job-level `if`, so we expose
+  # it as a safe output that downstream jobs reference via `needs`.
+  # Extend this job when macOS / Windows notarisation secrets are added.
+  # ────────────────────────────────────────────────────────────────────
+  check-android-signing:
+    runs-on: ubuntu-latest
+    outputs:
+      android: ${{ steps.check.outputs.android }}
+    steps:
+      - id: check
+        env:
+          KEY: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          [ -n "$KEY" ] && echo "android=true" >> $GITHUB_OUTPUT \
+                        || echo "android=false" >> $GITHUB_OUTPUT
+
+  # ────────────────────────────────────────────────────────────────────
+  # All native builds — Linux, Windows, Android — in one parallel matrix
+  # ────────────────────────────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.artifact }})
+    needs: check-android-signing
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux x86_64 ──────────────────────────────────────────
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,rpm
+            artifact: linux-x86_64
+            binary: toloo-linux-x86_64
+            android: false
+
+          # ── Linux aarch64 ─────────────────────────────────────────
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: deb,rpm
+            artifact: linux-aarch64
+            binary: toloo-linux-aarch64
+            android: false
+
+          # ── Windows x86_64 ────────────────────────────────────────
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: msi,nsis
+            artifact: windows-x86_64
+            android: false
+
+          # ── Windows aarch64 (Surface / Snapdragon) ────────────────
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            bundles: msi
+            artifact: windows-aarch64
+            android: false
+
+          # ── Android — Tauri native (API 24+, all ABIs) ────────────
+          - os: ubuntu-latest
+            target: android
+            artifact: android-tauri
+            android: tauri
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust toolchain (desktop + Tauri Android only) ──────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.android == false && matrix.target || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact }}
+
+      # ── Linux system deps (desktop only) ──────────────────────────
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux' && matrix.android == false
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            rpm
+
+      # ── Java (Android Tauri needs it) ────────────────────────────
+      - name: Set up Java
+        if: matrix.android != false
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+
+      # ── Tauri Android setup ────────────────────────────────────────
+      - name: Setup Android SDK
+        if: matrix.android == 'tauri'
+        uses: android-actions/setup-android@v3
+        with:
+          # Only install what the build actually needs — no emulator
+          packages: "platform-tools"
+
+      - name: Add Android Rust targets
+        if: matrix.android == 'tauri'
+        run: |
+          rustup target add \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android \
+            i686-linux-android
+
+      # ── Tauri CLI ────────────────────────────────────────────────────
+      - uses: cargo-bins/cargo-binstall@v1.17.5
+        env:
+          BINSTALL_VERSION: "1.17.5"
+      - name: Install Tauri CLI
+        run: cargo binstall --no-confirm tauri-cli --version "^2"
+
+      - name: Init Android project
+        if: matrix.android == 'tauri'
+        run: cargo tauri android init
+        working-directory: toloo-app
+
+      - name: Patch BuildTask.kt — suppress deprecated exec() warning
+        if: matrix.android == 'tauri'
+        run: |
+          python3 - << 'PYEOF'
+          import pathlib, re
+          matches = list(pathlib.Path("toloo-app/src-tauri/gen/android").rglob("BuildTask.kt"))
+          if not matches:
+              raise FileNotFoundError("BuildTask.kt not found under gen/android")
+          f = matches[0]
+          src = f.read_text()
+          # project.exec is deprecated in Gradle 8+; suppress the warning
+          # until Tauri upstream migrates to ExecOperations injection.
+          src = src.replace(
+              "        project.exec {",
+              "        @Suppress(\"DEPRECATION\")\n        project.exec {",
+          )
+          f.write_text(src)
+          PYEOF
+
+      - name: Setup Android app icons
+        if: matrix.android == 'tauri'
+        run: |
+          ICON=toloo-app/src/favicon.png
+          RES=toloo-app/src-tauri/gen/android/app/src/main/res
+          sudo apt-get install -y imagemagick
+          W=$(identify -format "%w" "$ICON")
+          H=$((W/2))
+
+          # Legacy round icon: dark circle background + favicon composited
+          convert -size ${W}x${W} xc:none -fill "#0a0a0a" \
+            -draw "circle ${H},${H} ${H},0" bg.png
+          convert bg.png "$ICON" -composite legacy.png
+
+          # Legacy icons for Android < 8.0 (mipmap-* ic_launcher)
+          convert legacy.png -resize 48x48   ${RES}/mipmap-mdpi/ic_launcher.png
+          convert legacy.png -resize 72x72   ${RES}/mipmap-hdpi/ic_launcher.png
+          convert legacy.png -resize 96x96   ${RES}/mipmap-xhdpi/ic_launcher.png
+          convert legacy.png -resize 144x144 ${RES}/mipmap-xxhdpi/ic_launcher.png
+          convert legacy.png -resize 192x192 ${RES}/mipmap-xxxhdpi/ic_launcher.png
+
+          # Adaptive foreground icons (safe zone = 65% of canvas)
+          mkdir -p ${RES}/mipmap-anydpi-v26
+          convert "$ICON" -resize 70x70   -background none -gravity center -extent 108x108 ${RES}/mipmap-mdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 105x105 -background none -gravity center -extent 162x162 ${RES}/mipmap-hdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 140x140 -background none -gravity center -extent 216x216 ${RES}/mipmap-xhdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 210x210 -background none -gravity center -extent 324x324 ${RES}/mipmap-xxhdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 280x280 -background none -gravity center -extent 432x432 ${RES}/mipmap-xxxhdpi/ic_launcher_foreground.png
+
+          # Adaptive icon XML (Android 8.0+)
+          cat > ${RES}/mipmap-anydpi-v26/ic_launcher.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+          cat > ${RES}/mipmap-anydpi-v26/ic_launcher_round.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+
+          # Background color resource
+          mkdir -p ${RES}/values
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#0a0a0a</color>\n</resources>\n' \
+            > ${RES}/values/ic_launcher_colors.xml
+
+      - name: Patch MainActivity — respect system bar insets
+        if: matrix.android == 'tauri'
+        run: |
+          python3 - << 'PYEOF'
+          import pathlib
+          matches = list(pathlib.Path("toloo-app/src-tauri/gen/android").rglob("MainActivity.kt"))
+          if not matches:
+              raise FileNotFoundError("MainActivity.kt not found under gen/android")
+          main = matches[0]
+          pkg = ".".join(main.parent.parts[-3:])  # e.g. com.irandawn.toloo
+          main.write_text("\n".join([
+              f"package {pkg}",
+              "",
+              "import android.os.Bundle",
+              "import androidx.core.view.ViewCompat",
+              "import androidx.core.view.WindowInsetsCompat",
+              "",
+              "class MainActivity : TauriActivity() {",
+              "    override fun onCreate(savedInstanceState: Bundle?) {",
+              "        super.onCreate(savedInstanceState)",
+              "        // Pad the root view by the actual system bar heights so content",
+              "        // never draws under the status bar or navigation bar.",
+              "        // Works on API 24-34 and on Android 15+ where edge-to-edge is enforced.",
+              "        ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { view, windowInsets ->",
+              "            val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())",
+              "            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)",
+              "            WindowInsetsCompat.CONSUMED",
+              "        }",
+              "    }",
+              "}",
+              "",
+          ]))
+          PYEOF
+
+      - name: Setup Tauri Android signing
+        if: matrix.android == 'tauri' && needs.check-android-signing.outputs.android == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          # 1. Decode keystore into the app module directory
+          echo "$KEYSTORE_BASE64" | base64 -d \
+            > toloo-app/src-tauri/gen/android/app/keystore.jks
+
+          # 2. Create keystore.properties (Tauri convention)
+          printf 'storeFile=keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" \
+            > toloo-app/src-tauri/gen/android/keystore.properties
+
+          # 3. Patch build.gradle.kts to read keystore.properties and sign the release APK
+          #    The generated file already imports java.util.Properties (for tauri.properties),
+          #    so we reuse Properties() directly and avoid fully-qualified names.
+          python3 << 'PYEOF'
+          import re, pathlib
+
+          gradle = pathlib.Path("toloo-app/src-tauri/gen/android/app/build.gradle.kts")
+          src = gradle.read_text()
+
+          # Add FileInputStream import next to existing imports
+          if "import java.io.FileInputStream" not in src:
+              src = re.sub(
+                  r'(import java\.util\.Properties)',
+                  r'\1\nimport java.io.FileInputStream',
+                  src, count=1,
+              )
+
+          # Insert signingConfigs block right before buildTypes
+          signing = "\n".join([
+              "",
+              "    signingConfigs {",
+              '        create("release") {',
+              '            val keystorePropertiesFile = rootProject.file("keystore.properties")',
+              "            val keystoreProperties = Properties()",
+              "            if (keystorePropertiesFile.exists()) {",
+              "                keystoreProperties.load(FileInputStream(keystorePropertiesFile))",
+              "            }",
+              '            keyAlias = keystoreProperties["keyAlias"] as String?',
+              '            keyPassword = keystoreProperties["keyPassword"] as String?',
+              '            storeFile = keystoreProperties["storeFile"]?.let { file(it as String) }',
+              '            storePassword = keystoreProperties["storePassword"] as String?',
+              "        }",
+              "    }",
+              "",
+          ])
+          src = re.sub(r'(\n(\s*)buildTypes\s*\{)', signing + r'\1', src, count=1)
+
+          # Add signingConfig to the release buildType
+          src = re.sub(
+              r'(getByName\("release"\)\s*\{)',
+              r'\1\n            signingConfig = signingConfigs.getByName("release")',
+              src, count=1,
+          )
+
+          gradle.write_text(src)
+          print("build.gradle.kts patched for release signing")
+          PYEOF
+
+      # ── Windows: cache Tauri's downloaded bundler tools (WiX, NSIS) ──
+      - name: Cache Tauri bundler tools
+        if: matrix.os == 'windows-latest' && matrix.android == false
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-bundler-tools-${{ matrix.artifact }}
+
+      # ── Build ──────────────────────────────────────────────────────
+      - name: Build (desktop)
+        if: matrix.android == false
+        shell: bash
+        working-directory: toloo-app
+        run: |
+          # Retry up to 3 times — WiX/NSIS downloads from GitHub releases
+          # are occasionally flaky and fail with "Peer disconnected".
+          for attempt in 1 2 3; do
+            cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} && exit 0
+            [ $attempt -lt 3 ] && echo "Attempt $attempt failed, retrying in 30s..." && sleep 30
+          done
+          exit 1
+
+      - name: Build (Android Tauri)
+        if: matrix.android == 'tauri' && needs.check-android-signing.outputs.android == 'true'
+        run: cargo tauri android build --apk
+        working-directory: toloo-app
+
+      # ── Collect artifacts ─────────────────────────────────────────
+      - name: Collect artifacts (Linux)
+        if: matrix.os != 'windows-latest' && matrix.android == false
+        run: |
+          mkdir -p dist
+          find target/${{ matrix.target }}/release/bundle \
+            \( -name "*.deb" -o -name "*.rpm" \) \
+            -exec cp {} dist/ \;
+          # Standalone binary — users install webkit2gtk-4.1 from their package
+          # manager, then run this directly (same as target/release/toloo-app).
+          cp target/${{ matrix.target }}/release/toloo-app dist/${{ matrix.binary }}
+
+      - name: Collect artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist
+          find target/${{ matrix.target }}/release/bundle \
+            \( -name "*.msi" -o -name "*.exe" \) \
+            -exec cp {} dist/ \;
+
+      - name: Collect artifacts (Android Tauri)
+        if: matrix.android == 'tauri' && needs.check-android-signing.outputs.android == 'true'
+        run: |
+          mkdir -p dist
+          find toloo-app/src-tauri/gen/android/app/build/outputs/apk \
+            -name "*.apk" ! -name "*unsigned*" -exec cp {} dist/ \;
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.android == false || needs.check-android-signing.outputs.android == 'true'
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          if-no-files-found: ignore
+
+  # ────────────────────────────────────────────────────────────────────
+  # CLI builds — Linux (static musl) + Windows (static CRT)
+  # Pure Rust + bundled SQLite: no system deps on any platform.
+  # ────────────────────────────────────────────────────────────────────
+  build-cli:
+    name: Build (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 — fully static musl binary, runs on any Linux
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: cli-linux-x86_64
+            binary: toloo
+            musl: true
+
+          # Linux aarch64 — fully static musl binary, cross-compiled
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            artifact: cli-linux-aarch64
+            binary: toloo
+            musl: true
+            musl_cross: true
+
+          # Windows x86_64 — static CRT, no MSVC redistributable needed
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: cli-windows-x86_64
+            binary: toloo.exe
+            musl: false
+
+          # Windows aarch64 — Surface / Snapdragon, static CRT
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact: cli-windows-aarch64
+            binary: toloo.exe
+            musl: false
+
+          # macOS x86_64 — no Xcode needed for a pure Rust CLI
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: cli-macos-x86_64
+            binary: toloo
+            musl: false
+
+          # macOS aarch64 (Apple Silicon)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: cli-macos-aarch64
+            binary: toloo
+            musl: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact }}
+
+      - name: Install musl tools
+        if: matrix.musl == true
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Cache pip packages (Zig cross toolchain)
+        if: matrix.musl_cross == true
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-ziglang-${{ runner.os }}-${{ runner.arch }}-zig0.15-zigbuild0.19
+
+      - name: Install cargo-zigbuild (aarch64 musl cross)
+        if: matrix.musl_cross == true
+        run: pip3 install ziglang cargo-zigbuild
+
+      - name: Build
+        run: ${{ matrix.musl_cross == true && 'cargo zigbuild' || 'cargo build' }} -p toloo-cli --release --target ${{ matrix.target }}
+        env:
+          # Statically link the CRT on Windows — .exe runs on any Win10+ with no redistributables
+          RUSTFLAGS: ${{ matrix.musl == false && matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          SUFFIX=$(echo "${{ matrix.artifact }}" | sed 's/^cli-//')
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} \
+             dist/toloo-cli-${SUFFIX}
+          chmod +x dist/*
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist
+          SUFFIX=$(echo "${{ matrix.artifact }}" | sed 's/^cli-//')
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} \
+             dist/toloo-cli-${SUFFIX}.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+
+  # ────────────────────────────────────────────────────────────────────
+  # Create GitHub Release — runs after all jobs complete
+  # ────────────────────────────────────────────────────────────────────
+  release:
+    name: Create Release
+    needs: [check-android-signing, build, build-cli]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: List artifacts
+        run: find artifacts/ -type f | sort
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "Toloo ${{ github.ref_name }}"
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Toloo ${{ github.ref_name }}
+
+            | Platform | File | Notes |
+            |---|---|---|
+            | Linux x86_64 | `toloo-linux-x86_64` | Standalone binary — needs `webkit2gtk-4.1` |
+            | Linux aarch64 | `toloo-linux-aarch64` | Standalone binary — needs `webkit2gtk-4.1` |
+            | Linux | `.deb` | Debian / Ubuntu — installs WebKit automatically |
+            | Linux | `.rpm` | Fedora / openSUSE / RHEL — installs WebKit automatically |
+            | Linux CLI (x86_64) | `toloo-cli-linux-x86_64` | Static musl binary, zero system deps |
+            | Linux CLI (aarch64) | `toloo-cli-linux-aarch64` | Static musl binary, cross-compiled |
+            | Windows x86_64 | `.msi` / `.exe` | Standard 64-bit |
+            | Windows aarch64 | `.msi` | Surface / Snapdragon laptops |
+            | Android | `*-release.apk` | API 24+, universal APK — full native backend |
+
+            **Android sideload**: Settings → Security → Install unknown apps → enable for your file manager, then open the APK.
+            **Signing**: Android APKs are only included when `KEYSTORE_BASE64` repo secret is configured.
+          files: artifacts/**/*

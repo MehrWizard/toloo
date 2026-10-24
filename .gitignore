@@ -1,0 +1,5 @@
+/target
+tolo-app/src-tauri/gen/
+tolo-app/src-tauri/target/
+node_modules/
+dist/
