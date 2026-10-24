@@ -8,8 +8,6 @@ use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-const ED25519_KEY_LEN: usize = 32;
-const ED25519_SIG_LEN: usize = 64;
 const PRIVATE_INFO: &[u8] = b"toloo-private-v0.2";
 
 /// Generate an Ed25519 keypair (public key, seed).
@@ -21,14 +19,14 @@ pub fn ed25519_generate() -> (Vec<u8>, Vec<u8>) {
 
 /// Derive Ed25519 public key from a 32-byte seed.
 pub fn ed25519_pub_from_seed(seed: &[u8]) -> Result<Vec<u8>> {
-    let seed_bytes = seed32(seed, "Ed25519 seed")?;
+    let seed_bytes = exact_bytes(seed, "Ed25519 seed")?;
     let signing = SigningKey::from_bytes(&seed_bytes);
     Ok(signing.verifying_key().to_bytes().to_vec())
 }
 
 /// Sign a message with a 32-byte Ed25519 seed.
 pub fn ed25519_sign(message: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
-    let seed_bytes = seed32(seed, "Ed25519 seed")?;
+    let seed_bytes = exact_bytes(seed, "Ed25519 seed")?;
     let signing = SigningKey::from_bytes(&seed_bytes);
     let signature: Signature = signing.sign(message);
     Ok(signature.to_bytes().to_vec())
@@ -36,8 +34,8 @@ pub fn ed25519_sign(message: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
 
 /// Verify Ed25519 signature.
 pub fn ed25519_verify(message: &[u8], sig: &[u8], pub_key: &[u8]) -> Result<()> {
-    let sig_bytes = seed64(sig, "Ed25519 signature")?;
-    let pub_bytes = seed32(pub_key, "Ed25519 public key")?;
+    let sig_bytes = exact_bytes(sig, "Ed25519 signature")?;
+    let pub_bytes = exact_bytes(pub_key, "Ed25519 public key")?;
     let verifying =
         VerifyingKey::from_bytes(&pub_bytes).context("invalid Ed25519 public key bytes")?;
     let signature = Signature::from_bytes(&sig_bytes);
@@ -108,14 +106,6 @@ pub fn chacha20_decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8]) -> 
     cipher
         .decrypt(Nonce::from_slice(nonce), ciphertext)
         .map_err(|_| anyhow!("ChaCha20-Poly1305 authentication failed"))
-}
-
-fn seed32(input: &[u8], name: &str) -> Result<Zeroizing<[u8; ED25519_KEY_LEN]>> {
-    exact_bytes(input, name)
-}
-
-fn seed64(input: &[u8], name: &str) -> Result<Zeroizing<[u8; ED25519_SIG_LEN]>> {
-    exact_bytes(input, name)
 }
 
 fn exact_bytes<const N: usize>(input: &[u8], name: &str) -> Result<Zeroizing<[u8; N]>> {

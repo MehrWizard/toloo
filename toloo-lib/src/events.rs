@@ -100,14 +100,7 @@ pub fn make_room_announcement(room: &LocalRoom, body: &str) -> Result<(Envelope,
 /// Pass `nonce` when the room requires Proof-of-Work for joining (spec §2.3.3, §3.6).
 /// The nonce is a `d`-level field, not a content field.
 pub fn make_room_join(node: &LocalNode, room_pub: &str, nonce: Option<u64>) -> Result<Envelope> {
-    let extra = DatumBodyExtra {
-        r: Some(room_pub.to_owned()),
-        nonce,
-        ..Default::default()
-    };
-    let env = make_envelope("room.join", Some(json!({})), node, Some(extra))?;
-    validate_event_content(&env)?;
-    Ok(env)
+    make_room_scoped_with("room.join", node, room_pub, Some(json!({})), nonce)
 }
 
 pub fn make_room_leave(node: &LocalNode, room_pub: &str) -> Result<Envelope> {
@@ -173,9 +166,7 @@ pub fn make_room_message(
     body: &str,
     blobs: Vec<String>,
 ) -> Result<Envelope> {
-    if channel < 1 {
-        bail!("room.message channel must be >= 1 (0 is reserved for official announcements)");
-    }
+    ensure_chat_channel(channel, "room.message");
     let mut content = Map::new();
     content.insert("ch".to_owned(), json!(channel));
     content.insert("body".to_owned(), Value::String(body.to_owned()));
@@ -197,9 +188,7 @@ pub fn make_room_react(
     target_eid: &str,
     emoji: &str,
 ) -> Result<Envelope> {
-    if channel < 1 {
-        bail!("room.react channel must be >= 1 (0 is reserved for official announcements)");
-    }
+    ensure_chat_channel(channel, "room.react");
     make_room_scoped(
         "room.react",
         node,
@@ -219,9 +208,7 @@ pub fn make_room_edit(
     target_eid: &str,
     body: &str,
 ) -> Result<Envelope> {
-    if channel < 1 {
-        bail!("room.edit channel must be >= 1 (0 is reserved for official announcements)");
-    }
+    ensure_chat_channel(channel, "room.edit");
     make_room_scoped(
         "room.edit",
         node,
@@ -240,9 +227,7 @@ pub fn make_room_delete(
     channel: i32,
     target_eid: &str,
 ) -> Result<Envelope> {
-    if channel < 1 {
-        bail!("room.delete channel must be >= 1 (0 is reserved for official announcements)");
-    }
+    ensure_chat_channel(channel, "room.delete");
     make_room_scoped(
         "room.delete",
         node,
@@ -262,9 +247,7 @@ pub fn make_room_blob(
     mime: Option<&str>,
     name: Option<&str>,
 ) -> Result<Envelope> {
-    if channel < 1 {
-        bail!("room.blob channel must be >= 1 (0 is reserved for official announcements)");
-    }
+    ensure_chat_channel(channel, "room.blob");
     let mut content = Map::new();
     content.insert("ch".to_owned(), json!(channel));
     content.insert("hash".to_owned(), Value::String(manifest.hash.clone()));
@@ -472,8 +455,20 @@ fn make_room_scoped(
     room_pub: &str,
     content: Option<Value>,
 ) -> Result<Envelope> {
+    make_room_scoped_with(t, node, room_pub, content, None)
+}
+
+/// `nonce` carries the Proof-of-Work solution at the `d` level (room.join).
+fn make_room_scoped_with(
+    t: &str,
+    node: &LocalNode,
+    room_pub: &str,
+    content: Option<Value>,
+    nonce: Option<u64>,
+) -> Result<Envelope> {
     let extra = DatumBodyExtra {
         r: Some(room_pub.to_owned()),
+        nonce,
         ..Default::default()
     };
     let env = make_envelope(t, content, node, Some(extra))?;
@@ -737,6 +732,15 @@ fn validate_room_announce(d: &DatumBody) -> Result<()> {
         bail!("room.announce is only valid on channel 0");
     }
     Ok(())
+}
+
+/// Reject reserved channel numbers on outbound member content.
+fn ensure_chat_channel(channel: i32, event: &str) {
+    if channel < 1 {
+        panic!(
+            "{event} channel must be >= 1 (0 is reserved for official announcements)"
+        );
+    }
 }
 
 /// Member content channels start at 1; channel 0 is reserved exclusively

@@ -174,6 +174,21 @@ impl Pool {
         self.state.write()
     }
 
+    /// Collect clones of all live entries matching `pred`.
+    pub(crate) fn select<F: Fn(&PoolEntry) -> bool>(&self, pred: F) -> Result<Vec<PoolEntry>> {
+        let state = self.read().map_err(lock_err)?;
+        Ok(state.events.iter().filter_map(|s| s.as_ref())
+            .filter(|e| pred(e))
+            .cloned()
+            .collect())
+    }
+
+    /// Atomically persist the current side state (pins, blocklist, …).
+    fn persist_meta(&self) -> Result<()> {
+        let state = self.read().map_err(lock_err)?;
+        self.save_meta(&state.meta)
+    }
+
     // ── Persistence ────────────────────────────────────────────────────
 
     fn load_meta(&self) -> Result<()> {
@@ -376,10 +391,7 @@ impl Pool {
     }
 
     pub fn get_room_channel(&self, room: &str, channel: i32) -> Result<Vec<PoolEntry>> {
-        let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
-            .filter(|e| e.room.as_deref() == Some(room) && e.channel == Some(channel))
-            .cloned().collect();
+                let mut out = self.select(|e| e.room.as_deref() == Some(room) && e.channel == Some(channel))?;
         out.sort_by(cmp_committed_first);
         Ok(out)
     }
@@ -422,13 +434,7 @@ impl Pool {
     }
 
     pub fn get_private(&self, node_pub: &str) -> Result<Vec<PoolEntry>> {
-        let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
-            .filter(|e| {
-                matches!(e.event_type.as_str(), "private.message" | "private.read" | "private.blob")
-                    && (e.n == node_pub || e.to_node.as_deref() == Some(node_pub))
-            })
-            .cloned().collect();
+                let mut out = self.select(|e| { matches!(e.event_type.as_str(), "private.message" | "private.read" | "private.blob") && (e.n == node_pub || e.to_node.as_deref() == Some(node_pub)) })?;
         out.sort_by(cmp_committed_first);
         Ok(out)
     }
@@ -481,10 +487,7 @@ impl Pool {
     }
 
     pub fn get_uncommitted(&self, room: &str) -> Result<Vec<PoolEntry>> {
-        let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
-            .filter(|e| e.room.as_deref() == Some(room) && e.tc.is_none())
-            .cloned().collect();
+                let mut out = self.select(|e| e.room.as_deref() == Some(room) && e.tc.is_none())?;
         out.sort_by(cmp_ts_id);
         Ok(out)
     }
@@ -502,16 +505,7 @@ impl Pool {
         after_tc: u64,
         limit: usize,
     ) -> Result<Vec<PoolEntry>> {
-        let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
-            .filter(|e| {
-                if e.tc.is_none() || e.tc.unwrap_or(0) <= after_tc {
-                    return false;
-                }
-                (rooms.is_empty() || e.room.as_deref().map(|r| rooms.contains(&r)).unwrap_or(false))
-                    && (types.is_empty() || types.contains(&e.event_type.as_str()))
-            })
-            .cloned().collect();
+                let mut out = self.select(|e| { if e.tc.is_none() || e.tc.unwrap_or(0) <= after_tc { return false; } (rooms.is_empty() || e.room.as_deref().map(|r| rooms.contains(&r)).unwrap_or(false)) && (types.is_empty() || types.contains(&e.event_type.as_str())) })?;
         out.sort_by(cmp_tc);
         out.truncate(limit);
         Ok(out)
@@ -526,21 +520,7 @@ impl Pool {
         end_tc: Option<u64>,
         limit: usize,
     ) -> Result<Vec<PoolEntry>> {
-        let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
-            .filter(|e| {
-                let tc = match e.tc {
-                    Some(tc) if tc >= start_tc => tc,
-                    _ => return false,
-                };
-                if let Some(end) = end_tc {
-                    if tc > end {
-                        return false;
-                    }
-                }
-                e.room.as_deref() == Some(room) && e.channel == Some(channel)
-            })
-            .cloned().collect();
+                let mut out = self.select(|e| { let tc = match e.tc { Some(tc) if tc >= start_tc => tc, _ => return false, }; if let Some(end) = end_tc { if tc > end { return false; } } e.room.as_deref() == Some(room) && e.channel == Some(channel) })?;
         out.sort_by(cmp_tc);
         out.truncate(limit);
         Ok(out)
@@ -551,10 +531,7 @@ impl Pool {
         if ids.is_empty() {
             return Ok(vec![]);
         }
-        let state = self.read().map_err(lock_err)?;
-        let mut out: Vec<PoolEntry> = state.events.iter().filter_map(|s| s.as_ref())
-            .filter(|e| ids.contains(&e.id.as_str()))
-            .cloned().collect();
+                let mut out = self.select(|e| ids.contains(&e.id.as_str()))?;
         out.sort_by(cmp_tc);
         Ok(out)
     }
@@ -619,7 +596,7 @@ impl Pool {
                     TofuPin { first_seen_at: now, fingerprint: fingerprint.to_owned() },
                 );
                 drop(state);
-                self.save_meta(&self.read().map_err(lock_err)?.meta)?;
+                self.persist_meta()?;
                 Ok(TofuResult::NewPin)
             }
         }
@@ -685,7 +662,7 @@ impl Pool {
                 blocked_at: now,
             });
         }
-        self.save_meta(&self.read().map_err(lock_err)?.meta)?;
+        self.persist_meta()?;
         Ok(())
     }
 
@@ -696,7 +673,7 @@ impl Pool {
             state.meta.blocklist.remove(node_pub).is_some()
         };
         if removed {
-            self.save_meta(&self.read().map_err(lock_err)?.meta)?;
+            self.persist_meta()?;
         }
         Ok(removed)
     }
@@ -744,7 +721,7 @@ impl Pool {
                 ts: inner.d.ts,
             });
         }
-        self.save_meta(&self.read().map_err(lock_err)?.meta)?;
+        self.persist_meta()?;
         Ok(id)
     }
 
@@ -809,7 +786,7 @@ impl Pool {
                 ts: inner.d.ts,
             });
         }
-        self.save_meta(&self.read().map_err(lock_err)?.meta)?;
+        self.persist_meta()?;
         Ok(id)
     }
 

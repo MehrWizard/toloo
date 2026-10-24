@@ -75,7 +75,7 @@ fn handle_events_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
 
     let room_refs: Vec<&str> = rooms.iter().map(String::as_str).collect();
     let entries = pool.get_wanted(&room_refs, &[], after, limit)?;
-    Ok(entries.into_iter().map(|e| to_envelope_json(&e.env)).collect())
+    Ok(envelopes_json(entries))
 }
 
 // ---- §10.7.2 room.sync ----
@@ -254,7 +254,7 @@ fn handle_node_peers(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
         .min(MAX_LIMIT);
 
     let entries = pool.get_wanted(&[], &["node.meta"], 0, limit)?;
-    Ok(entries.into_iter().map(|e| to_envelope_json(&e.env)).collect())
+    Ok(envelopes_json(entries))
 }
 
 // ---- §10.8.3 node.rooms ----
@@ -299,7 +299,7 @@ fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
 
     let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     let entries = pool.get_by_datum_ids(&id_refs)?;
-    Ok(entries.into_iter().map(|e| to_envelope_json(&e.env)).collect())
+    Ok(envelopes_json(entries))
 }
 
 // ---- §10.8.5 blob.fetch ----
@@ -512,18 +512,21 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
         verify_pow(&inner.d, bits)?;
     }
 
-    // 4. Rate limit (channel 0 events only).
-    if let Some(_max_per_hour) = ruleset.max_events_per_hour() {
+    // 4. Rate limit (committed events on member chat channels, ch >= 1).
+    if ruleset.max_events_per_hour().is_some() {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
         let one_hour_ago = now.saturating_sub(3_600_000);
-        let all = pool.get_room_channel_range(room_pub, 0, one_hour_ago, None, MAX_LIMIT)?;
-        let count = all
-            .iter()
-            .filter(|e| innermost(&e.env).d.n == *author)
-            .count() as u32;
+        let count = pool
+            .select(|e| {
+                e.room.as_deref() == Some(room_pub)
+                    && e.n == *author
+                    && e.channel.is_some_and(|c| c >= 1)
+                    && e.tc.is_some_and(|tc| tc >= one_hour_ago)
+            })?
+            .len() as u32;
         if !ruleset.check_rate_limit(author, count) {
             anyhow::bail!("rate limit exceeded: {} events in window", count);
         }
@@ -533,6 +536,11 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
 }
 
 // ---- Helpers ----
+
+/// Serialize pool entries as the JSON envelope stream a response carries.
+fn envelopes_json(entries: Vec<crate::pool::PoolEntry>) -> Vec<Value> {
+    entries.into_iter().map(|e| to_envelope_json(&e.env)).collect()
+}
 
 fn error(code: &str, message: &str) -> Value {
     json!({"error": code, "message": message})
@@ -799,16 +807,14 @@ mod tests {
         let room = mk_room();
         let config = mk_config(relay, Arc::clone(&pool));
 
-        // Put two messages in channel 0.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        // Put two messages in channel 1.
         let msg1 = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
-        let tc1 = now;
+        let tc1 = msg1.d.ts;
         let c1 = wrap_commit(msg1, &room, tc1).unwrap();
         pool.put(&c1).unwrap();
 
         let msg2 = make_room_message(&node, &room.sig.pub_key, 1, "world", vec![]).unwrap();
-        let tc2 = now + 1000;
+        let tc2 = msg2.d.ts;
         let c2 = wrap_commit(msg2, &room, tc2).unwrap();
         pool.put(&c2).unwrap();
 
@@ -835,12 +841,12 @@ mod tests {
         let config = mk_config(relay, Arc::clone(&pool));
 
         // A membership commit advances the watermark; a content commit does not.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
         let join = make_room_join(&node, &room.sig.pub_key, None).unwrap();
-        pool.put(&wrap_commit(join, &room, now).unwrap()).unwrap();
+        let join_tc = join.d.ts;
+        pool.put(&wrap_commit(join, &room, join_tc).unwrap()).unwrap();
         let msg = make_room_message(&node, &room.sig.pub_key, 1, "hi", vec![]).unwrap();
-        pool.put(&wrap_commit(msg, &room, now + 5000).unwrap()).unwrap();
+        let msg_tc = msg.d.ts;
+        pool.put(&wrap_commit(msg, &room, msg_tc).unwrap()).unwrap();
 
         let env = make_request(&node, "room.sync", json!({
             "r": room.sig.pub_key,
@@ -851,7 +857,7 @@ mod tests {
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(
             result[0].get("wr").and_then(Value::as_u64),
-            Some(now),
+            Some(join_tc),
             "watermark tracks latest system-channel commit, not content"
         );
     }
@@ -864,10 +870,9 @@ mod tests {
         let room = mk_room();
         let config = mk_config(relay, Arc::clone(&pool));
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
         let msg = make_room_message(&node, &room.sig.pub_key, 1, "hi", vec![]).unwrap();
-        let c = wrap_commit(msg, &room, now).unwrap();
+        let tc = msg.d.ts;
+        let c = wrap_commit(msg, &room, tc).unwrap();
         pool.put(&c).unwrap();
 
         let env = make_request(&node, "room.compare", json!({
@@ -1002,9 +1007,8 @@ mod tests {
             r: Some(room.sig.pub_key.clone()),
             to: None, tc: None, exp: None, nonce: None,
         })).unwrap();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-        let ban_commit = wrap_commit(ban_event, &room, now).unwrap();
+        let ban_tc = ban_event.d.ts;
+        let ban_commit = wrap_commit(ban_event, &room, ban_tc).unwrap();
         pool.put(&ban_commit).unwrap();
 
         // Rebuild membership to confirm the ban took effect.
