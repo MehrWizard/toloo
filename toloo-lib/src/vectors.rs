@@ -172,7 +172,7 @@ impl VectorSet {
                 "p": "INNER_SIG",
                 "d": {
                     "ts": 1710000000000_u64,
-                    "c": {"ch": 0, "body": "hello"},
+                    "c": {"ch": 1, "body": "hello"},
                     "n": "ARTA_SIG", "v": "0.2", "t": "room.message", "r": "ROOM_SIG"
                 }
             }
@@ -202,7 +202,7 @@ impl VectorSet {
             ts: 1710000000000,
             r: Some(room.sig.pub_key.clone()),
             to: None,
-            c: Some(json!({"ch": 0, "body": "Hello, world!"})),
+            c: Some(json!({"ch": 1, "body": "Hello, world!"})),
             env: None,
             tc: None,
             exp: None,

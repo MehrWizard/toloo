@@ -819,12 +819,12 @@ mod tests {
         // Put two messages in channel 0.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-        let msg1 = make_room_message(&node, &room.sig.pub_key, 0, "hello", vec![]).unwrap();
+        let msg1 = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
         let tc1 = now;
         let c1 = wrap_commit(msg1, &room, tc1).unwrap();
         pool.put(&c1).unwrap();
 
-        let msg2 = make_room_message(&node, &room.sig.pub_key, 0, "world", vec![]).unwrap();
+        let msg2 = make_room_message(&node, &room.sig.pub_key, 1, "world", vec![]).unwrap();
         let tc2 = now + 1000;
         let c2 = wrap_commit(msg2, &room, tc2).unwrap();
         pool.put(&c2).unwrap();
@@ -832,7 +832,7 @@ mod tests {
         // Ask for only tc >= tc2.
         let env = make_request(&node, "room.sync", json!({
             "r": room.sig.pub_key,
-            "channel": 0,
+            "channel": 1,
             "start_tc": tc2,
             "limit": 100
         }));
@@ -856,12 +856,12 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
         let join = make_room_join(&node, &room.sig.pub_key, None).unwrap();
         pool.put(&wrap_commit(join, &room, now).unwrap()).unwrap();
-        let msg = make_room_message(&node, &room.sig.pub_key, 0, "hi", vec![]).unwrap();
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hi", vec![]).unwrap();
         pool.put(&wrap_commit(msg, &room, now + 5000).unwrap()).unwrap();
 
         let env = make_request(&node, "room.sync", json!({
             "r": room.sig.pub_key,
-            "channel": 0,
+            "channel": 1,
             "start_tc": 0,
             "limit": 100
         }));
@@ -883,13 +883,13 @@ mod tests {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-        let msg = make_room_message(&node, &room.sig.pub_key, 0, "hi", vec![]).unwrap();
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hi", vec![]).unwrap();
         let c = wrap_commit(msg, &room, now).unwrap();
         pool.put(&c).unwrap();
 
         let env = make_request(&node, "room.compare", json!({
             "r": room.sig.pub_key,
-            "channel": 0,
+            "channel": 1,
             "samples": [{"seq": 1, "eid": "intentionally_wrong"}]
         }));
         let result = handle_request(env, &pool, &config).await.unwrap();
@@ -914,7 +914,7 @@ mod tests {
         let (_d1, commit) = make_room_create(&node, &room, Some("Test Room"), Some(json!([]))).unwrap();
         pool.put(&commit).unwrap();
 
-        let msg = make_room_message(&node, &room.sig.pub_key, 0, "hello", vec![]).unwrap();
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
         let tc = commit.d.tc.unwrap() + 1000;
         let c = wrap_commit(msg, &room, tc).unwrap();
         pool.put(&c).unwrap();
@@ -1029,7 +1029,7 @@ mod tests {
         assert!(membership.banned.contains(&banned_node.sig.pub_key));
 
         // Now banned_node tries to post a message.
-        let msg = make_room_message(&banned_node, &room.sig.pub_key, 0, "spam", vec![]).unwrap();
+        let msg = make_room_message(&banned_node, &room.sig.pub_key, 1, "spam", vec![]).unwrap();
         let msg_val = serde_json::to_value(&msg).unwrap();
         let req = make_request(&banned_node, "pool.exchange", json!({
             "offer": [msg_val], "want": {}
@@ -1037,8 +1037,8 @@ mod tests {
         handle_request(req, &pool, &config).await.unwrap();
 
         // The banned_node's message should be stored uncommitted (validate fails, wrap_commit not called).
-        let ch0 = pool.get_room_channel(&room.sig.pub_key, 0).unwrap();
-        let banned_committed = ch0.iter()
+        let chat = pool.get_room_channel(&room.sig.pub_key, 1).unwrap();
+        let banned_committed = chat.iter()
             .filter(|e| innermost(&e.env).d.n == banned_node.sig.pub_key)
             .any(|e| e.tc.is_some());
         assert!(!banned_committed, "banned author's event must not be auto-committed");
@@ -1065,7 +1065,7 @@ mod tests {
         handle_request(seed, &pool, &config).await.unwrap();
 
         // Now submit a depth-1 message and want back the room's events.
-        let msg = make_room_message(&node, &room.sig.pub_key, 0, "hello", vec![]).unwrap();
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
         let msg_val = serde_json::to_value(&msg).unwrap();
 
         let req = make_request(&node, "pool.exchange", json!({

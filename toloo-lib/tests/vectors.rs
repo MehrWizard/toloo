@@ -77,7 +77,7 @@ fn e3_2_nested_objects() {
     let v = vectors();
     assert_eq!(
         v.e3_2_canonical,
-        r#"{"env":{"d":{"c":{"body":"hello","ch":0},"n":"ARTA_SIG","r":"ROOM_SIG","t":"room.message","ts":1710000000000,"v":"0.2"},"p":"INNER_SIG"},"n":"ROOM_SIG","t":"commit","tc":1710000100000,"ts":1710000100000,"v":"0.2"}"#
+        r#"{"env":{"d":{"c":{"body":"hello","ch":1},"n":"ARTA_SIG","r":"ROOM_SIG","t":"room.message","ts":1710000000000,"v":"0.2"},"p":"INNER_SIG"},"n":"ROOM_SIG","t":"commit","tc":1710000100000,"ts":1710000100000,"v":"0.2"}"#
     );
 }
 
@@ -216,7 +216,7 @@ fn e6_1_eid_stable_across_depths() {
 fn e6_1_eid_format_channel_prefixed() {
     let v = vectors();
     // Room message eid: ch:ts:n
-    assert!(v.e6_1_eid.starts_with("0:"), "room eid starts with channel: {}", v.e6_1_eid);
+    assert!(v.e6_1_eid.starts_with("1:"), "room eid starts with channel: {}", v.e6_1_eid);
     assert!(v.e6_1_eid.contains("1710000000000"), "eid contains timestamp");
 }
 

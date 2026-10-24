@@ -173,8 +173,8 @@ pub fn make_room_message(
     body: &str,
     blobs: Vec<String>,
 ) -> Result<Envelope> {
-    if channel < 0 {
-        bail!("room.message channel must be >= 0");
+    if channel < 1 {
+        bail!("room.message channel must be >= 1 (0 is reserved for official announcements)");
     }
     let mut content = Map::new();
     content.insert("ch".to_owned(), json!(channel));
@@ -197,8 +197,8 @@ pub fn make_room_react(
     target_eid: &str,
     emoji: &str,
 ) -> Result<Envelope> {
-    if channel < 0 {
-        bail!("room.react channel must be >= 0");
+    if channel < 1 {
+        bail!("room.react channel must be >= 1 (0 is reserved for official announcements)");
     }
     make_room_scoped(
         "room.react",
@@ -219,8 +219,8 @@ pub fn make_room_edit(
     target_eid: &str,
     body: &str,
 ) -> Result<Envelope> {
-    if channel < 0 {
-        bail!("room.edit channel must be >= 0");
+    if channel < 1 {
+        bail!("room.edit channel must be >= 1 (0 is reserved for official announcements)");
     }
     make_room_scoped(
         "room.edit",
@@ -240,8 +240,8 @@ pub fn make_room_delete(
     channel: i32,
     target_eid: &str,
 ) -> Result<Envelope> {
-    if channel < 0 {
-        bail!("room.delete channel must be >= 0");
+    if channel < 1 {
+        bail!("room.delete channel must be >= 1 (0 is reserved for official announcements)");
     }
     make_room_scoped(
         "room.delete",
@@ -262,8 +262,8 @@ pub fn make_room_blob(
     mime: Option<&str>,
     name: Option<&str>,
 ) -> Result<Envelope> {
-    if channel < 0 {
-        bail!("room.blob channel must be >= 0");
+    if channel < 1 {
+        bail!("room.blob channel must be >= 1 (0 is reserved for official announcements)");
     }
     let mut content = Map::new();
     content.insert("ch".to_owned(), json!(channel));
@@ -544,7 +544,7 @@ fn validate_room_message(d: &DatumBody) -> Result<()> {
     if body.chars().count() > MAX_MESSAGE_BODY {
         bail!("room.message body too long");
     }
-    validate_channel_non_negative(c, "room.message")?;
+    validate_chat_channel(c, "room.message")?;
     if let Some(blobs) = c.get("blobs") {
         let arr = blobs
             .as_array()
@@ -580,7 +580,7 @@ fn validate_room_ban(d: &DatumBody) -> Result<()> {
 
 fn validate_room_react(d: &DatumBody) -> Result<()> {
     let c = content_object(d)?;
-    validate_channel_non_negative(c, "room.react")?;
+    validate_chat_channel(c, "room.react")?;
     let target = c
         .get("target")
         .and_then(Value::as_str)
@@ -600,7 +600,7 @@ fn validate_room_react(d: &DatumBody) -> Result<()> {
 
 fn validate_room_edit(d: &DatumBody) -> Result<()> {
     let c = content_object(d)?;
-    validate_channel_non_negative(c, "room.edit")?;
+    validate_chat_channel(c, "room.edit")?;
     let target = c
         .get("target")
         .and_then(Value::as_str)
@@ -620,7 +620,7 @@ fn validate_room_edit(d: &DatumBody) -> Result<()> {
 
 fn validate_room_blob(d: &DatumBody) -> Result<()> {
     let c = content_object(d)?;
-    validate_channel_non_negative(c, "room.blob")?;
+    validate_chat_channel(c, "room.blob")?;
 
     let hash = c
         .get("hash")
@@ -739,11 +739,12 @@ fn validate_room_announce(d: &DatumBody) -> Result<()> {
     Ok(())
 }
 
-fn validate_channel_non_negative(c: &Map<String, Value>, event: &str) -> Result<()> {
-    if let Some(ch) = c.get("ch").and_then(Value::as_i64) {
-        if ch < 0 {
-            bail!("{event} c.ch must be >= 0");
-        }
+/// Member content channels start at 1; channel 0 is reserved exclusively
+/// for official room announcements (`room.announce`, room-key-signed).
+fn validate_chat_channel(c: &Map<String, Value>, event: &str) -> Result<()> {
+    let ch = c.get("ch").and_then(Value::as_i64).unwrap_or(1);
+    if ch < 1 {
+        bail!("{event} c.ch must be >= 1 (0 is reserved for official announcements)");
     }
     Ok(())
 }
@@ -848,7 +849,7 @@ mod tests {
         let node = mk_node();
         let room = mk_room();
         let too_long = "x".repeat(4097);
-        assert!(make_room_message(&node, &room.sig.pub_key, 0, &too_long, vec![]).is_err());
+        assert!(make_room_message(&node, &room.sig.pub_key, 1, &too_long, vec![]).is_err());
     }
 
     fn valid_hex64() -> String {
@@ -865,7 +866,7 @@ mod tests {
             piece_size: 1,
             pieces: vec![valid_hex64()],
         };
-        assert!(make_room_blob(&node, &room.sig.pub_key, 0, &manifest, None, None).is_err());
+        assert!(make_room_blob(&node, &room.sig.pub_key, 1, &manifest, None, None).is_err());
     }
 
     #[test]
@@ -879,7 +880,7 @@ mod tests {
             piece_size: 100,
             pieces: vec![valid_hex64()],
         };
-        assert!(make_room_blob(&node, &room.sig.pub_key, 0, &manifest, None, None).is_err());
+        assert!(make_room_blob(&node, &room.sig.pub_key, 1, &manifest, None, None).is_err());
     }
 
     #[test]
@@ -893,7 +894,7 @@ mod tests {
             piece_size: 100,
             pieces: vec![valid_hex64(), valid_hex64()],
         };
-        assert!(make_room_blob(&node, &room.sig.pub_key, 0, &manifest, None, None).is_ok());
+        assert!(make_room_blob(&node, &room.sig.pub_key, 1, &manifest, None, None).is_ok());
     }
 
     #[test]
@@ -927,7 +928,7 @@ mod tests {
     fn commit_validation_rejects_bad_tc() {
         let node = mk_node();
         let room = mk_room();
-        let inner = make_room_message(&node, &room.sig.pub_key, 0, "ok", vec![])
+        let inner = make_room_message(&node, &room.sig.pub_key, 1, "ok", vec![])
             .expect("builder should work");
 
         let bad_commit_d = DatumBody {

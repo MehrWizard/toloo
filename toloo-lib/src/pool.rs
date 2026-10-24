@@ -1112,7 +1112,7 @@ mod tests {
         let pool = Pool::memory().expect("pool should initialize");
         let node = mk_node();
         let room = mk_room();
-        let env = mk_room_event(&node, &room, "room.message", 100, json!({"ch": 0, "body": "x"}));
+        let env = mk_room_event(&node, &room, "room.message", 100, json!({"ch": 1, "body": "x"}));
 
         let id1 = pool.put(&env).expect("put should succeed");
         let id2 = pool.put(&env).expect("duplicate put should succeed");
@@ -1122,7 +1122,7 @@ mod tests {
         assert_eq!(got.p, env.p);
 
         let entries = pool
-            .get_room_channel(&room.sig.pub_key, 0)
+            .get_room_channel(&room.sig.pub_key, 1)
             .expect("query should succeed");
         assert_eq!(entries.len(), 1);
     }
@@ -1455,7 +1455,7 @@ mod tests {
         pool.put(&wrap_commit(meta, &room, 11).unwrap()).unwrap();
 
         // Ancient content event.
-        let msg = mk_room_event(&node, &room, "room.message", 3, json!({"ch": 0, "body": "old"}));
+        let msg = mk_room_event(&node, &room, "room.message", 3, json!({"ch": 1, "body": "old"}));
         pool.put(&wrap_commit(msg, &room, 12).unwrap()).unwrap();
 
         // Retention window that expires everything.
@@ -1492,7 +1492,7 @@ mod tests {
         assert_eq!(pool.room_watermark(&room.sig.pub_key).unwrap(), 1000);
 
         // Content commits do not advance the room watermark.
-        let msg = mk_room_event(&node, &room, "room.message", 2000, json!({"ch": 0, "body": "x"}));
+        let msg = mk_room_event(&node, &room, "room.message", 2000, json!({"ch": 1, "body": "x"}));
         pool.put(&wrap_commit(msg, &room, 5000).unwrap()).unwrap();
         assert_eq!(pool.room_watermark(&room.sig.pub_key).unwrap(), 1000,
             "content channel commits must not advance the watermark");
@@ -1515,7 +1515,7 @@ mod tests {
             let room = mk_room();
             room_key = room.sig.pub_key.clone();
 
-            let e1 = mk_room_event(&node, &room, "room.message", 100, json!({"ch": 0, "body": "a"}));
+            let e1 = mk_room_event(&node, &room, "room.message", 100, json!({"ch": 1, "body": "a"}));
             let c1 = wrap_commit(e1, &room, 200).expect("commit");
             pool.put(&c1).expect("put");
             pool.check_tofu_pin("NODE_P", "fp", 5).expect("pin");
@@ -1525,7 +1525,7 @@ mod tests {
 
         let pool = Pool::open(&path).expect("reopen");
         assert_eq!(pool.latest_tc(&room_key).unwrap(), 200);
-        assert_eq!(pool.get_room_channel(&room_key, 0).unwrap().len(), 1);
+        assert_eq!(pool.get_room_channel(&room_key, 1).unwrap().len(), 1);
         assert_eq!(pool.get_tofu_pin("NODE_P").unwrap().unwrap().0, "fp");
         assert!(pool.is_blocked("NODE_SPAM").unwrap());
         assert_eq!(pool.get_blob_piece("blobz", 0).unwrap().unwrap(), b"zzz");
@@ -1543,7 +1543,7 @@ mod tests {
             let pool = Pool::open(&path).expect("open");
             let node = mk_node();
             let room = mk_room();
-            let env = mk_room_event(&node, &room, "room.message", 42, json!({"ch": 0, "body": "ok"}));
+            let env = mk_room_event(&node, &room, "room.message", 42, json!({"ch": 1, "body": "ok"}));
             pool.put(&env).expect("put");
         }
 
@@ -1575,9 +1575,9 @@ mod tests {
             room_key = room.sig.pub_key.clone();
 
             // Two old messages (ts ~ 0) and one fresh one.
-            let old1 = mk_room_event(&node, &room, "room.message", 1, json!({"ch": 0, "body": "old1"}));
-            let old2 = mk_room_event(&node, &room, "room.message", 2, json!({"ch": 0, "body": "old2"}));
-            let fresh = mk_room_event(&node, &room, "room.message", u64::MAX / 2, json!({"ch": 0, "body": "new"}));
+            let old1 = mk_room_event(&node, &room, "room.message", 1, json!({"ch": 1, "body": "old1"}));
+            let old2 = mk_room_event(&node, &room, "room.message", 2, json!({"ch": 1, "body": "old2"}));
+            let fresh = mk_room_event(&node, &room, "room.message", u64::MAX / 2, json!({"ch": 1, "body": "new"}));
             for e in [old1, old2, fresh] {
                 let ts = e.d.ts;
                 pool.put(&wrap_commit(e, &room, ts).unwrap()).unwrap();
@@ -1590,7 +1590,7 @@ mod tests {
 
         drop(pool);
         let pool = Pool::open(&path).expect("reopen after prune");
-        assert_eq!(pool.get_room_channel(&room_key, 0).unwrap().len(), 1);
+        assert_eq!(pool.get_room_channel(&room_key, 1).unwrap().len(), 1);
 
         std::fs::remove_dir_all(&base).ok();
     }
