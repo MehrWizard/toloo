@@ -895,25 +895,6 @@ impl Pool {
         Ok(removed)
     }
 
-    /// Run pruning for a room using its rule set. Returns (retention_pruned, uncommitted_pruned).
-    pub fn prune_room(&self, room: &str, rules: &RuleSet) -> Result<(u64, u64)> {
-        let mut ret_pruned = 0u64;
-        let mut unc_pruned = 0u64;
-
-        if let Some(days) = rules.retention_days() {
-            if days > 0 {
-                ret_pruned = self.prune_retention(room, days)?;
-            }
-        }
-        if let Some(ttl_ms) = rules.uncommitted_ttl_ms() {
-            if ttl_ms > 0 {
-                unc_pruned = self.prune_uncommitted(room, ttl_ms)?;
-            }
-        }
-
-        Ok((ret_pruned, unc_pruned))
-    }
-
     // ── Export / Import (§11.10) ────────────────────────────────────────
 
     /// Export all envelopes for a room ordered by (ts, id).
