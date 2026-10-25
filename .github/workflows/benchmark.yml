@@ -67,11 +67,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gnuplot
 
       - name: Run benchmarks
+        working-directory: toloo-lib
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
         if: always()
+        working-directory: toloo-lib
         run: |
           echo "=== Current directory ==="
           pwd
@@ -83,6 +85,7 @@ jobs:
           ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
+        working-directory: toloo-lib
         run: |
           mkdir -p bench-json
           for f in target/criterion/*/*/new/estimates.json; do
@@ -98,8 +101,8 @@ jobs:
         with:
           name: bench-linux-x86
           path: |
-            bench-results.txt
-            bench-json/
+            toloo-lib/bench-results.txt
+            toloo-lib/bench-json/
 
   bench-linux-arm:
     name: Benchmark Linux aarch64
@@ -122,11 +125,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gnuplot
 
       - name: Run benchmarks
+        working-directory: toloo-lib
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
         if: always()
+        working-directory: toloo-lib
         run: |
           echo "=== Current directory ==="
           pwd
@@ -138,6 +143,7 @@ jobs:
           ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
+        working-directory: toloo-lib
         run: |
           mkdir -p bench-json
           for f in target/criterion/*/*/new/estimates.json; do
@@ -153,8 +159,8 @@ jobs:
         with:
           name: bench-linux-arm
           path: |
-            bench-results.txt
-            bench-json/
+            toloo-lib/bench-results.txt
+            toloo-lib/bench-json/
 
   # ────────────────────────────────────────────────────────────────────
   # Run benchmarks on Windows
@@ -177,11 +183,13 @@ jobs:
           key: bench-windows-${{ github.sha }}
 
       - name: Run benchmarks
+        working-directory: toloo-lib
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
         if: always()
+        working-directory: toloo-lib
         shell: pwsh
         run: |
           Write-Host "=== Current directory ==="
@@ -194,6 +202,7 @@ jobs:
           Get-ChildItem target/criterion/*/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
 
       - name: Extract benchmark JSON
+        working-directory: toloo-lib
         shell: pwsh
         run: |
           mkdir bench-json
@@ -209,8 +218,8 @@ jobs:
         with:
           name: bench-windows
           path: |
-            bench-results.txt
-            bench-json/
+            toloo-lib/bench-results.txt
+            toloo-lib/bench-json/
 
   # ────────────────────────────────────────────────────────────────────
   # Run benchmarks on macOS
@@ -233,11 +242,13 @@ jobs:
           key: bench-macos-x86-${{ github.sha }}
 
       - name: Run benchmarks
+        working-directory: toloo-lib
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
         if: always()
+        working-directory: toloo-lib
         run: |
           echo "=== Current directory ==="
           pwd
@@ -249,6 +260,7 @@ jobs:
           ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
+        working-directory: toloo-lib
         run: |
           mkdir -p bench-json
           for f in target/criterion/*/*/new/estimates.json; do
@@ -264,8 +276,8 @@ jobs:
         with:
           name: bench-macos-x86
           path: |
-            bench-results.txt
-            bench-json/
+            toloo-lib/bench-results.txt
+            toloo-lib/bench-json/
 
   bench-macos-arm:
     name: Benchmark macOS aarch64
@@ -285,11 +297,13 @@ jobs:
           key: bench-macos-arm-${{ github.sha }}
 
       - name: Run benchmarks
+        working-directory: toloo-lib
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
         if: always()
+        working-directory: toloo-lib
         run: |
           echo "=== Current directory ==="
           pwd
@@ -301,6 +315,7 @@ jobs:
           ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
+        working-directory: toloo-lib
         run: |
           mkdir -p bench-json
           for f in target/criterion/*/*/new/estimates.json; do
@@ -316,8 +331,8 @@ jobs:
         with:
           name: bench-macos-arm
           path: |
-            bench-results.txt
-            bench-json/
+            toloo-lib/bench-results.txt
+            toloo-lib/bench-json/
 
   # ────────────────────────────────────────────────────────────────────
   # Aggregate & Store Results + Deploy to GitHub Pages
