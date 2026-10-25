@@ -452,6 +452,7 @@ jobs:
           fetch-depth: 0
 
       - name: Find baseline commit
+        id: find-baseline
         run: |
           cd bench-repo
           # Find previous toloo commit SHA from result filenames (not benchmark repo git history)
@@ -466,7 +467,7 @@ jobs:
           GH_TOKEN: ${{ secrets.BENCHMARK_REPO_PAT }}
 
       - name: Compare benchmarks
-        if: steps.fetch.outputs.baseline != ''
+        if: steps.find-baseline.outputs.baseline != ''
         run: |
           cat << 'PYEOF' > compare.py
           import json
