@@ -74,18 +74,18 @@ jobs:
         run: |
           echo "=== Current directory ==="
           pwd
-          echo "=== target/criterion structure ==="
-          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
-          echo "=== target/criterion tree ==="
-          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          echo "=== Workspace target/criterion structure ==="
+          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== Workspace target/criterion tree ==="
+          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/*/new/estimates.json; do
+          for f in ../target/criterion/*/*/new/estimates.json; do
             rel="${f#target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
@@ -133,18 +133,18 @@ jobs:
         run: |
           echo "=== Current directory ==="
           pwd
-          echo "=== target/criterion structure ==="
-          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
-          echo "=== target/criterion tree ==="
-          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          echo "=== Workspace target/criterion structure ==="
+          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== Workspace target/criterion tree ==="
+          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/*/new/estimates.json; do
+          for f in ../target/criterion/*/*/new/estimates.json; do
             rel="${f#target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
@@ -190,19 +190,19 @@ jobs:
         run: |
           Write-Host "=== Current directory ==="
           Get-Location
-          Write-Host "=== target/criterion structure ==="
-          Get-ChildItem target/criterion -Recurse -Filter "*.json" -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { $_.FullName }
-          if (-not (Test-Path "target/criterion")) { Write-Host "No criterion dir" }
-          Get-ChildItem target/criterion -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
-          Get-ChildItem target/criterion/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
-          Get-ChildItem target/criterion/*/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Write-Host "=== Workspace target/criterion structure ==="
+          Get-ChildItem ../target/criterion -Recurse -Filter "*.json" -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { $_.FullName }
+          if (-not (Test-Path "../target/criterion")) { Write-Host "No criterion dir" }
+          Get-ChildItem ../target/criterion -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Get-ChildItem ../target/criterion/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Get-ChildItem ../target/criterion/*/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
 
       - name: Extract benchmark JSON
         working-directory: toloo-lib
         shell: pwsh
         run: |
           mkdir bench-json
-          Get-ChildItem target/criterion/*/*/new/estimates.json | ForEach-Object {
+          Get-ChildItem ../target/criterion/*/*/new/estimates.json | ForEach-Object {
             $rel = $_.FullName.Replace('target/criterion/', '')
             $group = $rel.Split('/')[0]
             $bench = $rel -replace '^[^/]+/', '' -replace '/new/estimates\.json$', ''
@@ -245,18 +245,18 @@ jobs:
         run: |
           echo "=== Current directory ==="
           pwd
-          echo "=== target/criterion structure ==="
-          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
-          echo "=== target/criterion tree ==="
-          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          echo "=== Workspace target/criterion structure ==="
+          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== Workspace target/criterion tree ==="
+          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/*/new/estimates.json; do
+          for f in ../target/criterion/*/*/new/estimates.json; do
             rel="${f#target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
@@ -301,18 +301,18 @@ jobs:
         run: |
           echo "=== Current directory ==="
           pwd
-          echo "=== target/criterion structure ==="
-          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
-          echo "=== target/criterion tree ==="
-          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          echo "=== Workspace target/criterion structure ==="
+          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== Workspace target/criterion tree ==="
+          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/*/new/estimates.json; do
+          for f in ../target/criterion/*/*/new/estimates.json; do
             rel="${f#target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
