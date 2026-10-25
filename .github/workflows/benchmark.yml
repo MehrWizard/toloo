@@ -70,6 +70,18 @@ jobs:
         run: |
           cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
+      - name: Debug benchmark output
+        if: always()
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== target/criterion structure ==="
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== target/criterion tree ==="
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+
       - name: Extract benchmark JSON
         run: |
           mkdir -p bench-json
@@ -112,6 +124,18 @@ jobs:
       - name: Run benchmarks
         run: |
           cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+
+      - name: Debug benchmark output
+        if: always()
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== target/criterion structure ==="
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== target/criterion tree ==="
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
         run: |
@@ -156,6 +180,19 @@ jobs:
         run: |
           cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
+      - name: Debug benchmark output
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host "=== Current directory ==="
+          Get-Location
+          Write-Host "=== target/criterion structure ==="
+          Get-ChildItem target/criterion -Recurse -Filter "*.json" -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { $_.FullName }
+          if (-not (Test-Path "target/criterion")) { Write-Host "No criterion dir" }
+          Get-ChildItem target/criterion -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Get-ChildItem target/criterion/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Get-ChildItem target/criterion/*/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+
       - name: Extract benchmark JSON
         shell: pwsh
         run: |
@@ -199,6 +236,18 @@ jobs:
         run: |
           cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
+      - name: Debug benchmark output
+        if: always()
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== target/criterion structure ==="
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== target/criterion tree ==="
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+
       - name: Extract benchmark JSON
         run: |
           mkdir -p bench-json
@@ -238,6 +287,18 @@ jobs:
       - name: Run benchmarks
         run: |
           cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+
+      - name: Debug benchmark output
+        if: always()
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== target/criterion structure ==="
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          echo "=== target/criterion tree ==="
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
         run: |
