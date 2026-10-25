@@ -203,9 +203,10 @@ jobs:
         run: |
           mkdir bench-json
           Get-ChildItem ../target/criterion/*/*/new/estimates.json | ForEach-Object {
-            $rel = $_.FullName.Replace('../target/criterion/', '')
-            $group = $rel.Split('/')[0]
-            $bench = $rel -replace '^[^/]+/', '' -replace '/new/estimates\.json$', ''
+            $rel = $_.FullName.Replace((Resolve-Path ../target/criterion).Path + '\', '')
+            $parts = $rel.Split('\')
+            $group = $parts[0]
+            $bench = $parts[1..($parts.Length - 2)] -join '_'
             Copy-Item $_ "bench-json/${group}_${bench}.json"
           }
 
