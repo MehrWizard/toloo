@@ -86,7 +86,7 @@ jobs:
         run: |
           mkdir -p bench-json
           for f in ../target/criterion/*/*/new/estimates.json; do
-            rel="${f#target/criterion/}"
+            rel="${f#../target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
@@ -145,7 +145,7 @@ jobs:
         run: |
           mkdir -p bench-json
           for f in ../target/criterion/*/*/new/estimates.json; do
-            rel="${f#target/criterion/}"
+            rel="${f#../target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
@@ -203,7 +203,7 @@ jobs:
         run: |
           mkdir bench-json
           Get-ChildItem ../target/criterion/*/*/new/estimates.json | ForEach-Object {
-            $rel = $_.FullName.Replace('target/criterion/', '')
+            $rel = $_.FullName.Replace('../target/criterion/', '')
             $group = $rel.Split('/')[0]
             $bench = $rel -replace '^[^/]+/', '' -replace '/new/estimates\.json$', ''
             Copy-Item $_ "bench-json/${group}_${bench}.json"
@@ -257,7 +257,7 @@ jobs:
         run: |
           mkdir -p bench-json
           for f in ../target/criterion/*/*/new/estimates.json; do
-            rel="${f#target/criterion/}"
+            rel="${f#../target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
@@ -313,7 +313,7 @@ jobs:
         run: |
           mkdir -p bench-json
           for f in ../target/criterion/*/*/new/estimates.json; do
-            rel="${f#target/criterion/}"
+            rel="${f#../target/criterion/}"
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
