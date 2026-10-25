@@ -454,7 +454,8 @@ jobs:
       - name: Find baseline commit
         run: |
           cd bench-repo
-          BASELINE=$(git log --oneline --all -- results/ | head -2 | tail -1 | cut -d' ' -f1)
+          # Find previous toloo commit SHA from result filenames (not benchmark repo git history)
+          BASELINE=$(ls results/*.json 2>/dev/null | grep -v 'latest.json' | grep -v 'history.json' | sed 's|results/||' | sed 's|\.json$||' | sort -r | head -2 | tail -1)
           if [ -n "$BASELINE" ]; then
             cp results/${BASELINE}.json ../baseline.json
             echo "baseline=${BASELINE}" >> $GITHUB_OUTPUT
