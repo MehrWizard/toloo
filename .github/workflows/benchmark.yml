@@ -73,8 +73,12 @@ jobs:
       - name: Extract benchmark JSON
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/estimates.json; do
-            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          for f in target/criterion/*/*/new/estimates.json; do
+            rel="${f#target/criterion/}"
+            group="${rel%%/*}"
+            bench="${rel#*/}"
+            bench="${bench%/new/estimates.json}"
+            cp "$f" "bench-json/${group}_${bench}.json"
           done
 
       - name: Upload benchmark results
@@ -112,8 +116,12 @@ jobs:
       - name: Extract benchmark JSON
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/estimates.json; do
-            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          for f in target/criterion/*/*/new/estimates.json; do
+            rel="${f#target/criterion/}"
+            group="${rel%%/*}"
+            bench="${rel#*/}"
+            bench="${bench%/new/estimates.json}"
+            cp "$f" "bench-json/${group}_${bench}.json"
           done
 
       - name: Upload benchmark results
@@ -149,10 +157,14 @@ jobs:
           cargo bench -p toloo-lib 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
+        shell: pwsh
         run: |
           mkdir bench-json
-          Get-ChildItem target/criterion/*/estimates.json | ForEach-Object {
-            Copy-Item $_ "bench-json/$($_.Parent.Name).json"
+          Get-ChildItem target/criterion/*/*/new/estimates.json | ForEach-Object {
+            $rel = $_.FullName.Replace('target/criterion/', '')
+            $group = $rel.Split('/')[0]
+            $bench = $rel -replace '^[^/]+/', '' -replace '/new/estimates\.json$', ''
+            Copy-Item $_ "bench-json/${group}_${bench}.json"
           }
 
       - name: Upload benchmark results
@@ -190,8 +202,12 @@ jobs:
       - name: Extract benchmark JSON
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/estimates.json; do
-            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          for f in target/criterion/*/*/new/estimates.json; do
+            rel="${f#target/criterion/}"
+            group="${rel%%/*}"
+            bench="${rel#*/}"
+            bench="${bench%/new/estimates.json}"
+            cp "$f" "bench-json/${group}_${bench}.json"
           done
 
       - name: Upload benchmark results
@@ -226,8 +242,12 @@ jobs:
       - name: Extract benchmark JSON
         run: |
           mkdir -p bench-json
-          for f in target/criterion/*/estimates.json; do
-            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          for f in target/criterion/*/*/new/estimates.json; do
+            rel="${f#target/criterion/}"
+            group="${rel%%/*}"
+            bench="${rel#*/}"
+            bench="${bench%/new/estimates.json}"
+            cp "$f" "bench-json/${group}_${bench}.json"
           done
 
       - name: Upload benchmark results
@@ -275,7 +295,13 @@ jobs:
               results["platforms"][platform] = {}
 
               for json_file in (platform_dir / "bench-json").glob("*.json"):
-                  bench_name = json_file.stem
+                  # Format: group_bench.json
+                  parts = json_file.stem.split('_', 1)
+                  if len(parts) == 2:
+                      group, bench_name = parts
+                      bench_name = f"{group}/{bench_name}"
+                  else:
+                      bench_name = json_file.stem
                   try:
                       with open(json_file) as f:
                           data = json.load(f)
