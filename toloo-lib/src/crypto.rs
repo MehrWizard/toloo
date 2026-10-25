@@ -2,10 +2,16 @@ use anyhow::{anyhow, Context, Result};
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroizing;
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Create HMAC-SHA256 key from bytes using KeyInit trait.
+fn hmac_sha256_key(key: &[u8]) -> HmacSha256 {
+    <HmacSha256 as KeyInit>::new_from_slice(key).expect("HMAC key")
+}
 
 const PRIVATE_INFO: &[u8] = b"toloo-private-v0.2";
 
@@ -63,8 +69,8 @@ pub fn x25519_pub_from_seed(priv_key: &[u8; 32]) -> [u8; 32] {
 pub fn x25519_shared_secret(my_priv: &[u8], their_pub: &[u8]) -> Result<Vec<u8>> {
     let my_priv_bytes = exact_bytes(my_priv, "X25519 private key")?;
     let their_pub_bytes = exact_bytes(their_pub, "X25519 public key")?;
-    let my_secret = StaticSecret::from(*my_priv_bytes);
-    let their_public = PublicKey::from(*their_pub_bytes);
+    let my_secret = StaticSecret::from(my_priv_bytes);
+    let their_public = PublicKey::from(their_pub_bytes);
     let shared = my_secret.diffie_hellman(&their_public);
     Ok(shared.as_bytes().to_vec())
 }
@@ -76,15 +82,33 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Generic HKDF-SHA256.
+/// Generic HKDF-SHA256 (RFC 5869).
 pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u8> {
     if length == 0 {
         return Vec::new();
     }
-    let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
-    let mut okm = vec![0u8; length];
-    hk.expand(info, &mut okm)
-        .expect("HKDF output length exceeds SHA-256 HKDF limits");
+
+    // HKDF-Extract: PRK = HMAC-SHA256(salt, IKM)
+    let mut mac = hmac_sha256_key(salt);
+    mac.update(ikm);
+    let prk = mac.finalize().into_bytes();
+
+    // HKDF-Expand: OKM = T(1) | T(2) | ... where T(i) = HMAC-SHA256(PRK, T(i-1) | info | i)
+    let mut okm = Vec::with_capacity(length);
+    let mut t = Vec::new();
+    let mut counter = 1u8;
+
+    while okm.len() < length {
+        let mut mac = hmac_sha256_key(&prk);
+        mac.update(&t);
+        mac.update(info);
+        mac.update(&[counter]);
+        t = mac.finalize().into_bytes().to_vec();
+        okm.extend_from_slice(&t);
+        counter += 1;
+    }
+
+    okm.truncate(length);
     okm
 }
 
@@ -114,11 +138,10 @@ pub fn chacha20_decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8]) -> 
         .map_err(|_| anyhow!("ChaCha20-Poly1305 authentication failed"))
 }
 
-fn exact_bytes<const N: usize>(input: &[u8], name: &str) -> Result<Zeroizing<[u8; N]>> {
-    let bytes: [u8; N] = input
+fn exact_bytes<const N: usize>(input: &[u8], name: &str) -> Result<[u8; N]> {
+    input
         .try_into()
-        .map_err(|_| anyhow!("{name} must be {N} bytes"))?;
-    Ok(Zeroizing::new(bytes))
+        .map_err(|_| anyhow!("{name} must be {N} bytes"))
 }
 
 #[cfg(test)]

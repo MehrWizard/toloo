@@ -170,7 +170,7 @@ mod commands {
 
     use toloo_lib::base64url;
     use toloo_lib::crypto::{ed25519_generate, x25519_generate};
-    use toloo_lib::envelope::{depth, innermost, make_envelope, parse_envelope, verify_chain, wrap_ack};
+    use toloo_lib::envelope::{depth, innermost, parse_envelope, verify_chain, wrap_ack};
     use toloo_lib::events::{make_node_meta, make_room_create, make_room_join, make_room_message, make_side_attestation, make_room_flag};
     use toloo_lib::keystore;
     use toloo_lib::ids::eid;
@@ -181,11 +181,10 @@ mod commands {
         encode_uri as discovery_encode_uri,
     };
     use toloo_lib::pool::Pool;
+    use toloo_lib::transport::client::{pool_exchange as lib_pool_exchange, PoolExchangeConfig, TlsVerify, WantRoom};
     use toloo_lib::transport::server::{EndpointConfig, run_relay, RelayConfig, RelayMetrics};
-    use toloo_lib::transport::tls::make_self_signed_acceptor;
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
-
+    use toloo_lib::transport::tls::make_self_signed_acceptor_from_key;
+    
     use super::{AppDb, AppState, LocalRelayEntry, RelayConfigRecord};
 
     // ─── Return types ─────────────────────────────────────────────────
@@ -415,142 +414,6 @@ mod commands {
 
     // ─── Network / pool.exchange ──────────────────────────────────────
 
-    /// Collect valid envelopes from a flat JSON array returned by HTTP/TCP transports.
-    fn collect_envelopes(values: Vec<Value>) -> Result<Vec<String>, String> {
-        let mut results = Vec::new();
-        for v in values {
-            if v.get("error").is_some() || v.get("done").is_some() { continue; }
-            if let Ok(env) = parse_envelope(v) {
-                if verify_chain(&env).is_ok() {
-                    results.push(serde_json::to_string(&env).map_err(to_err)?);
-                }
-            }
-        }
-        Ok(results)
-    }
-
-    /// pool.exchange over HTTP (plain or TLS).
-    async fn pool_exchange_http(url: &str, request_json: &str) -> Result<Vec<String>, String> {
-        use tokio::io::AsyncWriteExt;
-
-        // Parse http[s]://host[:port][/path].
-        let is_https = url.starts_with("https://");
-        let without_scheme = url.strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .ok_or("invalid HTTP(S) URL")?;
-
-        let (host_port, path) = match without_scheme.find('/') {
-            Some(i) => (&without_scheme[..i], &without_scheme[i..]),
-            None    => (without_scheme, "/"),
-        };
-        let default_port = if is_https { 443u16 } else { 80 };
-        let (host, port) = match host_port.rfind(':') {
-            Some(i) => (&host_port[..i], host_port[i+1..].parse::<u16>().map_err(to_err)?),
-            None    => (host_port, default_port),
-        };
-
-        let body   = request_json.as_bytes();
-        let req_headers = format!(
-            "POST {} HTTP/1.1\r\nHost: {host_port}\r\n\
-             Content-Type: application/json\r\nContent-Length: {}\r\n\
-             Connection: close\r\n\r\n",
-            path, body.len()
-        );
-
-        let stream = tokio::net::TcpStream::connect(format!("{host}:{port}"))
-            .await.map_err(to_err)?;
-
-        // Branch for TLS vs plain.
-        let resp_body: Vec<u8> = if is_https {
-            use tokio_rustls::rustls;
-            use tokio_rustls::TlsConnector;
-            use std::sync::Arc;
-
-            // Accept self-signed certs: provide a verifier that passes everything.
-            #[derive(Debug)]
-            struct AcceptAny;
-            impl rustls::client::danger::ServerCertVerifier for AcceptAny {
-                fn verify_server_cert(
-                    &self, _end_entity: &rustls::pki_types::CertificateDer<'_>,
-                    _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-                    _server_name: &rustls::pki_types::ServerName<'_>,
-                    _ocsp_response: &[u8],
-                    _now: rustls::pki_types::UnixTime,
-                ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-                    Ok(rustls::client::danger::ServerCertVerified::assertion())
-                }
-                fn verify_tls12_signature(&self, _msg: &[u8], _cert: &rustls::pki_types::CertificateDer<'_>, _dss: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-                }
-                fn verify_tls13_signature(&self, _msg: &[u8], _cert: &rustls::pki_types::CertificateDer<'_>, _dss: &rustls::DigitallySignedStruct) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-                    Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-                }
-                fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-                    rustls::crypto::ring::default_provider().signature_verification_algorithms.supported_schemes()
-                }
-            }
-
-            let tls_cfg = rustls::ClientConfig::builder_with_provider(
-                Arc::new(rustls::crypto::ring::default_provider())
-            )
-            .with_safe_default_protocol_versions().map_err(to_err)?
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptAny))
-            .with_no_client_auth();
-
-            let connector  = TlsConnector::from(Arc::new(tls_cfg));
-            let server_name = rustls::pki_types::ServerName::try_from(host.to_owned())
-                .map_err(to_err)?;
-            let mut tls = connector.connect(server_name, stream).await.map_err(to_err)?;
-            tls.write_all(req_headers.as_bytes()).await.map_err(to_err)?;
-            tls.write_all(body).await.map_err(to_err)?;
-            tls.flush().await.map_err(to_err)?;
-            read_http_response_body(&mut tls).await?
-        } else {
-            let mut plain = stream;
-            plain.write_all(req_headers.as_bytes()).await.map_err(to_err)?;
-            plain.write_all(body).await.map_err(to_err)?;
-            plain.flush().await.map_err(to_err)?;
-            read_http_response_body(&mut plain).await?
-        };
-
-        let values: Vec<Value> = serde_json::from_slice(&resp_body).map_err(to_err)?;
-        collect_envelopes(values)
-    }
-
-    /// Read an HTTP/1.1 response, return the body bytes.
-    async fn read_http_response_body<S>(stream: &mut S) -> Result<Vec<u8>, String>
-    where S: tokio::io::AsyncRead + Unpin
-    {
-        use tokio::io::AsyncReadExt;
-        let mut header_buf: Vec<u8> = Vec::with_capacity(2048);
-        loop {
-            let mut byte = [0u8; 1];
-            match stream.read(&mut byte).await {
-                Ok(0) | Err(_) => break,
-                Ok(_) => header_buf.push(byte[0]),
-            }
-            if header_buf.ends_with(b"\r\n\r\n") { break; }
-            if header_buf.len() > 16 * 1024 { return Err("HTTP response headers too large".to_owned()); }
-        }
-        let header_str = std::str::from_utf8(&header_buf).map_err(to_err)?;
-        let mut content_length: Option<usize> = None;
-        for line in header_str.split("\r\n").skip(1) {
-            if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                content_length = rest.trim().parse().ok();
-            }
-        }
-        if let Some(len) = content_length {
-            let mut buf = vec![0u8; len];
-            stream.read_exact(&mut buf).await.map_err(to_err)?;
-            Ok(buf)
-        } else {
-            let mut buf = Vec::new();
-            stream.read_to_end(&mut buf).await.map_err(to_err)?;
-            Ok(buf)
-        }
-    }
-
     #[tauri::command]
     pub async fn pool_exchange(
         relay_url:  String,
@@ -564,51 +427,27 @@ mod commands {
             guard.clone().unwrap_or_else(throwaway_node)
         };
 
-        let offer_items: Vec<Value> = offer
+        let offer_envelopes: Vec<Envelope> = offer
             .iter()
             .filter_map(|j| serde_json::from_str(j).ok())
             .collect();
 
-        let request = make_envelope(
-            "pool.exchange",
-            Some(serde_json::json!({
-                "offer": offer_items,
-                "want": { "rooms": want_rooms, "after": after, "limit": 200 }
-            })),
-            &node, None,
-        ).map_err(to_err)?;
+        let config = PoolExchangeConfig {
+            offer: offer_envelopes,
+            want_rooms: want_rooms.into_iter()
+                .map(|r| WantRoom { room_pub: r, after, limit: 200 })
+                .collect(),
+            timeout: Some(std::time::Duration::from_secs(30)),
+        };
 
-        let request_json = serde_json::to_string(&request).map_err(to_err)?;
+        // Use TlsVerify::AcceptAny for self-signed relay certs
+        let envelopes = lib_pool_exchange(&relay_url, &node, config, TlsVerify::AcceptAny)
+            .await
+            .map_err(|e| e.to_string())?;
 
-        // Route by URL scheme.
-        if relay_url.starts_with("http://") || relay_url.starts_with("https://") {
-            return pool_exchange_http(&relay_url, &request_json).await;
-        }
-
-        // ws:// or wss:// — WebSocket path.
-        let (mut ws, _) = connect_async(relay_url).await.map_err(to_err)?;
-        ws.send(Message::Text(request_json.into())).await.map_err(to_err)?;
-
-        let mut results = Vec::new();
-        while let Some(msg) = ws.next().await {
-            let text = match msg.map_err(to_err)? {
-                Message::Text(t)  => t.to_string(),
-                Message::Close(_) => break,
-                Message::Ping(p)  => { ws.send(Message::Pong(p)).await.ok(); continue; }
-                _ => continue,
-            };
-            if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                if v.get("done").is_some()  { break; }
-                if v.get("error").is_some() { continue; }
-                if let Ok(env) = parse_envelope(v) {
-                    if verify_chain(&env).is_ok() {
-                        results.push(serde_json::to_string(&env).map_err(to_err)?);
-                    }
-                }
-            }
-        }
-        let _ = ws.close(None).await;
-        Ok(results)
+        Ok(envelopes.into_iter()
+            .map(|env| serde_json::to_string(&env).map_err(|e| e.to_string()))
+            .collect::<Result<Vec<_>, _>>()?)
     }
 
     #[tauri::command]
@@ -668,6 +507,7 @@ mod commands {
 
     /// Start a saved relay by its config ID.
     /// Loads the config from the DB, starts the relay thread, marks the config as active.
+    /// Uses the loaded node identity (stable across restarts) and derives TLS cert deterministically.
     #[tauri::command]
     pub fn relay_start(config_id: String, state: tauri::State<AppState>) -> Result<RelayInfo, String> {
         let cfg = with_db(&state, |db| {
@@ -676,22 +516,24 @@ mod commands {
                 .ok_or_else(|| format!("relay config {config_id} not found"))
         })?;
 
+        // Get the loaded node identity (must be loaded via load_node or keygen first).
+        let node = {
+            let guard = state.node.lock().unwrap();
+            guard.clone().ok_or("No identity loaded — call load_node or keygen first")?
+        };
+
         // Probe port availability.
         std::net::TcpListener::bind(format!("0.0.0.0:{}", cfg.port))
             .map_err(|e| format!("port {} unavailable: {e}", cfg.port))?;
 
-        // Generate a fresh relay keypair each time it starts.
-        let (sig_pub_bytes, sig_seed_bytes) = ed25519_generate();
-        let (enc_pub_bytes, enc_priv_bytes)  = x25519_generate();
-        let relay_node = LocalNode {
-            sig: Keypair { pub_key: base64url::encode(&sig_pub_bytes), priv_key: base64url::encode(&sig_seed_bytes) },
-            enc: Keypair { pub_key: base64url::encode(&enc_pub_bytes), priv_key: base64url::encode(&enc_priv_bytes) },
-        };
-
-        // For TLS protos (wss, https) generate a fresh self-signed cert.
+        // For TLS protos (wss, https) generate a deterministic self-signed cert from the node's Ed25519 seed.
         let needs_tls = cfg.proto == "wss" || cfg.proto == "https";
         let (tls_acceptor, cert_fp) = if needs_tls {
-            match make_self_signed_acceptor(&cfg.host) {
+            let seed_bytes = base64url::decode(&node.sig.priv_key)
+                .map_err(|e| format!("invalid node seed: {e}"))?;
+            let seed: [u8; 32] = seed_bytes.as_slice().try_into()
+                .map_err(|_| "node seed must be 32 bytes".to_owned())?;
+            match make_self_signed_acceptor_from_key(&seed, &cfg.host) {
                 Ok((acc, _cert_der, fp)) => (Some(std::sync::Arc::new(acc)), Some(fp)),
                 Err(e) => return Err(format!("TLS setup failed: {e}")),
             }
@@ -712,7 +554,7 @@ mod commands {
             direct:  Some(cfg.direct),
             extra,
         };
-        let node_meta  = make_node_meta(&relay_node, vec![endpoint_desc]).map_err(to_err)?;
+        let node_meta  = make_node_meta(&node, vec![endpoint_desc]).map_err(to_err)?;
         let invite_uri = discovery_encode_uri(&[node_meta]).map_err(to_err)?;
 
         let bind_addr: SocketAddr = format!("0.0.0.0:{}", cfg.port).parse().map_err(to_err)?;
@@ -739,7 +581,7 @@ mod commands {
                     Err(e) => { eprintln!("[toloo-app] relay pool init failed: {e}"); return; }
                 };
                 let config = Arc::new(RelayConfig {
-                    node:      relay_node,
+                    node,
                     endpoints: vec![transport_ep],
                     pool,
                     rooms:     rooms_snapshot,

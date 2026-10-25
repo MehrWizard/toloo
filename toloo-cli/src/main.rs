@@ -8,13 +8,13 @@ use serde_json::json;
 
 use toloo_lib::base64url;
 use toloo_lib::crypto::{ed25519_generate, x25519_generate};
-use toloo_lib::envelope::{innermost, make_envelope, parse_envelope, verify_chain};
+use toloo_lib::envelope::{innermost};
 use toloo_lib::events::{make_node_meta, make_room_create, make_room_join, make_room_message};
 use toloo_lib::ids::eid;
 use toloo_lib::types::{Envelope, Keypair, LocalNode, LocalRoom};
 use toloo_lib::vectors::VectorSet;
 use toloo_lib::discovery::{decode as discovery_decode, encode_file, encode_uri};
-use toloo_lib::pool::Pool;
+use toloo_lib::pool::{Pool, PoolConfig};
 use toloo_lib::transport::server::{EndpointConfig, RelayConfig, run_relay};
 
 // ---- CLI definition ----
@@ -136,7 +136,7 @@ enum Commands {
         #[arg(long, default_value = "7700")]
         port: u16,
         /// Base path for the event pool (writes <path>.jsonl + <path>.meta.json +
-        /// <path>.blobs/). Omit for in-memory (data lost on exit).
+        /// <path>.blobs/ + <path>.cold.jsonl). Omit for in-memory (data lost on exit).
         #[arg(long)]
         db: Option<PathBuf>,
         /// Path to node identity JSON.
@@ -146,6 +146,24 @@ enum Commands {
         /// Can be repeated for multiple rooms.
         #[arg(long)]
         room_key: Vec<PathBuf>,
+        /// Enable tiered storage: max events in hot (memory) tier.
+        /// Older events spill to cold storage (<base>.cold.jsonl).
+        /// Default: 0 (unlimited, all in memory).
+        #[arg(long, default_value = "0")]
+        max_resident_blocks: usize,
+        /// Number of recent blocks to keep for tail-only sync (default sync behavior).
+        /// Default: 1000
+        #[arg(long, default_value = "1000")]
+        tail_blocks_to_keep: usize,
+        /// Retention for public rooms (days). Default: 7
+        #[arg(long, default_value = "7")]
+        retention_public_days: u64,
+        /// Retention for personal rooms (days). Default: 90
+        #[arg(long, default_value = "90")]
+        retention_personal_days: u64,
+        /// Retention for private rooms (days). Default: 30
+        #[arg(long, default_value = "30")]
+        retention_private_days: u64,
     },
 
     /// Print deterministic test vectors for Toloo v0.2 (spec §Appendix E).
@@ -169,8 +187,8 @@ async fn main() -> Result<()> {
         Commands::Sync { relay, room, after, identity, output, offer } => {
             cmd_sync(relay, room, after, identity, output, offer).await
         }
-        Commands::Relay { host, port, db, identity, room_key } => {
-            cmd_relay(host, port, db, identity, room_key).await
+        Commands::Relay { host, port, db, identity, room_key, max_resident_blocks, tail_blocks_to_keep, retention_public_days, retention_personal_days, retention_private_days } => {
+            cmd_relay(host, port, db, identity, room_key, max_resident_blocks, tail_blocks_to_keep, retention_public_days, retention_personal_days, retention_private_days).await
         }
         Commands::Vectors => cmd_vectors(),
     }
@@ -454,18 +472,32 @@ async fn cmd_sync(
 // ================================================================
 
 async fn cmd_relay(
-    host:           String,
-    port:           u16,
-    db:             Option<PathBuf>,
-    identity:       Option<PathBuf>,
-    room_key_paths: Vec<PathBuf>,
+    host:                 String,
+    port:                 u16,
+    db:                   Option<PathBuf>,
+    identity:             Option<PathBuf>,
+    room_key_paths:       Vec<PathBuf>,
+    max_resident_blocks:  usize,
+    tail_blocks_to_keep:  usize,
+    retention_public_days: u64,
+    retention_personal_days: u64,
+    retention_private_days: u64,
 ) -> Result<()> {
     let node = load_node_identity(identity)?;
+
+    let pool_config = PoolConfig {
+        max_resident_blocks,
+        tail_blocks_to_keep,
+        cold_storage_path: None,
+        retention_public_days,
+        retention_personal_days,
+        retention_private_days,
+    };
 
     let pool = match db {
         Some(path) => {
             let s = path.to_str().context("invalid DB path")?;
-            Arc::new(Pool::open(s).context("failed to open database")?)
+            Arc::new(Pool::open(s, pool_config).context("failed to open database")?)
         }
         None => {
             eprintln!("[toloo] warning: no --db specified, using in-memory pool (data lost on exit)");
@@ -591,7 +623,7 @@ fn cmd_vectors() -> Result<()> {
 }
 
 // ================================================================
-// Shared WebSocket helper
+// Shared WebSocket helper (delegates to toloo-lib transport client)
 // ================================================================
 
 /// Perform a pool.exchange over WebSocket and return all received envelopes.
@@ -602,64 +634,22 @@ async fn ws_pool_exchange(
     want_rooms: Vec<String>,
     after:      u64,
 ) -> Result<Vec<Envelope>> {
-    use futures_util::{SinkExt, StreamExt};
-    use tokio_tungstenite::{connect_async, tungstenite::Message};
+    use toloo_lib::transport::client::{pool_exchange_ws, PoolExchangeConfig, TlsVerify, WantRoom};
 
-    let offer_values: Vec<serde_json::Value> = offer
+    let offer_envelopes: Vec<Envelope> = offer
         .iter()
         .filter_map(|j| serde_json::from_str(j).ok())
         .collect();
 
-    let request = make_envelope(
-        "pool.exchange",
-        Some(json!({
-            "offer": offer_values,
-            "want": {
-                "rooms": want_rooms,
-                "after": after,
-                "limit": 1000,
-            }
-        })),
-        node,
-        None,
-    )?;
+    let config = PoolExchangeConfig {
+        offer: offer_envelopes,
+        want_rooms: want_rooms.into_iter()
+            .map(|r| WantRoom { room_pub: r, after, limit: 1000 })
+            .collect(),
+        timeout: None,
+    };
 
-    let (mut ws, _) = connect_async(relay_url)
-        .await
-        .with_context(|| format!("failed to connect to {relay_url}"))?;
-
-    ws.send(Message::Text(serde_json::to_string(&request)?.into()))
-        .await
-        .context("WS send failed")?;
-
-    let mut results = Vec::new();
-    while let Some(msg) = ws.next().await {
-        match msg? {
-            Message::Text(text) => {
-                match serde_json::from_str::<serde_json::Value>(&text) {
-                    Ok(v) => {
-                        if v.get("done").is_some() { break; }
-                        if v.get("error").is_some() {
-                            eprintln!("[toloo] relay error: {v}");
-                            continue;
-                        }
-                        if v.get("wr").is_some() { continue; } // room watermark frame (advisory)
-                        match parse_envelope(v) {
-                            Ok(env) if verify_chain(&env).is_ok() => results.push(env),
-                            Ok(_)  => eprintln!("[toloo] dropped: invalid chain"),
-                            Err(e) => eprintln!("[toloo] dropped: {e}"),
-                        }
-                    }
-                    Err(e) => eprintln!("[toloo] parse error: {e}"),
-                }
-            }
-            Message::Close(_) => break,
-            Message::Ping(p)  => { ws.send(Message::Pong(p)).await.ok(); }
-            _                 => {}
-        }
-    }
-    let _ = ws.close(None).await;
-    Ok(results)
+    pool_exchange_ws(relay_url, node, config, TlsVerify::Standard).await
 }
 
 // ================================================================

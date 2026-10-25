@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use crate::memzero::Zeroize;
 
 /// The only top-level protocol structure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -56,21 +56,41 @@ pub struct DatumBody {
     pub extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalNode {
     pub sig: Keypair,
     pub enc: Keypair,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalRoom {
     pub sig: Keypair,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Keypair {
     pub pub_key: String,
     pub priv_key: String,
+}
+
+// Manual Zeroize implementations for sensitive types.
+impl Zeroize for Keypair {
+    fn zeroize(&mut self) {
+        self.priv_key.zeroize();
+    }
+}
+
+impl Zeroize for LocalNode {
+    fn zeroize(&mut self) {
+        self.sig.zeroize();
+        self.enc.zeroize();
+    }
+}
+
+impl Zeroize for LocalRoom {
+    fn zeroize(&mut self) {
+        self.sig.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -14,6 +14,7 @@ pub mod private;
 pub mod rules;
 pub mod types;
 pub mod vectors;
+pub mod memzero;
 
 #[cfg(test)]
 pub(crate) mod fixtures;

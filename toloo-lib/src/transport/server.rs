@@ -11,6 +11,7 @@
 ///
 /// The pool uses interior locking but handlers run on a single-threaded
 /// `LocalSet` executor.
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -23,6 +24,14 @@ use tokio::net::TcpListener;
 use tokio::task::{spawn_local, LocalSet};
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
+
+/// Combined trait for erased stream type.
+/// Both `TcpStream` and `TlsStream<TcpStream>` implement this.
+trait AnyStream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> AnyStream for T {}
+
+/// Boxed erased stream for the accept loop handler.
+type BoxedStream = Box<dyn AnyStream>;
 
 use crate::pool::Pool;
 use crate::requests::handlers::handle_request;
@@ -107,9 +116,9 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
 
         local.spawn_local(async move {
             let result = match proto.as_str() {
-                "ws" => run_ws_accept_loop(addr, None, cfg).await,
+                "ws" => run_accept_loop(addr, "WS".to_owned(), None, cfg, |s, p, c| do_ws_session(s, p, c)).await,
                 "wss" => match tls {
-                    Some(t) => run_ws_accept_loop(addr, Some(t), cfg).await,
+                    Some(t) => run_accept_loop(addr, "WSS".to_owned(), Some(t), cfg, |s, p, c| do_ws_session(s, p, c)).await,
                     None => Err(anyhow::anyhow!("wss endpoint missing TLS acceptor")),
                 },
                 "http" => run_http_accept_loop(addr, path, None, cfg).await,
@@ -134,53 +143,58 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// WebSocket — plain (ws) or over TLS (wss)
+// Generic accept loop for WS/WSS and HTTP/HTTPS
 // ══════════════════════════════════════════════════════════════════════
 
-async fn run_ws_accept_loop(
+/// Run a generic accept loop for a protocol (ws/wss/http/https).
+///
+/// The `handler` closure is called for each accepted connection with the
+/// (possibly TLS-wrapped) stream and peer address. It should drive the
+/// protocol session to completion.
+async fn run_accept_loop<F, Fut>(
     addr: SocketAddr,
+    proto: String,
     tls: Option<Arc<tokio_rustls::TlsAcceptor>>,
     config: Arc<RelayConfig>,
-) -> Result<()> {
-    let listener = TcpListener::bind(addr).await.with_context(|| {
-        format!(
-            "failed to bind {} on {addr}",
-            if tls.is_some() { "WSS" } else { "WS" }
-        )
-    })?;
-    log_info(format!(
-        "{} relay listening on {addr}",
-        if tls.is_some() { "WSS" } else { "WS" }
-    ));
+    handler: F,
+) -> Result<()>
+where
+    F: Fn(BoxedStream, SocketAddr, Arc<RelayConfig>) -> Fut + 'static + Clone,
+    Fut: Future<Output = Result<()>> + 'static,
+{
+    let listener = TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("failed to bind {proto} on {addr}"))?;
+    log_info(format!("{proto} relay listening on {addr}"));
 
     loop {
-        let (stream, peer_addr) = listener.accept().await.context("WS accept")?;
+        let (stream, peer_addr) = listener.accept().await.context(format!("{proto} accept"))?;
         let cfg = Arc::clone(&config);
+        let proto = proto.clone();
+        let handler = handler.clone();
 
         match &tls {
             None => {
+                let stream: BoxedStream = Box::new(stream);
                 spawn_local(async move {
-                    bump_metrics(&cfg, true);
-                    if let Err(e) = do_ws_session(stream, &cfg).await {
-                        log_info(format!("WS error from {peer_addr}: {e}"));
+                    if let Err(e) = handler(stream, peer_addr, cfg).await {
+                        log_info(format!("{proto} error from {peer_addr}: {e}"));
                     }
-                    bump_metrics(&cfg, false);
                 });
             }
             Some(tls_acc) => {
                 let tls_acc = Arc::clone(tls_acc);
+                let handler = handler.clone();
+                let proto = proto.clone();
                 spawn_local(async move {
                     match tls_acc.accept(stream).await {
                         Ok(tls_stream) => {
-                            bump_metrics(&cfg, true);
-                            if let Err(e) = do_ws_session(tls_stream, &cfg).await {
-                                log_info(format!("WSS error from {peer_addr}: {e}"));
+                            let stream: BoxedStream = Box::new(tls_stream);
+                            if let Err(e) = handler(stream, peer_addr, cfg).await {
+                                log_info(format!("{proto} error from {peer_addr}: {e}"));
                             }
-                            bump_metrics(&cfg, false);
                         }
-                        Err(e) => {
-                            log_info(format!("WSS TLS handshake error from {peer_addr}: {e}"))
-                        }
+                        Err(e) => log_info(format!("{proto} TLS handshake error from {peer_addr}: {e}")),
                     }
                 });
             }
@@ -190,42 +204,44 @@ async fn run_ws_accept_loop(
 
 /// Drive a WebSocket session over any `AsyncRead + AsyncWrite + Unpin` stream.
 /// Used by both plain `ws` and TLS `wss`.
-async fn do_ws_session<S>(stream: S, config: &RelayConfig) -> Result<()>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
+async fn do_ws_session(stream: BoxedStream, _peer_addr: SocketAddr, config: Arc<RelayConfig>) -> Result<()> {
+    bump_metrics(&config, true);
     let mut ws = accept_async(stream).await.context("WebSocket upgrade")?;
-    while let Some(msg) = ws.next().await {
-        let msg = msg.context("WebSocket read")?;
-        match msg {
-            Message::Text(text) => {
-                if let Some(m) = &config.metrics {
-                    m.bytes_in.fetch_add(text.len() as u64, Ordering::Relaxed);
-                }
-                let responses = dispatch_common(&text, config).await;
-                for v in responses {
-                    let out = v.to_string();
+    let result = async {
+        while let Some(msg) = ws.next().await {
+            let msg = msg.context("WebSocket read")?;
+            match msg {
+                Message::Text(text) => {
                     if let Some(m) = &config.metrics {
-                        m.bytes_out.fetch_add(out.len() as u64, Ordering::Relaxed);
+                        m.bytes_in.fetch_add(text.len() as u64, Ordering::Relaxed);
                     }
-                    ws.send(Message::Text(out.into()))
+                    let responses = dispatch_common(&text, &config).await;
+                    for v in responses {
+                        let out = v.to_string();
+                        if let Some(m) = &config.metrics {
+                            m.bytes_out.fetch_add(out.len() as u64, Ordering::Relaxed);
+                        }
+                        ws.send(Message::Text(out.into()))
+                            .await
+                            .context("WS send")?;
+                    }
+                    // Signal end of response batch so clients can proceed.
+                    ws.send(Message::Text(r#"{"done":true}"#.into()))
                         .await
-                        .context("WS send")?;
+                        .context("WS done")?;
                 }
-                // Signal end of response batch so clients can proceed.
-                ws.send(Message::Text(r#"{"done":true}"#.into()))
-                    .await
-                    .context("WS done")?;
+                Message::Binary(_) => {}
+                Message::Close(_) => break,
+                Message::Ping(p) => {
+                    ws.send(Message::Pong(p)).await.context("WS pong")?;
+                }
+                _ => {}
             }
-            Message::Binary(_) => {}
-            Message::Close(_) => break,
-            Message::Ping(p) => {
-                ws.send(Message::Pong(p)).await.context("WS pong")?;
-            }
-            _ => {}
         }
-    }
-    Ok(())
+        Ok(())
+    }.await;
+    bump_metrics(&config, false);
+    result
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -243,53 +259,22 @@ async fn run_http_accept_loop(
     config: Arc<RelayConfig>,
 ) -> Result<()> {
     let proto = if tls.is_some() { "HTTPS" } else { "HTTP" };
-    let listener = TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("failed to bind {proto} on {addr}"))?;
-    log_info(format!("{proto} relay listening on {addr} (path={path})"));
+    let full_proto = format!("{} (path={})", proto, path);
 
-    loop {
-        let (stream, peer_addr) = listener.accept().await.context("HTTP(S) accept")?;
-        let cfg = Arc::clone(&config);
+    run_accept_loop(addr, full_proto, tls, config, move |stream: BoxedStream, peer, cfg| {
         let path = path.clone();
-
-        match &tls {
-            None => {
-                spawn_local(async move {
-                    if let Err(e) = do_http_connection(stream, peer_addr, &cfg, &path).await {
-                        log_info(format!("HTTP error from {peer_addr}: {e}"));
-                    }
-                });
-            }
-            Some(tls_acc) => {
-                let tls_acc = Arc::clone(tls_acc);
-                spawn_local(async move {
-                    match tls_acc.accept(stream).await {
-                        Ok(tls_stream) => {
-                            if let Err(e) =
-                                do_http_connection(tls_stream, peer_addr, &cfg, &path).await
-                            {
-                                log_info(format!("HTTPS error from {peer_addr}: {e}"));
-                            }
-                        }
-                        Err(e) => log_info(format!("HTTPS TLS error from {peer_addr}: {e}")),
-                    }
-                });
-            }
-        }
-    }
+        async move { do_http_connection(stream, peer, cfg, &path).await }
+    }).await
 }
 
 /// Minimal HTTP/1.1 server handling a single POST request, then closing.
 /// Works over any `AsyncRead + AsyncWrite + Unpin` (TcpStream or TlsStream).
-async fn do_http_connection<S>(
-    mut stream: S,
+async fn do_http_connection(
+    mut stream: BoxedStream,
     _peer: SocketAddr,
-    config: &RelayConfig,
+    config: Arc<RelayConfig>,
     want_path: &str,
 ) -> Result<()>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
 {
     // Read headers byte-by-byte until the blank line (\r\n\r\n).
     let mut header_buf: Vec<u8> = Vec::with_capacity(2048);
@@ -352,12 +337,12 @@ where
         .context("HTTP body read")?;
 
     if let Some(m) = &config.metrics {
-        bump_metrics(config, true);
+        bump_metrics(&config, true);
         m.bytes_in.fetch_add(body.len() as u64, Ordering::Relaxed);
     }
 
     let json_str = std::str::from_utf8(&body).context("request body not UTF-8")?;
-    let responses = dispatch_common(json_str, config).await;
+    let responses = dispatch_common(json_str, &config).await;
     let resp_body = serde_json::to_vec(&responses).context("response serialise")?;
 
     if let Some(m) = &config.metrics {
@@ -390,7 +375,7 @@ where
 // Shared dispatch
 // ══════════════════════════════════════════════════════════════════════
 
-async fn dispatch_common(json_str: &str, config: &RelayConfig) -> Vec<Value> {
+async fn dispatch_common(json_str: &str, config: &Arc<RelayConfig>) -> Vec<Value> {
     let value: Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => {
@@ -411,7 +396,7 @@ async fn dispatch_common(json_str: &str, config: &RelayConfig) -> Vec<Value> {
 // ══════════════════════════════════════════════════════════════════════
 
 /// Increment or decrement active + (on connect) total metrics.
-fn bump_metrics(config: &RelayConfig, connect: bool) {
+fn bump_metrics(config: &Arc<RelayConfig>, connect: bool) {
     if let Some(m) = &config.metrics {
         if connect {
             m.active.fetch_add(1, Ordering::Relaxed);

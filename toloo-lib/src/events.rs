@@ -4,11 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::base64url;
-use crate::canonical::canonical;
-use crate::crypto::{
-    chacha20_encrypt, derive_private_message_key, sha256, x25519_generate, x25519_shared_secret,
-};
 use crate::envelope::{innermost, make_envelope, now_ms, sign_envelope, wrap_commit, DatumBodyExtra};
+use crate::private::encrypt_private;
 use crate::types::{DatumBody, EndpointDescriptor, Envelope, LocalNode, LocalRoom};
 
 const MAX_MESSAGE_BODY: usize = 4096;
@@ -269,33 +266,12 @@ pub fn make_private_message(
     body: &str,
     blobs: Vec<String>,
 ) -> Result<Envelope> {
-    // Decode recipient's long-lived encryption public key.
-    let rec_enc_bytes =
-        base64url::decode(to_enc_pub).context("invalid recipient enc pub base64url")?;
-
-    // Step 1: fresh ephemeral X25519 keypair (§3.5.3).
-    let (eph_pub_bytes, eph_priv_bytes) = x25519_generate();
-
-    // Step 2: X25519 shared secret.
-    let shared = x25519_shared_secret(&eph_priv_bytes, &rec_enc_bytes)?;
-
-    // Step 3: salt = SHA-256(eph_pub || recipient_enc_pub).
-    let mut salt_input = Vec::with_capacity(64);
-    salt_input.extend_from_slice(&eph_pub_bytes);
-    salt_input.extend_from_slice(&rec_enc_bytes);
-    let salt = sha256(&salt_input);
-
-    // Step 4: derive key + nonce via HKDF-SHA256.
-    let (key, nonce) = derive_private_message_key(&shared, &salt);
-
-    // Steps 5–6: encrypt canonical(content_json) with ChaCha20-Poly1305.
-    let plaintext_obj = json!({ "body": body, "blobs": blobs });
-    let plaintext_bytes = canonical(&plaintext_obj)?.into_bytes();
-    let ciphertext = chacha20_encrypt(&key, &nonce, &plaintext_bytes);
+    let content_obj = json!({ "body": body, "blobs": blobs });
+    let ct = encrypt_private(&content_obj, to_enc_pub)?;
 
     let content = json!({
-        "eph": base64url::encode(&eph_pub_bytes),
-        "encrypted": base64url::encode(&ciphertext)
+        "eph": ct.eph,
+        "encrypted": ct.encrypted
     });
 
     let extra = DatumBodyExtra {
