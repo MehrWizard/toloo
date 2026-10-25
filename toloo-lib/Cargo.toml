@@ -11,13 +11,17 @@ path = "src/lib.rs"
 [dependencies]
 # Cryptography (audited crates)
 getrandom        = "0.3"
-ed25519-dalek    = { version = "2", default-features = false, features = ["fast", "std", "zeroize"] }
+ed25519-dalek    = { version = "3", default-features = false, features = ["fast", "zeroize", "pkcs8", "signature", "alloc"] }
 x25519-dalek     = { version = "2", default-features = false, features = ["static_secrets", "zeroize"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 argon2           = { version = "0.5", default-features = false, features = ["alloc"] }
-hkdf             = "0.12"
+hmac             = "0.12"
 sha2             = "0.10"
-zeroize          = { version = "1", features = ["derive"] }
+
+# X.509 certificate generation (pure Rust, replaces rcgen)
+x509-cert        = { version = "0.3", features = ["builder", "std", "pem"] }
+der              = "0.8"
+const-oid        = "0.10"
 
 # Async runtime and networking
 tokio             = { version = "1", default-features = false, features = ["rt", "macros", "net", "io-util"] }
@@ -26,8 +30,7 @@ futures-util      = "0.3"
 
 # TLS (wss / https relay endpoints)
 tokio-rustls = "0.26"
-rustls        = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rcgen         = "0.14"
+rustls        = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
 
 # Encoding / serialization
 serde      = { version = "1", features = ["derive"] }
@@ -39,3 +42,8 @@ anyhow    = "1"
 [dev-dependencies]
 tokio      = { version = "1", features = ["full", "test-util"] }
 serde_json = "1"
+criterion  = "0.5"
+
+[[bench]]
+name = "canonical_bench"
+harness = false
