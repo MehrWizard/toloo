@@ -1,0 +1,411 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Benchmark repo (owner/repo)'
+        required: true
+        default: 'MehrWizard/toloo-benchmarks'
+      branch:
+        description: 'Branch to benchmark'
+        required: false
+        default: 'main'
+      runs:
+        description: 'Number of benchmark iterations'
+        required: false
+        default: '10'
+
+permissions:
+  contents: read
+  actions: write
+  pages: write
+  id-token: write
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # Prepare benchmark repo (clone or create)
+  # ────────────────────────────────────────────────────────────────────
+  prepare-repo:
+    name: Prepare Benchmark Repo
+    runs-on: ubuntu-latest
+    outputs:
+      repo-existed: ${{ steps.check-repo.outputs.existed }}
+    steps:
+      - name: Check if benchmark repo exists
+        id: check-repo
+        run: |
+          if gh repo view "${{ github.event.inputs.repo }}" >/dev/null 2>&1; then
+            echo "existed=true" >> $GITHUB_OUTPUT
+          else
+            echo "existed=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ────────────────────────────────────────────────────────────────────
+  # Run benchmarks on Linux (x86_64 + aarch64)
+  # ────────────────────────────────────────────────────────────────────
+  bench-linux-x86:
+    name: Benchmark Linux x86_64
+    needs: prepare-repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-linux-x86-${{ github.sha }}
+
+      - name: Install criterion deps
+        run: sudo apt-get update && sudo apt-get install -y gnuplot
+
+      - name: Run benchmarks
+        run: |
+          cargo bench -p toloo-lib -- --measurement-time 10 --sample-size 100 2>&1 | tee bench-results.txt
+
+      - name: Extract benchmark JSON
+        run: |
+          mkdir -p bench-json
+          for f in target/criterion/*/estimates.json; do
+            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          done
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-linux-x86
+          path: |
+            bench-results.txt
+            bench-json/
+
+  bench-linux-arm:
+    name: Benchmark Linux aarch64
+    needs: prepare-repo
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-linux-arm-${{ github.sha }}
+
+      - name: Install criterion deps
+        run: sudo apt-get update && sudo apt-get install -y gnuplot
+
+      - name: Run benchmarks
+        run: |
+          cargo bench -p toloo-lib -- --measurement-time 10 --sample-size 100 2>&1 | tee bench-results.txt
+
+      - name: Extract benchmark JSON
+        run: |
+          mkdir -p bench-json
+          for f in target/criterion/*/estimates.json; do
+            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          done
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-linux-arm
+          path: |
+            bench-results.txt
+            bench-json/
+
+  # ────────────────────────────────────────────────────────────────────
+  # Run benchmarks on Windows
+  # ────────────────────────────────────────────────────────────────────
+  bench-windows:
+    name: Benchmark Windows x86_64
+    needs: prepare-repo
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-windows-${{ github.sha }}
+
+      - name: Run benchmarks
+        run: |
+          cargo bench -p toloo-lib -- --measurement-time 10 --sample-size 100 2>&1 | tee bench-results.txt
+
+      - name: Extract benchmark JSON
+        run: |
+          mkdir bench-json
+          Get-ChildItem target/criterion/*/estimates.json | ForEach-Object {
+            Copy-Item $_ "bench-json/$($_.Parent.Name).json"
+          }
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-windows
+          path: |
+            bench-results.txt
+            bench-json/
+
+  # ────────────────────────────────────────────────────────────────────
+  # Run benchmarks on macOS
+  # ────────────────────────────────────────────────────────────────────
+  bench-macos-x86:
+    name: Benchmark macOS x86_64
+    needs: prepare-repo
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-macos-x86-${{ github.sha }}
+
+      - name: Run benchmarks
+        run: |
+          cargo bench -p toloo-lib -- --measurement-time 10 --sample-size 100 2>&1 | tee bench-results.txt
+
+      - name: Extract benchmark JSON
+        run: |
+          mkdir -p bench-json
+          for f in target/criterion/*/estimates.json; do
+            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          done
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-macos-x86
+          path: |
+            bench-results.txt
+            bench-json/
+
+  bench-macos-arm:
+    name: Benchmark macOS aarch64
+    needs: prepare-repo
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-macos-arm-${{ github.sha }}
+
+      - name: Run benchmarks
+        run: |
+          cargo bench -p toloo-lib -- --measurement-time 10 --sample-size 100 2>&1 | tee bench-results.txt
+
+      - name: Extract benchmark JSON
+        run: |
+          mkdir -p bench-json
+          for f in target/criterion/*/estimates.json; do
+            cp "$f" "bench-json/$(basename $(dirname $f)).json"
+          done
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-macos-arm
+          path: |
+            bench-results.txt
+            bench-json/
+
+  # ────────────────────────────────────────────────────────────────────
+  # Aggregate & Store Results + Deploy to GitHub Pages
+  # ────────────────────────────────────────────────────────────────────
+  aggregate:
+    name: Aggregate & Store Results
+    needs: [prepare-repo, bench-linux-x86, bench-linux-arm, bench-windows, bench-macos-x86, bench-macos-arm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Install Python for aggregation
+        run: sudo apt-get update && sudo apt-get install -y python3 python3-pip
+
+      - name: Aggregate benchmark results
+        run: |
+          cat << 'PYEOF' > aggregate.py
+          import json
+          import sys
+          from pathlib import Path
+          from datetime import datetime
+
+          results = {
+              "timestamp": datetime.utcnow().isoformat() + "Z",
+              "commit": "${{ github.sha }}",
+              "branch": "${{ github.event.inputs.branch }}",
+              "platforms": {}
+          }
+
+          for platform_dir in Path("artifacts").iterdir():
+              if not platform_dir.is_dir():
+                  continue
+              platform = platform_dir.name.replace("bench-", "")
+              results["platforms"][platform] = {}
+
+              for json_file in (platform_dir / "bench-json").glob("*.json"):
+                  bench_name = json_file.stem
+                  try:
+                      with open(json_file) as f:
+                          data = json.load(f)
+                      mean_ns = data["mean"]["point_estimate"]
+                      results["platforms"][platform][bench_name] = {
+                          "mean_ns": mean_ns,
+                          "median_ns": data["median"]["point_estimate"],
+                          "std_dev_ns": data["std_dev"]["point_estimate"],
+                      }
+                  except Exception as e:
+                      print(f"Failed to parse {json_file}: {e}", file=sys.stderr)
+
+          output = Path("benchmark-report.json")
+          output.write_text(json.dumps(results, indent=2))
+          print(f"Written {output}")
+          PYEOF
+          python3 aggregate.py
+
+      - name: Commit results to benchmark repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh repo clone "${{ github.event.inputs.repo }}" bench-repo
+          cd bench-repo
+          cp ../benchmark-report.json results/${{ github.sha }}.json
+          cp ../benchmark-report.json results/latest.json
+          git add results/${{ github.sha }}.json results/latest.json
+          git commit -m "Benchmark: ${{ github.sha }} (${{ github.event.inputs.branch }})"
+          git push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy to GitHub Pages
+        if: github.repository == 'MehrWizard/toloo-benchmarks'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .
+          destination_dir: .
+          keep_files: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload aggregated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benchmark-report.json
+
+  # ────────────────────────────────────────────────────────────────────
+  # Compare with baseline (previous commit on main)
+  # ────────────────────────────────────────────────────────────────────
+  compare:
+    name: Compare with Baseline
+    needs: [aggregate]
+    if: github.event.inputs.branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: benchmark-report
+          path: artifacts/
+
+      - name: Fetch baseline from benchmark repo
+        run: |
+          gh repo clone "${{ github.event.inputs.repo }}" bench-repo
+          cd bench-repo
+          BASELINE=$(git log --oneline --all -- results/ | head -2 | tail -1 | cut -d' ' -f1)
+          if [ -n "$BASELINE" ]; then
+            cp results/${BASELINE}.json ../baseline.json
+            echo "baseline=${BASELINE}" >> $GITHUB_OUTPUT
+          else
+            echo "baseline=" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare benchmarks
+        if: steps.fetch.outputs.baseline != ''
+        run: |
+          cat << 'PYEOF' > compare.py
+          import json
+          import sys
+
+          with open("artifacts/benchmark-report.json") as f:
+              current = json.load(f)
+          with open("baseline.json") as f:
+              baseline = json.load(f)
+
+          print(f"=== Benchmark Comparison ===")
+          print(f"Current: {current['commit'][:8]} ({current['branch']})")
+          print(f"Baseline: {baseline['commit'][:8]} ({baseline['branch']})")
+          print()
+
+          regressions = []
+          improvements = []
+
+          for platform in current["platforms"]:
+              if platform not in baseline["platforms"]:
+                  continue
+              print(f"--- {platform} ---")
+              for bench in current["platforms"][platform]:
+                  if bench not in baseline["platforms"][platform]:
+                      continue
+                  cur = current["platforms"][platform][bench]["mean_ns"]
+                  base = baseline["platforms"][platform][bench]["mean_ns"]
+                  if base == 0:
+                      continue
+                  pct = ((cur - base) / base) * 100
+                  status = "⚠️ REGRESSION" if pct > 5 else ("✅ IMPROVED" if pct < -5 else "→ stable")
+                  print(f"  {bench}: {base:.0f}ns → {cur:.0f}ns ({pct:+.1f}%) {status}")
+                  if pct > 5:
+                      regressions.append((platform, bench, pct))
+                  elif pct < -5:
+                      improvements.append((platform, bench, pct))
+
+          print()
+          if regressions:
+              print("⚠️ REGRESSIONS:")
+              for p, b, pct in regressions:
+                  print(f"  {p}/{b}: +{pct:.1f}%")
+              sys.exit(1)
+          else:
+              print("✅ No significant regressions")
+
+          if improvements:
+              print("✅ IMPROVEMENTS:")
+              for p, b, pct in improvements:
+                  print(f"  {p}/{b}: {pct:.1f}%")
+          PYEOF
+          python3 compare.py
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
