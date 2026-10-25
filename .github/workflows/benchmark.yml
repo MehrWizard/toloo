@@ -68,7 +68,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench -p toloo-lib -- --sample-size 100 2>&1 | tee bench-results.txt
+          cargo bench -p toloo-lib 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
@@ -107,7 +107,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench -p toloo-lib -- --sample-size 100 2>&1 | tee bench-results.txt
+          cargo bench -p toloo-lib 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
@@ -146,7 +146,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench -p toloo-lib -- --sample-size 100 2>&1 | tee bench-results.txt
+          cargo bench -p toloo-lib 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
@@ -185,7 +185,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench -p toloo-lib -- --sample-size 100 2>&1 | tee bench-results.txt
+          cargo bench -p toloo-lib 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
@@ -221,7 +221,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench -p toloo-lib -- --sample-size 100 2>&1 | tee bench-results.txt
+          cargo bench -p toloo-lib 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
