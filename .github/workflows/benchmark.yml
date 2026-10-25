@@ -68,7 +68,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-lib --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
@@ -111,7 +111,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-lib --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
@@ -154,7 +154,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-lib --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         shell: pwsh
@@ -197,7 +197,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-lib --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
@@ -237,7 +237,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cd toloo-lib && cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-lib --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Extract benchmark JSON
         run: |
