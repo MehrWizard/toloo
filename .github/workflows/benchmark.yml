@@ -59,10 +59,6 @@ jobs:
         with:
           target: x86_64-unknown-linux-gnu
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: bench-linux-x86-${{ github.sha }}
-
       - name: Install criterion deps
         run: sudo apt-get update && sudo apt-get install -y gnuplot
 
@@ -178,10 +174,6 @@ jobs:
         with:
           target: x86_64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: bench-windows-${{ github.sha }}
-
       - name: Run benchmarks
         working-directory: toloo-lib
         run: |
@@ -236,10 +228,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: x86_64-apple-darwin
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: bench-macos-x86-${{ github.sha }}
 
       - name: Run benchmarks
         working-directory: toloo-lib
