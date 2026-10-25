@@ -65,6 +65,7 @@ jobs:
       - name: Run benchmarks
         working-directory: toloo-lib
         run: |
+          set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
@@ -123,6 +124,7 @@ jobs:
       - name: Run benchmarks
         working-directory: toloo-lib
         run: |
+          set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
@@ -176,8 +178,10 @@ jobs:
 
       - name: Run benchmarks
         working-directory: toloo-lib
+        shell: pwsh
         run: |
-          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench --bench canonical_bench 2>&1 | Tee-Object -FilePath ../bench-results.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Debug benchmark output
         if: always()
@@ -232,6 +236,7 @@ jobs:
       - name: Run benchmarks
         working-directory: toloo-lib
         run: |
+          set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
@@ -287,6 +292,7 @@ jobs:
       - name: Run benchmarks
         working-directory: toloo-lib
         run: |
+          set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
 
       - name: Debug benchmark output
