@@ -403,29 +403,19 @@ jobs:
           path: bench-repo
           fetch-depth: 0
 
-      - name: Copy results to benchmark repo
+      - name: Copy results & UI to benchmark repo
         run: |
           cd bench-repo
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cp ../benchmark-report.json results/${{ github.sha }}.json
           cp ../benchmark-report.json results/latest.json
-          git add results/${{ github.sha }}.json results/latest.json
+          cp ../../index.html index.html
+          git add results/${{ github.sha }}.json results/latest.json index.html
           git commit -m "Benchmark: ${{ github.sha }} (${{ github.event.inputs.branch }})"
           git push
         env:
           GH_TOKEN: ${{ secrets.BENCHMARK_REPO_PAT }}
-
-      - name: Deploy to GitHub Pages
-        if: github.repository == 'MehrWizard/toloo-benchmarks'
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
-          destination_dir: .
-          keep_files: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload aggregated report
         uses: actions/upload-artifact@v4
