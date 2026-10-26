@@ -85,15 +85,15 @@ jobs:
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in ../target/criterion/*/*/new/estimates.json; do
+          # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
+          while IFS= read -r -d '' f; do
             rel="${f#../target/criterion/}"
-            group="${rel%%/*}"
-            bench="${rel#*/}"
-            bench="${bench%/new/estimates.json}"
-            # Replace / with __ to handle nested bench names like canonical/encode/medium
-            bench_safe="${bench//\//__}"
-            cp "$f" "bench-json/${group}__${bench_safe}.json"
-          done
+            # Remove /new/estimates.json suffix
+            rel="${rel%/new/estimates.json}"
+            # Replace all / with __ for safe filename
+            rel_safe="${rel//\//__}"
+            cp "$f" "bench-json/${rel_safe}.json"
+          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -146,15 +146,15 @@ jobs:
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in ../target/criterion/*/*/new/estimates.json; do
+          # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
+          while IFS= read -r -d '' f; do
             rel="${f#../target/criterion/}"
-            group="${rel%%/*}"
-            bench="${rel#*/}"
-            bench="${bench%/new/estimates.json}"
-            # Replace / with __ to handle nested bench names like canonical/encode/medium
-            bench_safe="${bench//\//__}"
-            cp "$f" "bench-json/${group}__${bench_safe}.json"
-          done
+            # Remove /new/estimates.json suffix
+            rel="${rel%/new/estimates.json}"
+            # Replace all / with __ for safe filename
+            rel_safe="${rel//\//__}"
+            cp "$f" "bench-json/${rel_safe}.json"
+          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -206,12 +206,11 @@ jobs:
         shell: pwsh
         run: |
           mkdir bench-json
-          Get-ChildItem ../target/criterion/*/*/new/estimates.json | ForEach-Object {
+          Get-ChildItem ../target/criterion -Recurse -Filter "estimates.json" | Where-Object { $_.FullName -match '\\new\\estimates\.json$' } | ForEach-Object {
             $rel = $_.FullName.Replace((Resolve-Path ../target/criterion).Path + '\', '')
-            $parts = $rel.Split('\')
-            $group = $parts[0]
-            $bench = $parts[1..($parts.Length - 2)] -join '__'
-            Copy-Item $_ "bench-json/${group}__${bench}.json"
+            $rel = $rel -replace '\\new\\estimates\.json$', ''
+            $rel_safe = $rel -replace '\\', '__'
+            Copy-Item $_ "bench-json/${rel_safe}.json"
           }
 
       - name: Upload benchmark results
@@ -261,15 +260,15 @@ jobs:
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in ../target/criterion/*/*/new/estimates.json; do
+          # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
+          while IFS= read -r -d '' f; do
             rel="${f#../target/criterion/}"
-            group="${rel%%/*}"
-            bench="${rel#*/}"
-            bench="${bench%/new/estimates.json}"
-            # Replace / with __ to handle nested bench names like canonical/encode/medium
-            bench_safe="${bench//\//__}"
-            cp "$f" "bench-json/${group}__${bench_safe}.json"
-          done
+            # Remove /new/estimates.json suffix
+            rel="${rel%/new/estimates.json}"
+            # Replace all / with __ for safe filename
+            rel_safe="${rel//\//__}"
+            cp "$f" "bench-json/${rel_safe}.json"
+          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -319,15 +318,15 @@ jobs:
         working-directory: toloo-lib
         run: |
           mkdir -p bench-json
-          for f in ../target/criterion/*/*/new/estimates.json; do
+          # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
+          while IFS= read -r -d '' f; do
             rel="${f#../target/criterion/}"
-            group="${rel%%/*}"
-            bench="${rel#*/}"
-            bench="${bench%/new/estimates.json}"
-            # Replace / with __ to handle nested bench names like canonical/encode/medium
-            bench_safe="${bench//\//__}"
-            cp "$f" "bench-json/${group}__${bench_safe}.json"
-          done
+            # Remove /new/estimates.json suffix
+            rel="${rel%/new/estimates.json}"
+            # Replace all / with __ for safe filename
+            rel_safe="${rel//\//__}"
+            cp "$f" "bench-json/${rel_safe}.json"
+          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -374,13 +373,10 @@ jobs:
               results["platforms"][platform] = {}
 
               for json_file in (platform_dir / "bench-json").glob("*.json"):
-                  # Format: group__bench.json (bench has __ for /)
-                  parts = json_file.stem.split('__', 1)
-                  if len(parts) == 2:
-                      group, bench_name = parts
-                      bench_name = f"{group}/{bench_name.replace('__', '/')}"
-                  else:
-                      bench_name = json_file.stem.replace('__', '/')
+                  # Format: full_path_with_slashes_replaced_by__.json
+                  # e.g., canonical__encode__small.json -> canonical/encode/small
+                  #       parse_envelope.json -> parse_envelope
+                  bench_name = json_file.stem.replace('__', '/')
                   try:
                       with open(json_file) as f:
                           data = json.load(f)
