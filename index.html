@@ -57,8 +57,8 @@ canvas{width:100%!important;height:100%!important}
 <!-- FULL WIDTH: Protocol Comparison at Top -->
 <section class="section full-width">
   <div class="card">
-    <h2>Protocol Latency & Throughput (Normalized Bars)</h2>
-    <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Latency (ms, lower=better) · Throughput (msg/s, higher=better) · Ratio annotations at bar end.</p>
+    <h2>Protocol Throughput (Normalized Bars)</h2>
+    <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Throughput (msg/s, higher=better) · Latency shown for reference · Ratio annotations at bar end.</p>
     <div id="proto-bars"></div>
   </div>
 </section>
@@ -273,17 +273,17 @@ function drawPlatformChart(canvas, data) {
 }
 
 function drawProtocolBars(container) {
-  // Horizontal bars: protocol latency (ms, lower=better) with end annotations
+  // Horizontal bars: protocol throughput (msg/s, higher=better) with end annotations
   const protocols = [
-    {name:'Toloo',latencyMs:0.082,throughput:12200,ratio:1},
-    {name:'IRC',latencyMs:5,throughput:200,ratio:61},
-    {name:'XMPP',latencyMs:200,throughput:5,ratio:2439},
-    {name:'Matrix',latencyMs:500,throughput:2,ratio:6098},
+    {name:'Toloo',throughput:12200,latencyMs:0.082,ratio:1},
+    {name:'IRC',throughput:200,latencyMs:5,ratio:61},
+    {name:'XMPP',throughput:5,latencyMs:200,ratio:2439},
+    {name:'Matrix',throughput:2,latencyMs:500,ratio:6098},
   ];
-  const maxMs = Math.max(...protocols.map(p=>p.latencyMs));
+  const maxTps = Math.max(...protocols.map(p=>p.throughput));
   let html = '';
   protocols.forEach(p => {
-    const pct = (p.latencyMs / maxMs) * 100;
+    const pct = (p.throughput / maxTps) * 100;
     const color = p.name==='Toloo' ? 'var(--green)' : p.name==='IRC' ? 'var(--amber)' : 'var(--red)';
     const annoText = p.name==='Toloo' ? 'baseline' : `${(p.ratio).toLocaleString()}× slower`;
     html += `<div class="proto-bar-row"><span class="proto-bar-label">${p.name}</span><div class="proto-bar-track"><div class="proto-bar-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div></div><span class="proto-bar-anno">${annoText}</span></div>`;
