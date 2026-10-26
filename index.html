@@ -55,7 +55,7 @@ canvas{width:100%!important;height:100%!important}
 .cat-compare-label{width:100px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
 .cat-compare-track{flex:1;height:100%;background:var(--card);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--line)}
 .cat-compare-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding:0 .4rem;font-size:.55rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:22px}
-.cat-compare-value{width:100px;font-size:.6rem;color:var(--muted);font-family:var(--mono);text-align:right;flex-shrink:0}
+.cat-compare-value{width:100px;font-size:.65rem;color:var(--text);font-family:var(--mono);text-align:right;flex-shrink:0}
 
 /* Platform colors */
 .plat-linux-x86{background:#5ab3ff}
@@ -208,11 +208,10 @@ function drawProtocolBars(container, data) {
 
     // Toloo (baseline)
     const pctT = (tolooNs / maxVal) * 100;
-    const fmtT = tolooNs >= 1e6 ? (tolooNs/1e6).toFixed(2)+' ms' : tolooNs >= 1e3 ? (tolooNs/1e3).toFixed(1)+' µs' : tolooNs.toFixed(0)+' ns';
     html += `<div class="cat-compare-row">
       <span class="cat-compare-label">Toloo</span>
       <div class="cat-compare-track"><div class="cat-compare-fill" style="width:${pctT.toFixed(0)}%;background:var(--green)"></div></div>
-      <span class="cat-compare-value">${fmtT} (baseline)</span>
+      <span class="cat-compare-value">baseline</span>
     </div>`;
 
     // Reference protocols in order: IRC, XMPP, Matrix
@@ -220,12 +219,11 @@ function drawProtocolBars(container, data) {
       const ns = refs[r] || 0;
       if (ns === 0) return;
       const pct = (ns / maxVal) * 100;
-      const ratio = (ns / tolooNs).toFixed(0);
-      const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
+      const ratio = Math.round(ns / tolooNs);
       html += `<div class="cat-compare-row" style="opacity:.8">
-        <span class="cat-compare-label">${r} (est.)</span>
+        <span class="cat-compare-label">${r}</span>
         <div class="cat-compare-track"><div class="cat-compare-fill" style="width:${pct.toFixed(0)}%;background:${REF_COLORS[ri]}"></div></div>
-        <span class="cat-compare-value">${fmt} (${ratio}×)</span>
+        <span class="cat-compare-value">${ratio.toLocaleString()}x slower</span>
       </div>`;
     });
   });
