@@ -410,7 +410,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cp ../benchmark-report.json results/${{ github.sha }}.json
           cp ../benchmark-report.json results/latest.json
-          cp ../../index.html index.html
+          cp ../index.html index.html
           git add results/${{ github.sha }}.json results/latest.json index.html
           git commit -m "Benchmark: ${{ github.sha }} (${{ github.event.inputs.branch }})"
           git push
