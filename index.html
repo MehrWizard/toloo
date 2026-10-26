@@ -6,50 +6,69 @@
 <title>Toloo Benchmarks</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#06060a;--surface:#0b0b12;--card:#11111a;--line:#1a1a2e;--text:#e6e6eb;--muted:#8a819a;--green:#1eb94f;--amber:#f0a500;--red:#e84d4d;--blue:#4fa3ff;--mono:'JetBrains Mono',monospace;--sans:system-ui,sans-serif;--r:8px}
+:root{
+  --bg:#1a1a20;
+  --surface:#22222c;
+  --card:#282832;
+  --line:#3a3a48;
+  --text:#e8e8ec;
+  --muted:#9a9aa8;
+  --green:#2ec95e;
+  --amber:#f5b300;
+  --red:#f05a5a;
+  --blue:#5ab3ff;
+  --mono:'JetBrains Mono',monospace;
+  --sans:system-ui,sans-serif;
+  --r:8px
+}
 body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.45}
-.container{max-width:1400px;margin:0 auto;padding:2rem 1.5rem 4rem;display:grid;grid-template-columns:1fr 420px;gap:2rem}
-@media(max-width:1100px){.container{grid-template-columns:1fr}}
-header{grid-column:1/-1;margin-bottom:1rem}
-h1{font-size:1.6rem;font-weight:600;letter-spacing:-0.02em;margin-bottom:.25rem}
-.subtitle{color:var(--muted);font-size:.85rem}
+.container{max-width:1300px;margin:0 auto;padding:2rem 1.5rem 4rem;display:grid;grid-template-columns:1fr 380px;gap:2rem}
+@media(max-width:1050px){.container{grid-template-columns:1fr}}
+header{grid-column:1/-1;margin-bottom:1.5rem}
+h1{font-size:1.5rem;font-weight:600;letter-spacing:-0.02em;margin-bottom:.25rem}
+.subtitle{color:var(--muted);font-size:.8rem}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:1rem}
-.card h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.75rem;font-weight:600}
-.section{margin-bottom:1.5rem}
+.card h2{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.75rem;font-weight:600}
+.section{margin-bottom:1.25rem}
 .full-width{grid-column:1/-1}
 
 /* Charts */
-.chart-wrap{height:280px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);position:relative;padding:1rem}
+.chart-wrap{height:280px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);position:relative;padding:1.25rem}
 canvas{width:100%!important;height:100%!important}
 
 /* RIGHT: Simulation + Capacity */
 .sim-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:1rem;margin-bottom:1rem}
-.sim-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem}
-.sim-num{font-family:var(--mono);font-size:1.25rem;font-weight:600;color:var(--green);line-height:1.2}
-.sim-desc{font-size:.75rem;color:var(--muted);margin-top:.25rem}
+.sim-label{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem}
+.sim-num{font-family:var(--mono);font-size:1.15rem;font-weight:600;color:var(--green);line-height:1.2}
+.sim-desc{font-size:.7rem;color:var(--muted);margin-top:.25rem}
 
-/* Category Bars - per platform grouped */
-.cat-group{margin-bottom:1rem}
-.cat-group-title{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem;font-family:var(--mono)}
-.cat-platform-row{display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem;height:22px}
-.cat-platform-label{width:80px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
-.cat-platform-track{flex:1;height:100%;background:var(--surface);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--line)}
-.cat-platform-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding:0 .4rem;font-size:.55rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:24px}
-.cat-platform-value{width:55px;font-size:.6rem;color:var(--muted);font-family:var(--mono);text-align:right;flex-shrink:0}
+/* Protocol comparison rows */
+.proto-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem;height:26px}
+.proto-label{width:100px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
+.proto-track{flex:1;height:14px;background:var(--card);border-radius:3px;position:relative;overflow:hidden;border:1px solid var(--line)}
+.proto-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:6px;font-size:.55rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:24px}
+.proto-anno{margin-left:8px;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:70px}
 
-/* Protocol Latency Bars (lower=better, Toloo smallest) */
-.proto-bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.6rem;height:28px}
-.proto-bar-label{width:110px;font-size:.7rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
-.proto-bar-track{flex:1;height:16px;background:var(--surface);border-radius:3px;position:relative;overflow:hidden;border:1px solid var(--line)}
-.proto-bar-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:6px;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:30px}
-.proto-bar-anno{margin-left:8px;font-size:.65rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:70px}
+/* Category comparison within protocol card */
+.cat-compare-title{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .4rem;font-family:var(--mono)}
+.cat-compare-row{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;height:20px}
+.cat-compare-label{width:80px;font-size:.6rem;color:var(--muted);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
+.cat-compare-track{flex:1;height:100%;background:var(--card);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--line)}
+.cat-compare-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding:0 .35rem;font-size:.5rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:20px}
+.cat-compare-value{width:65px;font-size:.55rem;color:var(--muted);font-family:var(--mono);text-align:right;flex-shrink:0}
 
 /* Platform colors */
-.plat-linux-x86{background:#4fa3ff}
-.plat-linux-arm{background:#1eb94f}
-.plat-windows{background:#f0a500}
-.plat-macos-x86{background:#e84d4d}
-.plat-macos-arm{background:#a855f7}
+.plat-linux-x86{background:#5ab3ff}
+.plat-linux-arm{background:#2ec95e}
+.plat-windows{background:#f5b300}
+.plat-macos-x86{background:#f05a5a}
+.plat-macos-arm{background:#c084fc}
+
+/* Tables */
+.table{width:100%;font-size:.7rem;border-collapse:collapse}
+.table th{text-align:left;color:var(--muted);font-size:.55rem;text-transform:uppercase;letter-spacing:.06em;padding:.35rem .5rem;border-bottom:1px solid var(--line)}
+.table td{padding:.35rem .5rem;border-bottom:1px solid rgba(255,255,255,.04);font-family:var(--mono);text-align:right;white-space:nowrap}
+.table td:first-child{text-align:left;color:var(--text);font-family:var(--sans)}
 </style>
 </head>
 <body>
@@ -60,42 +79,34 @@ canvas{width:100%!important;height:100%!important}
   <p class="subtitle">Cross-platform microbenchmarks · 6 categories · 22 benchmarks · 10k background users simulation</p>
 </header>
 
-<!-- FULL WIDTH: Protocol Latency Comparison (Real-World Protocols) -->
+<!-- FULL WIDTH: Toloo vs Other Protocols -->
 <section class="section full-width">
   <div class="card">
-    <h2>Protocol Latency vs Real-World Chat Protocols</h2>
-    <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Latency per message (ms, lower=better). Toloo baseline vs Matrix/XMPP/IRC reference implementations.</p>
+    <h2>Toloo vs. Other Protocols</h2>
+    <p style="font-size:.65rem;color:var(--muted);margin-bottom:.75rem">Per-message latency (ms, lower=better) · Each category shows Toloo baseline vs Matrix/XMPP/IRC estimates</p>
     <div id="proto-bars"></div>
   </div>
 </section>
 
-<!-- LEFT: Category Performance per Platform -->
+<!-- LEFT -->
 <div>
 
   <section class="section">
     <div class="card">
-      <h2>Category Performance by Platform (Mean ns/op)</h2>
-      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Each category shows all 5 platforms + estimated equivalents for Matrix/XMPP/IRC (dimmed, marked est.). Lower = better.</p>
-      <div id="cat-bars"></div>
-    </div>
-  </section>
-
-  <section class="section">
-    <div class="card">
       <h2>Cross-Platform Latency (Grouped Bars)</h2>
-      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">Mean ns per platform across 6 benchmark categories.</p>
+      <p style="font-size:.65rem;color:var(--muted);margin-bottom:.5rem">Mean ns per platform across 6 benchmark categories (linux-x86 reference)</p>
       <div class="chart-wrap"><canvas id="platform-chart"></canvas></div>
     </div>
   </section>
 
 </div>
 
-<!-- RIGHT: Simulation + Capacity -->
+<!-- RIGHT -->
 <div>
 
   <section class="section">
     <div class="sim-card">
-      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Real-World Messaging Simulation</h2>
+      <h2 style="font-size:.75rem;margin-bottom:.75rem;color:var(--text);">Real-World Messaging Simulation</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem">
         <div>
           <div class="sim-label">Background Load</div>
@@ -111,12 +122,12 @@ canvas{width:100%!important;height:100%!important}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
         <div>
           <div class="sim-label">Steady Headroom</div>
-          <div class="sim-num" style="font-size:1.5rem;color:var(--green)">5.8×</div>
+          <div class="sim-num" style="font-size:1.4rem;color:var(--green)">5.8×</div>
         </div>
         <div>
           <div class="sim-label">Burst Headroom (50×)</div>
-          <div class="sim-num" style="font-size:1.5rem;color:var(--red)">0.12×</div>
-          <div class="sim-desc" style="font-size:.65rem">Requires horizontal scale or queueing</div>
+          <div class="sim-num" style="font-size:1.4rem;color:var(--red)">0.12×</div>
+          <div class="sim-desc" style="font-size:.6rem">Requires horizontal scale or queueing</div>
         </div>
       </div>
     </div>
@@ -124,14 +135,14 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="section">
     <div class="sim-card">
-      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Capacity Planning (Reference Platform)</h2>
-      <table style="width:100%;font-size:.7rem;border-collapse:collapse">
-        <thead><tr><th style="text-align:left;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line)">Config</th><th style="text-align:right;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line);font-family:var(--mono)">Throughput</th><th style="text-align:right;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line);font-family:var(--mono)">Users (0.1 msg/s)</th><th style="text-align:right;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line);font-family:var(--mono)">Rooms</th></tr></thead>
+      <h2 style="font-size:.75rem;margin-bottom:.75rem;color:var(--text);">Capacity Planning (Reference Platform)</h2>
+      <table class="table">
+        <thead><tr><th>Config</th><th>Throughput</th><th>Users (0.1 msg/s)</th><th>Rooms</th></tr></thead>
         <tbody>
-        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">1 thread</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">12,200 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">122,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">10</td></tr>
-        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">4 threads</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">42,700 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">427,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">40</td></tr>
-        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">16 threads (sharded)</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">122,000 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">1,220,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">160</td></tr>
-        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">64 threads (NUMA server)</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">305,000 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">3,050,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">640</td></tr>
+        <tr><td>1 thread</td><td>12,200 msg/s</td><td>122,000</td><td>10</td></tr>
+        <tr><td>4 threads</td><td>42,700 msg/s</td><td>427,000</td><td>40</td></tr>
+        <tr><td>16 threads (sharded)</td><td>122,000 msg/s</td><td>1,220,000</td><td>160</td></tr>
+        <tr><td>64 threads (NUMA)</td><td>305,000 msg/s</td><td>3,050,000</td><td>640</td></tr>
         </tbody>
       </table>
     </div>
@@ -139,7 +150,7 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="section">
     <div class="sim-card">
-      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Key Benchmark Results (linux-x86)</h2>
+      <h2 style="font-size:.75rem;margin-bottom:.75rem;color:var(--text);">Key Results (linux-x86)</h2>
       <div id="sim-rows"></div>
     </div>
   </section>
@@ -149,14 +160,14 @@ canvas{width:100%!important;height:100%!important}
 <script>
 // Self-contained chart (no external deps)
 const PLATFORMS = ['linux-x86','linux-arm','windows','macos-x86','macos-arm'];
-const PLAT_COLORS = ['#4fa3ff','#1eb94f','#f0a500','#e84d4d','#a855f7'];
+const PLAT_COLORS = ['#5ab3ff','#2ec95e','#f5b300','#f05a5a','#c084fc'];
 const CATEGORIES = [
-  {key:'canonical/encode/medium', label:'Canonical Encode', refs:{IRC:150000, XMPP:800000, Matrix:2500000}},
-  {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify', refs:{IRC:50000, XMPP:300000, Matrix:1200000}},
-  {key:'parse_envelope', label:'Parse Envelope', refs:{IRC:20000, XMPP:150000, Matrix:600000}},
-  {key:'event_build/make_room_message', label:'Event Build', refs:{IRC:100000, XMPP:500000, Matrix:2000000}},
-  {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)', refs:{IRC:500000, XMPP:2000000, Matrix:8000000}},
-  {key:'crypto/ed25519_verify', label:'Crypto (ed25519)', refs:{IRC:45000, XMPP:200000, Matrix:800000}},
+  {key:'canonical/encode/medium', label:'Canonical Encode', toloo:5340, refs:{IRC:150000, XMPP:800000, Matrix:2500000}},
+  {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify', toloo:46159, refs:{IRC:50000, XMPP:300000, Matrix:1200000}},
+  {key:'parse_envelope', label:'Parse Envelope', toloo:5465, refs:{IRC:20000, XMPP:150000, Matrix:600000}},
+  {key:'event_build/make_room_message', label:'Event Build', toloo:45255, refs:{IRC:100000, XMPP:500000, Matrix:2000000}},
+  {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)', toloo:7525, refs:{IRC:500000, XMPP:2000000, Matrix:8000000}},
+  {key:'crypto/ed25519_verify', label:'Crypto (ed25519)', toloo:45395, refs:{IRC:45000, XMPP:200000, Matrix:800000}},
 ];
 
 // Protocol comparison (top section)
@@ -171,55 +182,55 @@ const PROTOCOLS = [
 const REF_PROTOCOLS = ['Matrix', 'XMPP', 'IRC'];
 const REF_COLORS = ['var(--red)', 'var(--red)', 'var(--amber)'];
 
-function drawCategoryBars(container, data) {
+function drawProtocolBars(container, data) {
+  // Overall protocol latency bars
+  const maxMs = Math.max(...PROTOCOLS.map(p=>p.latencyMs));
   let html = '';
+  PROTOCOLS.forEach(p => {
+    const pct = (p.latencyMs / maxMs) * 100;
+    const annoText = p.name==='Toloo' ? 'baseline' : `${p.ratio.toLocaleString()}× slower`;
+    html += `<div class="proto-row">
+      <span class="proto-label">${p.name}</span>
+      <div class="proto-track"><div class="proto-fill" style="width:${pct.toFixed(2)}%;background:${p.color}"></div></div>
+      <span class="proto-anno">${annoText}</span>
+    </div>`;
+  });
+
+  // Per-category comparison
   CATEGORIES.forEach(cat => {
-    html += `<div class="cat-group"><div class="cat-group-title">${cat.label}</div>`;
+    // Use actual Toloo data if available
+    const tolooNs = data?.platforms?.['linux-x86']?.[cat.key]?.mean_ns || cat.toloo;
+    const refs = cat.refs;
 
-    // Get values for all platforms + reference protocols
-    const platformVals = PLATFORMS.map(p => {
-      const plat = data.platforms[p];
-      return plat ? (plat[cat.key]?.mean_ns || 0) : 0;
-    }).filter(v => v > 0);
-    const refVals = REF_PROTOCOLS.map(r => cat.refs?.[r] || 0).filter(v => v > 0);
-    const allVals = [...platformVals, ...refVals];
+    html += `<div class="cat-compare-title">${cat.label}</div>`;
 
-    if (allVals.length === 0) {
-      html += `<div style="color:var(--muted);font-size:.7rem;padding:.5rem">No data</div></div>`;
-      return;
-    }
-
+    const allVals = [tolooNs, refs.Matrix, refs.XMPP, refs.IRC].filter(v => v > 0);
     const maxVal = Math.max(...allVals);
 
-    // Platforms first
-    PLATFORMS.forEach((p, pi) => {
-      const plat = data.platforms[p];
-      const ns = plat ? (plat[cat.key]?.mean_ns || 0) : 0;
-      if (ns === 0) return;
-      const pct = (ns / maxVal) * 100;
-      const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
-      html += `<div class="cat-platform-row">
-        <span class="cat-platform-label">${p}</span>
-        <div class="cat-platform-track"><div class="cat-platform-fill plat-${p}" style="width:${pct.toFixed(0)}%"></div></div>
-        <span class="cat-platform-value">${fmt}</span>
-      </div>`;
-    });
+    // Toloo (baseline)
+    const pctT = (tolooNs / maxVal) * 100;
+    const fmtT = tolooNs >= 1e6 ? (tolooNs/1e6).toFixed(2)+' ms' : tolooNs >= 1e3 ? (tolooNs/1e3).toFixed(1)+' µs' : tolooNs.toFixed(0)+' ns';
+    html += `<div class="cat-compare-row">
+      <span class="cat-compare-label">Toloo</span>
+      <div class="cat-compare-track"><div class="cat-compare-fill" style="width:${pctT.toFixed(0)}%;background:var(--green)"></div></div>
+      <span class="cat-compare-value">${fmtT} (baseline)</span>
+    </div>`;
 
-    // Reference protocols (estimates)
+    // Reference protocols
     REF_PROTOCOLS.forEach((r, ri) => {
-      const ns = cat.refs?.[r] || 0;
+      const ns = refs[r] || 0;
       if (ns === 0) return;
       const pct = (ns / maxVal) * 100;
-      const ratio = (ns / (platformVals[0] || 1)).toFixed(0);
+      const ratio = (ns / tolooNs).toFixed(0);
       const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
-      html += `<div class="cat-platform-row" style="opacity:.7">
-        <span class="cat-platform-label" style="color:var(--muted)">${r} (est.)</span>
-        <div class="cat-platform-track"><div class="cat-platform-fill" style="width:${pct.toFixed(0)}%;background:${REF_COLORS[ri]}"></div></div>
-        <span class="cat-platform-value">${fmt} (${ratio}×)</span>
+      html += `<div class="cat-compare-row" style="opacity:.75">
+        <span class="cat-compare-label">${r} (est.)</span>
+        <div class="cat-compare-track"><div class="cat-compare-fill" style="width:${pct.toFixed(0)}%;background:${REF_COLORS[ri]}"></div></div>
+        <span class="cat-compare-value">${fmt} (${ratio}×)</span>
       </div>`;
     });
-    html += `</div>`;
   });
+
   container.innerHTML = html;
 }
 
@@ -231,7 +242,7 @@ function drawPlatformChart(canvas, data) {
   canvas.height = rect.height * dpr;
   ctx.scale(dpr, dpr);
   const w = rect.width, h = rect.height;
-  const pad = {t:20, r:20, b:40, l:60};
+  const pad = {t:30, r:30, b:50, l:70};
 
   const series = PLATFORMS.map(p => {
     const plat = data.platforms[p];
@@ -260,26 +271,37 @@ function drawPlatformChart(canvas, data) {
   ctx.lineTo(w - pad.r, h - pad.b);
   ctx.stroke();
 
-  // Grid lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-  for (let i = 1; i <= 4; i++) {
-    const y = pad.t + (h - pad.t - pad.b) * i / 4;
-    ctx.beginPath();
-    ctx.moveTo(pad.l, y);
-    ctx.lineTo(w - pad.r, y);
-    ctx.stroke();
-  }
+  // Y axis title
+  ctx.fillStyle = 'var(--muted)';
+  ctx.font = '11px var(--sans)';
+  ctx.textAlign = 'center';
+  ctx.save();
+  ctx.translate(20, h/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.fillText('Latency (ns)', 0, 0);
+  ctx.restore();
 
-  // Y labels
+  // Grid lines & Y labels
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
   ctx.fillStyle = 'var(--muted)';
   ctx.font = '10px var(--mono)';
   ctx.textAlign = 'right';
   for (let i = 0; i <= 4; i++) {
     const val = maxVal - (maxVal - minVal) * i / 4;
-    const y = pad.t + (h - pad.t - pad.b) * i / 4 + 3;
+    const y = pad.t + (h - pad.t - pad.b) * i / 4;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(w - pad.r, y);
+    ctx.stroke();
     const fmt = val >= 1e6 ? (val/1e6).toFixed(1)+'M' : val >= 1e3 ? (val/1e3).toFixed(0)+'k' : val.toFixed(0);
-    ctx.fillText(fmt, pad.l - 8, y);
+    ctx.fillText(fmt, pad.l - 10, y + 3);
   }
+
+  // X axis title
+  ctx.fillStyle = 'var(--muted)';
+  ctx.font = '11px var(--sans)';
+  ctx.textAlign = 'center';
+  ctx.fillText('Benchmark Category', w/2, h - 12);
 
   // Bars - grouped by category
   const catCount = CATEGORIES.length;
@@ -311,29 +333,13 @@ function drawPlatformChart(canvas, data) {
   ctx.font = '10px var(--sans)';
   ctx.textAlign = 'left';
   series.forEach((_, i) => {
-    const px = w - pad.r - 120;
+    const px = w - pad.r - 110;
     const py = pad.t + i * 18;
     ctx.fillStyle = PLAT_COLORS[i];
     ctx.fillRect(px, py - 10, 12, 12);
     ctx.fillStyle = 'var(--text)';
     ctx.fillText(PLATFORMS[i], px + 16, py);
   });
-}
-
-function drawProtocolBars(container) {
-  // Horizontal bars: protocol latency (ms, lower=better) - Toloo smallest
-  const maxMs = Math.max(...PROTOCOLS.map(p=>p.latencyMs));
-  let html = '';
-  PROTOCOLS.forEach(p => {
-    const pct = (p.latencyMs / maxMs) * 100;
-    const annoText = p.name==='Toloo' ? 'baseline' : `${p.ratio.toLocaleString()}× slower`;
-    html += `<div class="proto-bar-row">
-      <span class="proto-bar-label">${p.name}</span>
-      <div class="proto-bar-track"><div class="proto-bar-fill" style="width:${pct.toFixed(2)}%;background:${p.color}"></div></div>
-      <span class="proto-bar-anno">${annoText}</span>
-    </div>`;
-  });
-  container.innerHTML = html;
 }
 
 function fillSimRows(container, data) {
@@ -351,7 +357,7 @@ function fillSimRows(container, data) {
   rows.forEach(r => {
     const ns = r.val || 0;
     const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
-    html += `<div style="display:flex;justify-content:space-between;padding:.35rem 0;border-bottom:1px solid var(--line);font-size:.78rem"><span style="color:var(--text)">${r.name}</span><span style="font-family:var(--mono);color:${ns<50000?'var(--green)':ns<100000?'var(--amber)':'var(--red)'}">${fmt}</span></div>`;
+    html += `<div style="display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--line);font-size:.72rem"><span style="color:var(--text)">${r.name}</span><span style="font-family:var(--mono);color:${ns<50000?'var(--green)':ns<100000?'var(--amber)':'var(--red)'}">${fmt}</span></div>`;
   });
   container.innerHTML = html;
 }
@@ -360,8 +366,7 @@ async function init() {
   try {
     const r = await fetch('results/latest.json');
     const d = await r.json();
-    drawCategoryBars(document.getElementById('cat-bars'), d);
-    drawProtocolBars(document.getElementById('proto-bars'));
+    drawProtocolBars(document.getElementById('proto-bars'), d);
     fillSimRows(document.getElementById('sim-rows'), d);
     const canvas = document.getElementById('platform-chart');
     if (canvas) drawPlatformChart(canvas, d);
