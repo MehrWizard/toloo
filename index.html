@@ -36,11 +36,12 @@ canvas{width:100%!important;height:100%!important}
 .cat-fill.med{background:var(--amber);color:var(--bg)}
 .cat-fill.slow{background:var(--red)}
 
-/* Protocol comparison reference rows */
-.proto-table{width:100%;font-size:.75rem;border-collapse:collapse}
-.proto-table th{text-align:left;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line)}
-.proto-table td{padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)}
-.proto-table td.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+/* Horizontal bar chart with annotation at end */
+.proto-bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.6rem;height:28px}
+.proto-bar-label{width:110px;font-size:.7rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
+.proto-bar-track{flex:1;height:16px;background:var(--surface);border-radius:3px;position:relative;overflow:hidden;border:1px solid var(--line)}
+.proto-bar-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:6px;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:30px}
+.proto-bar-anno{margin-left:4px;font-size:.65rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:55px}
 </style>
 </head>
 <body>
@@ -72,17 +73,8 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="section">
     <div class="card">
-      <h2>Reference Protocol Comparison</h2>
-      <table class="proto-table">
-        <thead><tr><th>Protocol / Metric</th><th>Latency</th><th>Throughput</th><th>Notes</th></tr></thead>
-        <tbody>
-        <tr><td>Toloo (linux-x86 ref)</td><td class="num">~82 µs/msg</td><td class="num">~12.2k msg/s (1 thread)</td><td>Self-contained benchmark</td></tr>
-        <tr><td>Matrix (Synapse ref)</td><td class="num">~500 ms/msg</td><td class="num">~2 msg/s</td><td>Federated overhead</td></tr>
-        <tr><td>XMPP (ejabberd ref)</td><td class="num">~200 ms/msg</td><td class="num">~5 msg/s</td><td>XML parsing cost</td></tr>
-        <tr><td>IRC (InspIRCd ref)</td><td class="num">~5 ms/msg</td><td class="num">~200 msg/s</td><td>Simple text only</td></tr>
-        <tr><td>Toloo vs Matrix</td><td class="num">~6,100× faster</td><td style="color:var(--green);font-size:.65rem">Single-thread wins</td><td>Microbenchmark comparison</td></tr>
-        </tbody>
-      </table>
+      <h2>Protocol Latency &amp; Throughput (Normalized Bars)</h2>
+      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Latency (ms, lower=better) · Throughput (msg/s, higher=better) · Ratio annotations at bar end.</p>
     </div>
   </section>
 
@@ -164,6 +156,25 @@ function drawCategoryBars(container, data) {
   container.innerHTML = html;
 }
 
+function drawProtocolBars(container) {
+  // Horizontal bars: protocol latency (ms, lower=better) with end annotations
+  const protocols = [
+    {name:'Toloo',latencyMs:0.082,throughput:12200,ratio:1},
+    {name:'IRC',latencyMs:5,throughput:200,ratio:61},
+    {name:'XMPP',latencyMs:200,throughput:5,ratio:2439},
+    {name:'Matrix',latencyMs:500,throughput:2,ratio:6098},
+  ];
+  const maxMs = Math.max(...protocols.map(p=>p.latencyMs));
+  let html = '';
+  protocols.forEach(p => {
+    const pct = (p.latencyMs / maxMs) * 100;
+    const color = p.name==='Toloo' ? 'var(--green)' : p.name==='IRC' ? 'var(--amber)' : 'var(--red)';
+    const annoText = p.name==='Toloo' ? 'baseline' : `${(p.ratio).toLocaleString()}× slower`;
+    html += `<div class="proto-bar-row"><span class="proto-bar-label">${p.name}</span><div class="proto-bar-track"><div class="proto-bar-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div></div><span class="proto-bar-anno">${annoText}</span></div>`;
+  });
+  container.innerHTML = html;
+}
+
 function fillSimRows(container, data) {
   if (!data || !data.platforms) return;
   const p = data.platforms;
@@ -189,6 +200,7 @@ async function init() {
     const r = await fetch('results/latest.json');
     const d = await r.json();
     drawCategoryBars(document.getElementById('cat-bars'), d);
+    drawProtocolBars(document.getElementById('proto-bars'));
     fillSimRows(document.getElementById('sim-rows'), d);
   } catch(e) {}
 }
