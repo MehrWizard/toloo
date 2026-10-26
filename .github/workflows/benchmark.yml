@@ -90,7 +90,9 @@ jobs:
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
-            cp "$f" "bench-json/${group}_${bench}.json"
+            # Replace / with __ to handle nested bench names like canonical/encode/medium
+            bench_safe="${bench//\//__}"
+            cp "$f" "bench-json/${group}__${bench_safe}.json"
           done
 
       - name: Upload benchmark results
@@ -149,7 +151,9 @@ jobs:
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
-            cp "$f" "bench-json/${group}_${bench}.json"
+            # Replace / with __ to handle nested bench names like canonical/encode/medium
+            bench_safe="${bench//\//__}"
+            cp "$f" "bench-json/${group}__${bench_safe}.json"
           done
 
       - name: Upload benchmark results
@@ -206,8 +210,8 @@ jobs:
             $rel = $_.FullName.Replace((Resolve-Path ../target/criterion).Path + '\', '')
             $parts = $rel.Split('\')
             $group = $parts[0]
-            $bench = $parts[1..($parts.Length - 2)] -join '_'
-            Copy-Item $_ "bench-json/${group}_${bench}.json"
+            $bench = $parts[1..($parts.Length - 2)] -join '__'
+            Copy-Item $_ "bench-json/${group}__${bench}.json"
           }
 
       - name: Upload benchmark results
@@ -262,7 +266,9 @@ jobs:
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
-            cp "$f" "bench-json/${group}_${bench}.json"
+            # Replace / with __ to handle nested bench names like canonical/encode/medium
+            bench_safe="${bench//\//__}"
+            cp "$f" "bench-json/${group}__${bench_safe}.json"
           done
 
       - name: Upload benchmark results
@@ -318,7 +324,9 @@ jobs:
             group="${rel%%/*}"
             bench="${rel#*/}"
             bench="${bench%/new/estimates.json}"
-            cp "$f" "bench-json/${group}_${bench}.json"
+            # Replace / with __ to handle nested bench names like canonical/encode/medium
+            bench_safe="${bench//\//__}"
+            cp "$f" "bench-json/${group}__${bench_safe}.json"
           done
 
       - name: Upload benchmark results
@@ -366,13 +374,13 @@ jobs:
               results["platforms"][platform] = {}
 
               for json_file in (platform_dir / "bench-json").glob("*.json"):
-                  # Format: group_bench.json
-                  parts = json_file.stem.split('_', 1)
+                  # Format: group__bench.json (bench has __ for /)
+                  parts = json_file.stem.split('__', 1)
                   if len(parts) == 2:
                       group, bench_name = parts
-                      bench_name = f"{group}/{bench_name}"
+                      bench_name = f"{group}/{bench_name.replace('__', '/')}"
                   else:
-                      bench_name = json_file.stem
+                      bench_name = json_file.stem.replace('__', '/')
                   try:
                       with open(json_file) as f:
                           data = json.load(f)
