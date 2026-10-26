@@ -42,14 +42,13 @@ canvas{width:100%!important;height:100%!important}
 .sim-num{font-family:var(--mono);font-size:1.25rem;font-weight:600;color:var(--green);line-height:1.2}
 .sim-desc{font-size:.7rem;color:var(--muted);margin-top:.25rem}
 
-/* Protocol comparison rows - consistent widths */
-.proto-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem;height:28px}
-.proto-label{width:100px;font-size:.7rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
-.proto-track{flex:1;height:16px;background:var(--card);border-radius:3px;position:relative;overflow:hidden;border:1px solid var(--line)}
-.proto-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:8px;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:28px}
-.proto-anno{margin-left:8px;font-size:.65rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:80px}
-
-/* Category comparison within protocol card - same label/track/value widths as proto-row */
+/* Unified comparison rows - used for both protocol overview and per-category */
+.cat-compare-title{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .4rem;font-family:var(--mono)}
+.cat-compare-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.35rem;height:22px}
+.cat-compare-label{width:100px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
+.cat-compare-track{flex:1;height:100%;background:var(--card);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--line)}
+.cat-compare-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding:0 .4rem;font-size:.55rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:22px}
+.cat-compare-value{width:100px;font-size:.65rem;color:var(--text);font-family:var(--mono);text-align:right;flex-shrink:0}
 .cat-compare-title{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .4rem;font-family:var(--mono)}
 .cat-compare-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.35rem;height:22px}
 .cat-compare-label{width:100px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
@@ -183,16 +182,16 @@ const REF_PROTOCOLS = ['IRC', 'XMPP', 'Matrix'];
 const REF_COLORS = ['var(--amber)', 'var(--red)', 'var(--red)'];
 
 function drawProtocolBars(container, data) {
-  // Overall protocol latency bars
+  // Overall protocol latency bars - use same classes as category comparison
   const maxMs = Math.max(...PROTOCOLS.map(p=>p.latencyMs));
   let html = '';
   PROTOCOLS.forEach(p => {
     const pct = (p.latencyMs / maxMs) * 100;
-    const annoText = p.name==='Toloo' ? 'baseline' : `${p.ratio.toLocaleString()}× slower`;
-    html += `<div class="proto-row">
-      <span class="proto-label">${p.name}</span>
-      <div class="proto-track"><div class="proto-fill" style="width:${pct.toFixed(2)}%;background:${p.color}"></div></div>
-      <span class="proto-anno">${annoText}</span>
+    const annoText = p.name==='Toloo' ? 'baseline' : `${p.ratio.toLocaleString()}x slower`;
+    html += `<div class="cat-compare-row">
+      <span class="cat-compare-label">${p.name}</span>
+      <div class="cat-compare-track"><div class="cat-compare-fill" style="width:${pct.toFixed(2)}%;background:${p.color}"></div></div>
+      <span class="cat-compare-value">${annoText}</span>
     </div>`;
   });
 
