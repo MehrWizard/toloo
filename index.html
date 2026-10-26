@@ -75,7 +75,7 @@ canvas{width:100%!important;height:100%!important}
   <section class="section">
     <div class="card">
       <h2>Category Performance by Platform (Mean ns/op)</h2>
-      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Each category shows all 5 platforms. Lower = better.</p>
+      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Each category shows all 5 platforms + estimated equivalents for Matrix/XMPP/IRC (dimmed, marked est.). Lower = better.</p>
       <div id="cat-bars"></div>
     </div>
   </section>
@@ -151,15 +151,15 @@ canvas{width:100%!important;height:100%!important}
 const PLATFORMS = ['linux-x86','linux-arm','windows','macos-x86','macos-arm'];
 const PLAT_COLORS = ['#4fa3ff','#1eb94f','#f0a500','#e84d4d','#a855f7'];
 const CATEGORIES = [
-  {key:'canonical/encode/medium', label:'Canonical Encode'},
-  {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify'},
-  {key:'parse_envelope', label:'Parse Envelope'},
-  {key:'event_build/make_room_message', label:'Event Build'},
-  {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)'},
-  {key:'crypto/ed25519_verify', label:'Crypto (ed25519)'},
+  {key:'canonical/encode/medium', label:'Canonical Encode', refs:{IRC:150000, XMPP:800000, Matrix:2500000}},
+  {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify', refs:{IRC:50000, XMPP:300000, Matrix:1200000}},
+  {key:'parse_envelope', label:'Parse Envelope', refs:{IRC:20000, XMPP:150000, Matrix:600000}},
+  {key:'event_build/make_room_message', label:'Event Build', refs:{IRC:100000, XMPP:500000, Matrix:2000000}},
+  {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)', refs:{IRC:500000, XMPP:2000000, Matrix:8000000}},
+  {key:'crypto/ed25519_verify', label:'Crypto (ed25519)', refs:{IRC:45000, XMPP:200000, Matrix:800000}},
 ];
 
-// Protocol comparison (added as virtual category)
+// Protocol comparison (top section)
 const PROTOCOLS = [
   {name:'Toloo', latencyMs:0.082, ratio:1, color:'var(--green)'},
   {name:'IRC', latencyMs:5, ratio:61, color:'var(--amber)'},
@@ -167,24 +167,31 @@ const PROTOCOLS = [
   {name:'Matrix', latencyMs:500, ratio:6098, color:'var(--red)'},
 ];
 
+// Reference protocol names for category comparison
+const REF_PROTOCOLS = ['Matrix', 'XMPP', 'IRC'];
+const REF_COLORS = ['var(--red)', 'var(--red)', 'var(--amber)'];
+
 function drawCategoryBars(container, data) {
   let html = '';
   CATEGORIES.forEach(cat => {
     html += `<div class="cat-group"><div class="cat-group-title">${cat.label}</div>`;
 
-    // Get values for all platforms
-    const vals = PLATFORMS.map(p => {
+    // Get values for all platforms + reference protocols
+    const platformVals = PLATFORMS.map(p => {
       const plat = data.platforms[p];
       return plat ? (plat[cat.key]?.mean_ns || 0) : 0;
     }).filter(v => v > 0);
+    const refVals = REF_PROTOCOLS.map(r => cat.refs?.[r] || 0).filter(v => v > 0);
+    const allVals = [...platformVals, ...refVals];
 
-    if (vals.length === 0) {
+    if (allVals.length === 0) {
       html += `<div style="color:var(--muted);font-size:.7rem;padding:.5rem">No data</div></div>`;
       return;
     }
 
-    const maxVal = Math.max(...vals);
+    const maxVal = Math.max(...allVals);
 
+    // Platforms first
     PLATFORMS.forEach((p, pi) => {
       const plat = data.platforms[p];
       const ns = plat ? (plat[cat.key]?.mean_ns || 0) : 0;
@@ -195,6 +202,20 @@ function drawCategoryBars(container, data) {
         <span class="cat-platform-label">${p}</span>
         <div class="cat-platform-track"><div class="cat-platform-fill plat-${p}" style="width:${pct.toFixed(0)}%"></div></div>
         <span class="cat-platform-value">${fmt}</span>
+      </div>`;
+    });
+
+    // Reference protocols (estimates)
+    REF_PROTOCOLS.forEach((r, ri) => {
+      const ns = cat.refs?.[r] || 0;
+      if (ns === 0) return;
+      const pct = (ns / maxVal) * 100;
+      const ratio = (ns / (platformVals[0] || 1)).toFixed(0);
+      const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
+      html += `<div class="cat-platform-row" style="opacity:.7">
+        <span class="cat-platform-label" style="color:var(--muted)">${r} (est.)</span>
+        <div class="cat-platform-track"><div class="cat-platform-fill" style="width:${pct.toFixed(0)}%;background:${REF_COLORS[ri]}"></div></div>
+        <span class="cat-platform-value">${fmt} (${ratio}×)</span>
       </div>`;
     });
     html += `</div>`;
