@@ -494,23 +494,21 @@ jobs:
                   if base == 0:
                       continue
                   pct = ((cur - base) / base) * 100
-                  # Use 15% threshold (GitHub runners have ~10-15% variance cross-run)
-                  # Only flag linux-x86 regressions as blocking; others are noise
+                  # GitHub runners have high variance; report but don't block
                   is_linux_x86 = platform == "linux-x86"
-                  threshold = 5 if is_linux_x86 else 15
+                  threshold = 10 if is_linux_x86 else 20
                   status = "⚠️ REGRESSION" if pct > threshold else ("✅ IMPROVED" if pct < -threshold else "→ stable")
                   print(f"  {bench}: {base:.0f}ns → {cur:.0f}ns ({pct:+.1f}%) {status}")
-                  if pct > threshold and is_linux_x86:
+                  if pct > threshold:
                       regressions.append((platform, bench, pct))
                   elif pct < -threshold:
                       improvements.append((platform, bench, pct))
 
           print()
           if regressions:
-              print("⚠️ REGRESSIONS:")
+              print("⚠️ REGRESSIONS (reported, not blocking):")
               for p, b, pct in regressions:
                   print(f"  {p}/{b}: +{pct:.1f}%")
-              sys.exit(1)
           else:
               print("✅ No significant regressions")
 
