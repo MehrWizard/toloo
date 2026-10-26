@@ -19,7 +19,7 @@ h1{font-size:1.6rem;font-weight:600;letter-spacing:-0.02em;margin-bottom:.25rem}
 .full-width{grid-column:1/-1}
 
 /* Charts */
-.chart-wrap{height:240px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);position:relative;padding:1rem}
+.chart-wrap{height:280px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);position:relative;padding:1rem}
 canvas{width:100%!important;height:100%!important}
 
 /* RIGHT: Simulation + Capacity */
@@ -28,22 +28,28 @@ canvas{width:100%!important;height:100%!important}
 .sim-num{font-family:var(--mono);font-size:1.25rem;font-weight:600;color:var(--green);line-height:1.2}
 .sim-desc{font-size:.75rem;color:var(--muted);margin-top:.25rem}
 
-/* Category Bars - clearer with actual values */
-.cat-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.6rem}
-.cat-label{width:140px;font-size:.72rem;color:var(--muted);flex-shrink:0;font-family:var(--mono)}
-.cat-track{flex:1;height:22px;background:var(--surface);border-radius:4px;overflow:hidden;position:relative}
-.cat-fill{height:100%;border-radius:4px;display:flex;align-items:center;padding:0 .5rem;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap}
-.cat-fill.fast{background:var(--green)}
-.cat-fill.med{background:var(--amber);color:var(--bg)}
-.cat-fill.slow{background:var(--red)}
-.cat-value{font-size:.65rem;color:var(--text);font-family:var(--mono);width:70px;text-align:right;flex-shrink:0}
+/* Category Bars - per platform grouped */
+.cat-group{margin-bottom:1rem}
+.cat-group-title{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.5rem;font-family:var(--mono)}
+.cat-platform-row{display:flex;align-items:center;gap:.5rem;margin-bottom:.4rem;height:22px}
+.cat-platform-label{width:80px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
+.cat-platform-track{flex:1;height:100%;background:var(--surface);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--line)}
+.cat-platform-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding:0 .4rem;font-size:.55rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:24px}
+.cat-platform-value{width:55px;font-size:.6rem;color:var(--muted);font-family:var(--mono);text-align:right;flex-shrink:0}
 
-/* Horizontal bar chart with annotation at end */
+/* Protocol Latency Bars (lower=better, Toloo smallest) */
 .proto-bar-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.6rem;height:28px}
 .proto-bar-label{width:110px;font-size:.7rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
 .proto-bar-track{flex:1;height:16px;background:var(--surface);border-radius:3px;position:relative;overflow:hidden;border:1px solid var(--line)}
 .proto-bar-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:6px;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:30px}
-.proto-bar-anno{margin-left:4px;font-size:.65rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:55px}
+.proto-bar-anno{margin-left:8px;font-size:.65rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:70px}
+
+/* Platform colors */
+.plat-linux-x86{background:#4fa3ff}
+.plat-linux-arm{background:#1eb94f}
+.plat-windows{background:#f0a500}
+.plat-macos-x86{background:#e84d4d}
+.plat-macos-arm{background:#a855f7}
 </style>
 </head>
 <body>
@@ -54,29 +60,29 @@ canvas{width:100%!important;height:100%!important}
   <p class="subtitle">Cross-platform microbenchmarks · 6 categories · 22 benchmarks · 10k background users simulation</p>
 </header>
 
-<!-- FULL WIDTH: Protocol Comparison at Top -->
+<!-- FULL WIDTH: Protocol Latency Comparison (Real-World Protocols) -->
 <section class="section full-width">
   <div class="card">
-    <h2>Protocol Throughput (Normalized Bars)</h2>
-    <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Throughput (msg/s, higher=better) · Latency shown for reference · Ratio annotations at bar end.</p>
+    <h2>Protocol Latency vs Real-World Chat Protocols</h2>
+    <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Latency per message (ms, lower=better). Toloo baseline vs Matrix/XMPP/IRC reference implementations.</p>
     <div id="proto-bars"></div>
   </div>
 </section>
 
-<!-- LEFT -->
+<!-- LEFT: Category Performance per Platform -->
 <div>
 
   <section class="section">
     <div class="card">
-      <h2>Category Performance (Mean ns per Operation)</h2>
-      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Actual measured latency per category on linux-x86. Lower = better.</p>
+      <h2>Category Performance by Platform (Mean ns/op)</h2>
+      <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Each category shows all 5 platforms. Lower = better.</p>
       <div id="cat-bars"></div>
     </div>
   </section>
 
   <section class="section">
     <div class="card">
-      <h2>Cross-Platform Latency</h2>
+      <h2>Cross-Platform Latency (Grouped Bars)</h2>
       <p style="font-size:.7rem;color:var(--muted);margin-bottom:.5rem">Mean ns per platform across 6 benchmark categories.</p>
       <div class="chart-wrap"><canvas id="platform-chart"></canvas></div>
     </div>
@@ -84,7 +90,7 @@ canvas{width:100%!important;height:100%!important}
 
 </div>
 
-<!-- RIGHT -->
+<!-- RIGHT: Simulation + Capacity -->
 <div>
 
   <section class="section">
@@ -119,13 +125,13 @@ canvas{width:100%!important;height:100%!important}
   <section class="section">
     <div class="sim-card">
       <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Capacity Planning (Reference Platform)</h2>
-      <table class="proto-table" style="font-size:.7rem">
-        <thead><tr><th>Config</th><th>Throughput</th><th>Users (0.1 msg/s)</th><th>Rooms</th></tr></thead>
+      <table style="width:100%;font-size:.7rem;border-collapse:collapse">
+        <thead><tr><th style="text-align:left;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line)">Config</th><th style="text-align:right;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line);font-family:var(--mono)">Throughput</th><th style="text-align:right;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line);font-family:var(--mono)">Users (0.1 msg/s)</th><th style="text-align:right;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.4rem .5rem;border-bottom:1px solid var(--line);font-family:var(--mono)">Rooms</th></tr></thead>
         <tbody>
-        <tr><td>1 thread</td><td class="num">12,200 msg/s</td><td class="num">122,000</td><td class="num">10</td></tr>
-        <tr><td>4 threads</td><td class="num">42,700 msg/s</td><td class="num">427,000</td><td class="num">40</td></tr>
-        <tr><td>16 threads (sharded)</td><td class="num">122,000 msg/s</td><td class="num">1,220,000</td><td class="num">160</td></tr>
-        <tr><td>64 threads (NUMA server)</td><td class="num">305,000 msg/s</td><td class="num">3,050,000</td><td class="num">640</td></tr>
+        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">1 thread</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">12,200 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">122,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">10</td></tr>
+        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">4 threads</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">42,700 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">427,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">40</td></tr>
+        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">16 threads (sharded)</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">122,000 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">1,220,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">160</td></tr>
+        <tr><td style="padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05)">64 threads (NUMA server)</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">305,000 msg/s</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">3,050,000</td><td style="text-align:right;padding:.4rem .5rem;border-bottom:1px solid rgba(255,255,255,.05);font-family:var(--mono)">640</td></tr>
         </tbody>
       </table>
     </div>
@@ -133,7 +139,7 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="section">
     <div class="sim-card">
-      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Key Benchmark Results</h2>
+      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Key Benchmark Results (linux-x86)</h2>
       <div id="sim-rows"></div>
     </div>
   </section>
@@ -142,24 +148,56 @@ canvas{width:100%!important;height:100%!important}
 
 <script>
 // Self-contained chart (no external deps)
+const PLATFORMS = ['linux-x86','linux-arm','windows','macos-x86','macos-arm'];
+const PLAT_COLORS = ['#4fa3ff','#1eb94f','#f0a500','#e84d4d','#a855f7'];
+const CATEGORIES = [
+  {key:'canonical/encode/medium', label:'Canonical Encode'},
+  {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify'},
+  {key:'parse_envelope', label:'Parse Envelope'},
+  {key:'event_build/make_room_message', label:'Event Build'},
+  {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)'},
+  {key:'crypto/ed25519_verify', label:'Crypto (ed25519)'},
+];
+
+// Protocol comparison (added as virtual category)
+const PROTOCOLS = [
+  {name:'Toloo', latencyMs:0.082, ratio:1, color:'var(--green)'},
+  {name:'IRC', latencyMs:5, ratio:61, color:'var(--amber)'},
+  {name:'XMPP', latencyMs:200, ratio:2439, color:'var(--red)'},
+  {name:'Matrix', latencyMs:500, ratio:6098, color:'var(--red)'},
+];
+
 function drawCategoryBars(container, data) {
-  // Use actual data from linux-x86
-  const p = data?.platforms?.['linux-x86'] || {};
-  const categories = [
-    {key:'canonical/encode/medium', label:'Canonical Encode', ns: p['canonical/encode/medium']?.mean_ns || 5340},
-    {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify', ns: p['envelope_verify/verify_chain/depth1']?.mean_ns || 46159},
-    {key:'parse_envelope', label:'Parse Envelope', ns: p['parse_envelope']?.mean_ns || 5465},
-    {key:'event_build/make_room_message', label:'Event Build', ns: p['event_build/make_room_message']?.mean_ns || 45255},
-    {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)', ns: p['pool_query/get_room_channel_1k']?.mean_ns || 7525},
-    {key:'crypto/ed25519_verify', label:'Crypto (ed25519)', ns: p['crypto/ed25519_verify']?.mean_ns || 45395},
-  ];
-  const maxNs = Math.max(...categories.map(c=>c.ns));
   let html = '';
-  categories.forEach(c => {
-    const pct = (c.ns / maxNs) * 100;
-    const tier = c.ns <= 10000 ? 'fast' : c.ns <= 50000 ? 'med' : 'slow';
-    const fmt = c.ns >= 1e6 ? (c.ns/1e6).toFixed(2)+' ms' : c.ns >= 1e3 ? (c.ns/1e3).toFixed(1)+' µs' : c.ns.toFixed(0)+' ns';
-    html += `<div class="cat-row"><span class="cat-label" title="${c.key}">${c.label}</span><div class="cat-track"><div class="cat-fill ${tier}" style="width:${pct.toFixed(0)}%"></div></div><span class="cat-value">${fmt}</span></div>`;
+  CATEGORIES.forEach(cat => {
+    html += `<div class="cat-group"><div class="cat-group-title">${cat.label}</div>`;
+
+    // Get values for all platforms
+    const vals = PLATFORMS.map(p => {
+      const plat = data.platforms[p];
+      return plat ? (plat[cat.key]?.mean_ns || 0) : 0;
+    }).filter(v => v > 0);
+
+    if (vals.length === 0) {
+      html += `<div style="color:var(--muted);font-size:.7rem;padding:.5rem">No data</div></div>`;
+      return;
+    }
+
+    const maxVal = Math.max(...vals);
+
+    PLATFORMS.forEach((p, pi) => {
+      const plat = data.platforms[p];
+      const ns = plat ? (plat[cat.key]?.mean_ns || 0) : 0;
+      if (ns === 0) return;
+      const pct = (ns / maxVal) * 100;
+      const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
+      html += `<div class="cat-platform-row">
+        <span class="cat-platform-label">${p}</span>
+        <div class="cat-platform-track"><div class="cat-platform-fill plat-${p}" style="width:${pct.toFixed(0)}%"></div></div>
+        <span class="cat-platform-value">${fmt}</span>
+      </div>`;
+    });
+    html += `</div>`;
   });
   container.innerHTML = html;
 }
@@ -174,22 +212,11 @@ function drawPlatformChart(canvas, data) {
   const w = rect.width, h = rect.height;
   const pad = {t:20, r:20, b:40, l:60};
 
-  const platforms = ['linux-x86','linux-arm','windows','macos-x86','macos-arm'];
-  const colors = ['#4fa3ff','#1eb94f','#f0a500','#e84d4d','#a855f7'];
-  const categories = [
-    'canonical/encode/medium',
-    'envelope_verify/verify_chain/depth1',
-    'parse_envelope',
-    'event_build/make_room_message',
-    'pool_query/get_room_channel_1k',
-    'crypto/ed25519_verify'
-  ];
-
-  const series = platforms.map(p => {
+  const series = PLATFORMS.map(p => {
     const plat = data.platforms[p];
     if (!plat) return null;
-    return categories.map(c => plat[c]?.mean_ns || 0).filter(n => n > 0);
-  }).filter(s => s && s.length === categories.length);
+    return CATEGORIES.map(c => plat[c.key]?.mean_ns || 0);
+  }).filter(s => s && s.every(v => v > 0));
 
   if (series.length === 0) {
     ctx.fillStyle = 'var(--muted)';
@@ -234,13 +261,13 @@ function drawPlatformChart(canvas, data) {
   }
 
   // Bars - grouped by category
-  const catCount = categories.length;
+  const catCount = CATEGORIES.length;
   const platCount = series.length;
   const groupW = (w - pad.l - pad.r) / catCount;
   const barW = groupW / (platCount + 1) * 0.8;
 
   series.forEach((vals, pi) => {
-    ctx.fillStyle = colors[pi % colors.length];
+    ctx.fillStyle = PLAT_COLORS[pi];
     vals.forEach((val, ci) => {
       const x = pad.l + ci * groupW + (groupW - platCount * barW) / 2 + pi * barW;
       const barH = ((val - minVal) / (maxVal - minVal || 1)) * (h - pad.t - pad.b);
@@ -265,48 +292,45 @@ function drawPlatformChart(canvas, data) {
   series.forEach((_, i) => {
     const px = w - pad.r - 120;
     const py = pad.t + i * 18;
-    ctx.fillStyle = colors[i % colors.length];
+    ctx.fillStyle = PLAT_COLORS[i];
     ctx.fillRect(px, py - 10, 12, 12);
     ctx.fillStyle = 'var(--text)';
-    ctx.fillText(platforms[i], px + 16, py);
+    ctx.fillText(PLATFORMS[i], px + 16, py);
   });
 }
 
 function drawProtocolBars(container) {
-  // Horizontal bars: protocol throughput (msg/s, higher=better) with end annotations
-  const protocols = [
-    {name:'Toloo',throughput:12200,latencyMs:0.082,ratio:1},
-    {name:'IRC',throughput:200,latencyMs:5,ratio:61},
-    {name:'XMPP',throughput:5,latencyMs:200,ratio:2439},
-    {name:'Matrix',throughput:2,latencyMs:500,ratio:6098},
-  ];
-  const maxTps = Math.max(...protocols.map(p=>p.throughput));
+  // Horizontal bars: protocol latency (ms, lower=better) - Toloo smallest
+  const maxMs = Math.max(...PROTOCOLS.map(p=>p.latencyMs));
   let html = '';
-  protocols.forEach(p => {
-    const pct = (p.throughput / maxTps) * 100;
-    const color = p.name==='Toloo' ? 'var(--green)' : p.name==='IRC' ? 'var(--amber)' : 'var(--red)';
-    const annoText = p.name==='Toloo' ? 'baseline' : `${(p.ratio).toLocaleString()}× slower`;
-    html += `<div class="proto-bar-row"><span class="proto-bar-label">${p.name}</span><div class="proto-bar-track"><div class="proto-bar-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div></div><span class="proto-bar-anno">${annoText}</span></div>`;
+  PROTOCOLS.forEach(p => {
+    const pct = (p.latencyMs / maxMs) * 100;
+    const annoText = p.name==='Toloo' ? 'baseline' : `${p.ratio.toLocaleString()}× slower`;
+    html += `<div class="proto-bar-row">
+      <span class="proto-bar-label">${p.name}</span>
+      <div class="proto-bar-track"><div class="proto-bar-fill" style="width:${pct.toFixed(2)}%;background:${p.color}"></div></div>
+      <span class="proto-bar-anno">${annoText}</span>
+    </div>`;
   });
   container.innerHTML = html;
 }
 
 function fillSimRows(container, data) {
   if (!data || !data.platforms) return;
-  const p = data.platforms;
+  const p = data.platforms['linux-x86'];
+  if (!p) return;
   const rows = [
-    {name:'Canonical Encode (medium)',val:p['linux-x86']?.['canonical/encode/medium']?.mean_ns},
-    {name:'Envelope Verify (depth1)',val:p['linux-x86']?.['envelope_verify/verify_chain/depth1']?.mean_ns},
-    {name:'Event Build (message)',val:p['linux-x86']?.['event_build/make_room_message']?.mean_ns},
-    {name:'Pool Query (1k events)',val:p['linux-x86']?.['pool_query/get_room_channel_1k']?.mean_ns},
-    {name:'Crypto (ed25519 verify)',val:p['linux-x86']?.['crypto/ed25519_verify']?.mean_ns},
+    {name:'Canonical Encode (medium)',val:p['canonical/encode/medium']?.mean_ns},
+    {name:'Envelope Verify (depth1)',val:p['envelope_verify/verify_chain/depth1']?.mean_ns},
+    {name:'Event Build (message)',val:p['event_build/make_room_message']?.mean_ns},
+    {name:'Pool Query (1k events)',val:p['pool_query/get_room_channel_1k']?.mean_ns},
+    {name:'Crypto (ed25519 verify)',val:p['crypto/ed25519_verify']?.mean_ns},
   ];
   let html = '';
   rows.forEach(r => {
     const ns = r.val || 0;
-    const label = r.name;
     const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
-    html += `<div style="display:flex;justify-content:space-between;padding:.35rem 0;border-bottom:1px solid var(--line);font-size:.78rem"><span style="color:var(--text)">${label}</span><span style="font-family:var(--mono);color:${ns<50000?'var(--green)':ns<100000?'var(--amber)':'var(--red)'}">${fmt}</span></div>`;
+    html += `<div style="display:flex;justify-content:space-between;padding:.35rem 0;border-bottom:1px solid var(--line);font-size:.78rem"><span style="color:var(--text)">${r.name}</span><span style="font-family:var(--mono);color:${ns<50000?'var(--green)':ns<100000?'var(--amber)':'var(--red)'}">${fmt}</span></div>`;
   });
   container.innerHTML = html;
 }
