@@ -11,8 +11,8 @@
   --surface:#22222c;
   --card:#282832;
   --line:#3a3a48;
-  --text:#e8e8ec;
-  --muted:#9a9aa8;
+  --text:#ffffff;
+  --muted:#b8b8c8;
   --green:#2ec95e;
   --amber:#f5b300;
   --red:#f05a5a;
@@ -21,14 +21,14 @@
   --sans:system-ui,sans-serif;
   --r:8px
 }
-body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.45}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.5}
 .container{max-width:1300px;margin:0 auto;padding:2rem 1.5rem 4rem;display:grid;grid-template-columns:1fr 380px;gap:2rem}
 @media(max-width:1050px){.container{grid-template-columns:1fr}}
 header{grid-column:1/-1;margin-bottom:1.5rem}
 h1{font-size:1.5rem;font-weight:600;letter-spacing:-0.02em;margin-bottom:.25rem}
-.subtitle{color:var(--muted);font-size:.8rem}
+.subtitle{color:var(--muted);font-size:.85rem}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:1rem}
-.card h2{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.75rem;font-weight:600}
+.card h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.75rem;font-weight:600}
 .section{margin-bottom:1.25rem}
 .full-width{grid-column:1/-1}
 
@@ -38,24 +38,24 @@ canvas{width:100%!important;height:100%!important}
 
 /* RIGHT: Simulation + Capacity */
 .sim-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:1rem;margin-bottom:1rem}
-.sim-label{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem}
-.sim-num{font-family:var(--mono);font-size:1.15rem;font-weight:600;color:var(--green);line-height:1.2}
+.sim-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem}
+.sim-num{font-family:var(--mono);font-size:1.25rem;font-weight:600;color:var(--green);line-height:1.2}
 .sim-desc{font-size:.7rem;color:var(--muted);margin-top:.25rem}
 
-/* Protocol comparison rows */
-.proto-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem;height:26px}
-.proto-label{width:100px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
-.proto-track{flex:1;height:14px;background:var(--card);border-radius:3px;position:relative;overflow:hidden;border:1px solid var(--line)}
-.proto-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:6px;font-size:.55rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:24px}
-.proto-anno{margin-left:8px;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:70px}
+/* Protocol comparison rows - consistent widths */
+.proto-row{display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem;height:28px}
+.proto-label{width:100px;font-size:.7rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
+.proto-track{flex:1;height:16px;background:var(--card);border-radius:3px;position:relative;overflow:hidden;border:1px solid var(--line)}
+.proto-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:8px;font-size:.6rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:28px}
+.proto-anno{margin-left:8px;font-size:.65rem;font-family:var(--mono);font-weight:600;color:var(--text);white-space:nowrap;min-width:80px}
 
-/* Category comparison within protocol card */
-.cat-compare-title{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .4rem;font-family:var(--mono)}
-.cat-compare-row{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;height:20px}
-.cat-compare-label{width:80px;font-size:.6rem;color:var(--muted);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
+/* Category comparison within protocol card - same label/track/value widths */
+.cat-compare-title{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .4rem;font-family:var(--mono)}
+.cat-compare-row{display:flex;align-items:center;gap:.5rem;margin-bottom:.35rem;height:22px}
+.cat-compare-label{width:80px;font-size:.65rem;color:var(--text);font-family:var(--mono);flex-shrink:0;text-align:right;padding-right:.5rem}
 .cat-compare-track{flex:1;height:100%;background:var(--card);border-radius:3px;overflow:hidden;position:relative;border:1px solid var(--line)}
-.cat-compare-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding:0 .35rem;font-size:.5rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:20px}
-.cat-compare-value{width:65px;font-size:.55rem;color:var(--muted);font-family:var(--mono);text-align:right;flex-shrink:0}
+.cat-compare-fill{height:100%;border-radius:3px;display:flex;align-items:center;padding:0 .4rem;font-size:.55rem;font-family:var(--mono);font-weight:600;color:var(--bg);white-space:nowrap;min-width:22px}
+.cat-compare-value{width:80px;font-size:.6rem;color:var(--muted);font-family:var(--mono);text-align:right;flex-shrink:0}
 
 /* Platform colors */
 .plat-linux-x86{background:#5ab3ff}
@@ -66,7 +66,7 @@ canvas{width:100%!important;height:100%!important}
 
 /* Tables */
 .table{width:100%;font-size:.7rem;border-collapse:collapse}
-.table th{text-align:left;color:var(--muted);font-size:.55rem;text-transform:uppercase;letter-spacing:.06em;padding:.35rem .5rem;border-bottom:1px solid var(--line)}
+.table th{text-align:left;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;padding:.35rem .5rem;border-bottom:1px solid var(--line)}
 .table td{padding:.35rem .5rem;border-bottom:1px solid rgba(255,255,255,.04);font-family:var(--mono);text-align:right;white-space:nowrap}
 .table td:first-child{text-align:left;color:var(--text);font-family:var(--sans)}
 </style>
@@ -83,7 +83,7 @@ canvas{width:100%!important;height:100%!important}
 <section class="section full-width">
   <div class="card">
     <h2>Toloo vs. Other Protocols</h2>
-    <p style="font-size:.65rem;color:var(--muted);margin-bottom:.75rem">Per-message latency (ms, lower=better) · Each category shows Toloo baseline vs Matrix/XMPP/IRC estimates</p>
+    <p style="font-size:.7rem;color:var(--muted);margin-bottom:.75rem">Per-message latency (ms, lower=better) · Each category shows Toloo baseline vs IRC/XMPP/Matrix estimates</p>
     <div id="proto-bars"></div>
   </div>
 </section>
@@ -106,7 +106,7 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="section">
     <div class="sim-card">
-      <h2 style="font-size:.75rem;margin-bottom:.75rem;color:var(--text);">Real-World Messaging Simulation</h2>
+      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Real-World Messaging Simulation</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem">
         <div>
           <div class="sim-label">Background Load</div>
@@ -122,11 +122,11 @@ canvas{width:100%!important;height:100%!important}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
         <div>
           <div class="sim-label">Steady Headroom</div>
-          <div class="sim-num" style="font-size:1.4rem;color:var(--green)">5.8×</div>
+          <div class="sim-num" style="font-size:1.5rem;color:var(--green)">5.8×</div>
         </div>
         <div>
           <div class="sim-label">Burst Headroom (50×)</div>
-          <div class="sim-num" style="font-size:1.4rem;color:var(--red)">0.12×</div>
+          <div class="sim-num" style="font-size:1.5rem;color:var(--red)">0.12×</div>
           <div class="sim-desc" style="font-size:.6rem">Requires horizontal scale or queueing</div>
         </div>
       </div>
@@ -135,7 +135,7 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="section">
     <div class="sim-card">
-      <h2 style="font-size:.75rem;margin-bottom:.75rem;color:var(--text);">Capacity Planning (Reference Platform)</h2>
+      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Capacity Planning (Reference Platform)</h2>
       <table class="table">
         <thead><tr><th>Config</th><th>Throughput</th><th>Users (0.1 msg/s)</th><th>Rooms</th></tr></thead>
         <tbody>
@@ -150,7 +150,7 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="section">
     <div class="sim-card">
-      <h2 style="font-size:.75rem;margin-bottom:.75rem;color:var(--text);">Key Results (linux-x86)</h2>
+      <h2 style="font-size:.8rem;margin-bottom:.75rem;color:var(--text);">Key Results (linux-x86)</h2>
       <div id="sim-rows"></div>
     </div>
   </section>
@@ -170,7 +170,7 @@ const CATEGORIES = [
   {key:'crypto/ed25519_verify', label:'Crypto (ed25519)', toloo:45395, refs:{IRC:45000, XMPP:200000, Matrix:800000}},
 ];
 
-// Protocol comparison (top section)
+// Protocol order: Toloo, IRC, XMPP, Matrix
 const PROTOCOLS = [
   {name:'Toloo', latencyMs:0.082, ratio:1, color:'var(--green)'},
   {name:'IRC', latencyMs:5, ratio:61, color:'var(--amber)'},
@@ -178,9 +178,9 @@ const PROTOCOLS = [
   {name:'Matrix', latencyMs:500, ratio:6098, color:'var(--red)'},
 ];
 
-// Reference protocol names for category comparison
-const REF_PROTOCOLS = ['Matrix', 'XMPP', 'IRC'];
-const REF_COLORS = ['var(--red)', 'var(--red)', 'var(--amber)'];
+// Reference protocol names for category comparison - SAME ORDER
+const REF_PROTOCOLS = ['IRC', 'XMPP', 'Matrix'];
+const REF_COLORS = ['var(--amber)', 'var(--red)', 'var(--red)'];
 
 function drawProtocolBars(container, data) {
   // Overall protocol latency bars
@@ -198,13 +198,12 @@ function drawProtocolBars(container, data) {
 
   // Per-category comparison
   CATEGORIES.forEach(cat => {
-    // Use actual Toloo data if available
     const tolooNs = data?.platforms?.['linux-x86']?.[cat.key]?.mean_ns || cat.toloo;
     const refs = cat.refs;
 
     html += `<div class="cat-compare-title">${cat.label}</div>`;
 
-    const allVals = [tolooNs, refs.Matrix, refs.XMPP, refs.IRC].filter(v => v > 0);
+    const allVals = [tolooNs, refs.IRC, refs.XMPP, refs.Matrix].filter(v => v > 0);
     const maxVal = Math.max(...allVals);
 
     // Toloo (baseline)
@@ -216,14 +215,14 @@ function drawProtocolBars(container, data) {
       <span class="cat-compare-value">${fmtT} (baseline)</span>
     </div>`;
 
-    // Reference protocols
+    // Reference protocols in order: IRC, XMPP, Matrix
     REF_PROTOCOLS.forEach((r, ri) => {
       const ns = refs[r] || 0;
       if (ns === 0) return;
       const pct = (ns / maxVal) * 100;
       const ratio = (ns / tolooNs).toFixed(0);
       const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
-      html += `<div class="cat-compare-row" style="opacity:.75">
+      html += `<div class="cat-compare-row" style="opacity:.8">
         <span class="cat-compare-label">${r} (est.)</span>
         <div class="cat-compare-track"><div class="cat-compare-fill" style="width:${pct.toFixed(0)}%;background:${REF_COLORS[ri]}"></div></div>
         <span class="cat-compare-value">${fmt} (${ratio}×)</span>
@@ -252,7 +251,7 @@ function drawPlatformChart(canvas, data) {
 
   if (series.length === 0) {
     ctx.fillStyle = 'var(--muted)';
-    ctx.font = '12px var(--sans)';
+    ctx.font = '13px var(--sans)';
     ctx.textAlign = 'center';
     ctx.fillText('No cross-platform data available', w/2, h/2);
     return;
@@ -272,8 +271,8 @@ function drawPlatformChart(canvas, data) {
   ctx.stroke();
 
   // Y axis title
-  ctx.fillStyle = 'var(--muted)';
-  ctx.font = '11px var(--sans)';
+  ctx.fillStyle = 'var(--text)';
+  ctx.font = '12px var(--sans)';
   ctx.textAlign = 'center';
   ctx.save();
   ctx.translate(20, h/2);
@@ -281,25 +280,30 @@ function drawPlatformChart(canvas, data) {
   ctx.fillText('Latency (ns)', 0, 0);
   ctx.restore();
 
-  // Grid lines & Y labels
+  // Grid lines
   ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.fillStyle = 'var(--muted)';
-  ctx.font = '10px var(--mono)';
-  ctx.textAlign = 'right';
   for (let i = 0; i <= 4; i++) {
-    const val = maxVal - (maxVal - minVal) * i / 4;
     const y = pad.t + (h - pad.t - pad.b) * i / 4;
     ctx.beginPath();
     ctx.moveTo(pad.l, y);
     ctx.lineTo(w - pad.r, y);
     ctx.stroke();
+  }
+
+  // Y axis value labels (right-aligned, larger font)
+  ctx.fillStyle = 'var(--muted)';
+  ctx.font = '11px var(--mono)';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = maxVal - (maxVal - minVal) * i / 4;
+    const y = pad.t + (h - pad.t - pad.b) * i / 4;
     const fmt = val >= 1e6 ? (val/1e6).toFixed(1)+'M' : val >= 1e3 ? (val/1e3).toFixed(0)+'k' : val.toFixed(0);
-    ctx.fillText(fmt, pad.l - 10, y + 3);
+    ctx.fillText(fmt, pad.l - 12, y + 4);
   }
 
   // X axis title
-  ctx.fillStyle = 'var(--muted)';
-  ctx.font = '11px var(--sans)';
+  ctx.fillStyle = 'var(--text)';
+  ctx.font = '12px var(--sans)';
   ctx.textAlign = 'center';
   ctx.fillText('Benchmark Category', w/2, h - 12);
 
@@ -320,25 +324,39 @@ function drawPlatformChart(canvas, data) {
   });
 
   // X labels
-  ctx.fillStyle = 'var(--muted)';
-  ctx.font = '9px var(--mono)';
+  ctx.fillStyle = 'var(--text)';
+  ctx.font = '12px var(--mono)';
   ctx.textAlign = 'center';
   const shortLabels = ['Encode','Verify','Parse','Build','Pool','Crypto'];
   shortLabels.forEach((label, i) => {
     const x = pad.l + (i + 0.5) * groupW;
-    ctx.fillText(label, x, h - pad.b + 18);
+    ctx.fillText(label, x, h - pad.b + 22);
   });
 
-  // Legend
-  ctx.font = '10px var(--sans)';
-  ctx.textAlign = 'left';
+  // Y axis values (better formatting)
+  ctx.fillStyle = 'var(--muted)';
+  ctx.font = '11px var(--mono)';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = maxVal - (maxVal - minVal) * i / 4;
+    const y = pad.t + (h - pad.t - pad.b) * i / 4;
+    const fmt = val >= 1e6 ? (val/1e6).toFixed(1)+'M' : val >= 1e3 ? (val/1e3).toFixed(0)+'k' : val.toFixed(0);
+    ctx.fillText(fmt, pad.l - 12, y + 4);
+  }
+
+  // Legend at BOTTOM
+  const legendY = h - 8;
+  const legendItemW = (w - pad.l - pad.r) / platCount;
+  ctx.font = '11px var(--sans)';
+  ctx.textAlign = 'center';
   series.forEach((_, i) => {
-    const px = w - pad.r - 110;
-    const py = pad.t + i * 18;
+    const cx = pad.l + i * legendItemW + legendItemW / 2;
     ctx.fillStyle = PLAT_COLORS[i];
-    ctx.fillRect(px, py - 10, 12, 12);
+    ctx.beginPath();
+    ctx.arc(cx - 35, legendY - 5, 6, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = 'var(--text)';
-    ctx.fillText(PLATFORMS[i], px + 16, py);
+    ctx.fillText(PLATFORMS[i], cx, legendY);
   });
 }
 
@@ -357,7 +375,7 @@ function fillSimRows(container, data) {
   rows.forEach(r => {
     const ns = r.val || 0;
     const fmt = ns >= 1e6 ? (ns/1e6).toFixed(2)+' ms' : ns >= 1e3 ? (ns/1e3).toFixed(1)+' µs' : ns.toFixed(0)+' ns';
-    html += `<div style="display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--line);font-size:.72rem"><span style="color:var(--text)">${r.name}</span><span style="font-family:var(--mono);color:${ns<50000?'var(--green)':ns<100000?'var(--amber)':'var(--red)'}">${fmt}</span></div>`;
+    html += `<div style="display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--line);font-size:.75rem"><span style="color:var(--text)">${r.name}</span><span style="font-family:var(--mono);color:${ns<50000?'var(--green)':ns<100000?'var(--amber)':'var(--red)'}">${fmt}</span></div>`;
   });
   container.innerHTML = html;
 }
