@@ -344,6 +344,8 @@ jobs:
     needs: [prepare-repo, bench-linux-x86, bench-linux-arm, bench-windows, bench-macos-x86, bench-macos-arm]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts/
