@@ -359,10 +359,10 @@ jobs:
           import json
           import sys
           from pathlib import Path
-          from datetime import datetime
+          from datetime import datetime, timezone
 
           results = {
-              "timestamp": datetime.utcnow().isoformat() + "Z",
+              "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               "commit": "${{ github.sha }}",
               "branch": "${{ github.event.inputs.branch }}",
               "platforms": {}
@@ -399,7 +399,7 @@ jobs:
 
       - name: Generate static HTML from template
         run: |
-          python3 ../substitute_template.py ../index.html.template benchmark-report.json index.html
+          python3 substitute_template.py index.html.template benchmark-report.json index.html
 
       - name: Commit results to benchmark repo
         uses: actions/checkout@v4
@@ -423,10 +423,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.BENCHMARK_REPO_PAT }}
 
-      - name: Copy static HTML to this repo (for reference)
-        run: |
-          cp index.html ../index.html
-
+      
       - name: Upload aggregated report
         uses: actions/upload-artifact@v4
         with:
