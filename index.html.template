@@ -160,7 +160,7 @@
         <h3>Encoding & Parsing</h3>
         <div class="proto-rows">
           <div class="proto-row">
-            <span class="proto-label">Canonical Encode</span>
+            <span class="proto-label">Toloo: Canonical Encode</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_CANONICAL_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -189,7 +189,7 @@
           </div>
 
           <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Envelope Verify</span>
+            <span class="proto-label">Toloo: Envelope Verify</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_VERIFY_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -218,7 +218,7 @@
           </div>
 
           <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Parse Envelope</span>
+            <span class="proto-label">Toloo: Parse Envelope</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_PARSE_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -253,7 +253,7 @@
         <h3>Event Processing & Crypto</h3>
         <div class="proto-rows">
           <div class="proto-row">
-            <span class="proto-label">Event Build</span>
+            <span class="proto-label">Toloo: Event Build</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_BUILD_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -282,7 +282,7 @@
           </div>
 
           <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Pool Query (1k)</span>
+            <span class="proto-label">Toloo: Pool Query (1k)</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_POOL_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -311,7 +311,7 @@
           </div>
 
           <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Crypto (ed25519)</span>
+            <span class="proto-label">Toloo: Crypto (ed25519)</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_CRYPTO_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
