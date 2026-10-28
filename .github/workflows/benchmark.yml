@@ -407,7 +407,7 @@ jobs:
 
       - name: Generate static HTML in benchmark repo
         run: |
-          python3 substitute_template.py ../index.html.template ../benchmark-report.json bench-repo/index.html
+          python3 substitute_template.py index.html.template benchmark-report.json bench-repo/index.html
 
       - name: Copy results to benchmark repo
         run: |
