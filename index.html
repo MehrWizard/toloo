@@ -167,11 +167,11 @@
       <h3>Capacity Planning</h3>
       <table class="table">
         <thead><tr><th>Config</th><th>Throughput</th><th>Users (0.1 msg/s)</th><th>Rooms</th></tr></thead>
-        <tbody>
-          <tr><td>1 thread</td><td>12,200 msg/s</td><td>122,000</td><td>10</td></tr>
-          <tr><td>4 threads</td><td>42,700 msg/s</td><td>427,000</td><td>40</td></tr>
-          <tr><td>16 threads (sharded)</td><td>122,000 msg/s</td><td>1,220,000</td><td>160</td></tr>
-          <tr><td>64 threads (NUMA)</td><td>305,000 msg/s</td><td>3,050,000</td><td>640</td></tr>
+        <tbody id="capacity-rows">
+          <tr><td>1 thread</td><td id="cap-1-thread">—</td><td id="cap-1-users">—</td><td>10</td></tr>
+          <tr><td>4 threads</td><td id="cap-4-thread">—</td><td id="cap-4-users">—</td><td>40</td></tr>
+          <tr><td>16 threads (sharded)</td><td id="cap-16-thread">—</td><td id="cap-16-users">—</td><td>160</td></tr>
+          <tr><td>64 threads (NUMA)</td><td id="cap-64-thread">—</td><td id="cap-64-users">—</td><td>640</td></tr>
         </tbody>
       </table>
     </div>
@@ -415,6 +415,20 @@ function computeSimulation(data) {
   document.getElementById('sim-single-thread').textContent = '~' + singleThreadMsgS.toLocaleString() + ' msg/s';
   document.getElementById('sim-steady').textContent = steadyHeadroom + '×';
   document.getElementById('sim-burst').textContent = burstHeadroom + '×';
+
+  // Capacity Planning table (scales from single-thread baseline)
+  const configs = [
+    {threads: 1, scale: 1, usersPerThread: 10, id: '1'},
+    {threads: 4, scale: 3.5, usersPerThread: 10, id: '4'},  // ~3.5x due to contention
+    {threads: 16, scale: 10, usersPerThread: 10, id: '16'}, // sharded
+    {threads: 64, scale: 25, usersPerThread: 10, id: '64'}, // NUMA
+  ];
+  configs.forEach(c => {
+    const throughput = Math.round(singleThreadMsgS * c.scale);
+    const users = throughput * c.usersPerThread;
+    document.getElementById('cap-' + c.id + '-thread').textContent = throughput.toLocaleString() + ' msg/s';
+    document.getElementById('cap-' + c.id + '-users').textContent = users.toLocaleString();
+  });
 }
 
 async function init() {
