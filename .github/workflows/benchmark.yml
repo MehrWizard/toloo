@@ -397,10 +397,6 @@ jobs:
           PYEOF
           python3 aggregate.py
 
-      - name: Generate static HTML from template
-        run: |
-          python3 substitute_template.py index.html.template benchmark-report.json index.html
-
       - name: Commit results to benchmark repo
         uses: actions/checkout@v4
         with:
@@ -409,14 +405,17 @@ jobs:
           path: bench-repo
           fetch-depth: 0
 
-      - name: Copy results & UI to benchmark repo
+      - name: Generate static HTML in benchmark repo
+        run: |
+          python3 substitute_template.py ../index.html.template ../benchmark-report.json bench-repo/index.html
+
+      - name: Copy results to benchmark repo
         run: |
           cd bench-repo
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cp ../benchmark-report.json results/${{ github.sha }}.json
           cp ../benchmark-report.json results/latest.json
-          cp ../index.html index.html
           git add results/${{ github.sha }}.json results/latest.json index.html
           git commit -m "Benchmark: ${{ github.sha }} (${{ github.event.inputs.branch }})"
           git push
