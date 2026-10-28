@@ -136,26 +136,26 @@
   <section class="section">
     <div class="sim-card">
       <h3>Real-World Messaging Simulation</h3>
-      <div class="sim-grid">
+      <div class="sim-grid" id="sim-main">
         <div class="item">
           <div class="label">Background Load</div>
-          <div class="num">2,100 msg/s</div>
+          <div class="num" id="sim-bg-load">—</div>
           <div class="note">10 rooms × 1k users @ 0.02 msg/s + 1k active @ 0.1 msg/s</div>
         </div>
         <div class="item">
           <div class="label">Single Thread</div>
-          <div class="num text-green">~12,200 msg/s</div>
+          <div class="num text-green" id="sim-single-thread">—</div>
           <div class="note">Per-message: encode + verify + pool + ed25519</div>
         </div>
       </div>
       <div class="sim-grid">
         <div class="item">
           <div class="label">Steady Headroom</div>
-          <div class="big-num text-green">5.8×</div>
+          <div class="big-num text-green" id="sim-steady">—</div>
         </div>
         <div class="item">
           <div class="label">Burst Headroom (50×)</div>
-          <div class="big-num text-red">0.12×</div>
+          <div class="big-num text-red" id="sim-burst">—</div>
           <div class="note">Requires horizontal scale or queueing</div>
         </div>
       </div>
@@ -193,7 +193,7 @@ const PLAT_COLORS = ['#4a9cf0','#3dba6e','#e0a020','#e05050','#8b6fd0'];
 const CATEGORIES = [
   {key:'canonical/encode/medium', label:'Canonical Encode', toloo:5340, refs:{IRC:150000, XMPP:800000, Matrix:2500000}},
   {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify', toloo:46159, refs:{IRC:50000, XMPP:300000, Matrix:1200000}},
-  {key:'parse_envelope', label:'Parse Envelope', toloo:5465, refs:{IRC:20000, XMPP:150000, Matrix:600000}},
+  {key:'parse_envelope/parse_envelope_bytes', label:'Parse Envelope', toloo:5465, refs:{IRC:20000, XMPP:150000, Matrix:600000}},
   {key:'event_build/make_room_message', label:'Event Build', toloo:45255, refs:{IRC:100000, XMPP:500000, Matrix:2000000}},
   {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)', toloo:7525, refs:{IRC:500000, XMPP:2000000, Matrix:8000000}},
   {key:'crypto/ed25519_verify', label:'Crypto (ed25519)', toloo:45395, refs:{IRC:45000, XMPP:200000, Matrix:800000}},
@@ -388,12 +388,42 @@ function fillSimRows(container, data) {
   container.innerHTML = html;
 }
 
+function computeSimulation(data) {
+  if (!data || !data.platforms) return;
+  const p = data.platforms['linux-x86'];
+  if (!p) return;
+
+  // Background load: 10 rooms × 1000 users @ 0.02 msg/s + 1000 active @ 0.1 msg/s
+  const bgLoad = 10 * 1000 * 0.02 + 1000 * 0.1; // = 300 msg/s
+
+  // Single-thread throughput: sum of critical path latencies
+  // canonical encode + envelope verify + parse + event build + pool query + crypto verify
+  const encodeNs = p['canonical/encode/medium']?.mean_ns || 0;
+  const verifyNs = p['envelope_verify/verify_chain/depth1']?.mean_ns || 0;
+  const parseNs = p['parse_envelope/parse_envelope_bytes']?.mean_ns || 0;
+  const buildNs = p['event_build/make_room_message']?.mean_ns || 0;
+  const poolNs = p['pool_query/get_room_channel_1k']?.mean_ns || 0;
+  const cryptoNs = p['crypto/ed25519_verify']?.mean_ns || 0;
+
+  const totalNs = encodeNs + verifyNs + parseNs + buildNs + poolNs + cryptoNs;
+  const singleThreadMsgS = totalNs > 0 ? Math.round(1e9 / totalNs) : 0;
+
+  const steadyHeadroom = bgLoad > 0 ? (singleThreadMsgS / bgLoad).toFixed(1) : 0;
+  const burstHeadroom = bgLoad > 0 ? (singleThreadMsgS / (bgLoad * 50)).toFixed(2) : 0;
+
+  document.getElementById('sim-bg-load').textContent = bgLoad.toLocaleString() + ' msg/s';
+  document.getElementById('sim-single-thread').textContent = '~' + singleThreadMsgS.toLocaleString() + ' msg/s';
+  document.getElementById('sim-steady').textContent = steadyHeadroom + '×';
+  document.getElementById('sim-burst').textContent = burstHeadroom + '×';
+}
+
 async function init() {
   try {
     const r = await fetch('results/latest.json');
     const d = await r.json();
     drawProtocolBars(document.getElementById('proto-bars'), d);
     fillSimRows(document.getElementById('sim-rows'), d);
+    computeSimulation(d);
     const c = document.getElementById('platform-chart');
     if (c) drawPlatformChart(c, d);
   } catch (e) {}
