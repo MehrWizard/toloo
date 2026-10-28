@@ -193,7 +193,7 @@ const PLAT_COLORS = ['#4a9cf0','#3dba6e','#e0a020','#e05050','#8b6fd0'];
 const CATEGORIES = [
   {key:'canonical/encode/medium', label:'Canonical Encode', toloo:5340, refs:{IRC:150000, XMPP:800000, Matrix:2500000}},
   {key:'envelope_verify/verify_chain/depth1', label:'Envelope Verify', toloo:46159, refs:{IRC:50000, XMPP:300000, Matrix:1200000}},
-  {key:'parse_envelope/parse_envelope_bytes', label:'Parse Envelope', toloo:5465, refs:{IRC:20000, XMPP:150000, Matrix:600000}},
+  {key:'envelope_parse/parse_envelope_bytes', label:'Parse Envelope', toloo:5465, refs:{IRC:20000, XMPP:150000, Matrix:600000}},
   {key:'event_build/make_room_message', label:'Event Build', toloo:45255, refs:{IRC:100000, XMPP:500000, Matrix:2000000}},
   {key:'pool_query/get_room_channel_1k', label:'Pool Query (1k)', toloo:7525, refs:{IRC:500000, XMPP:2000000, Matrix:8000000}},
   {key:'crypto/ed25519_verify', label:'Crypto (ed25519)', toloo:45395, refs:{IRC:45000, XMPP:200000, Matrix:800000}},
@@ -400,7 +400,7 @@ function computeSimulation(data) {
   // canonical encode + envelope verify + parse + event build + pool query + crypto verify
   const encodeNs = p['canonical/encode/medium']?.mean_ns || 0;
   const verifyNs = p['envelope_verify/verify_chain/depth1']?.mean_ns || 0;
-  const parseNs = p['parse_envelope/parse_envelope_bytes']?.mean_ns || 0;
+  const parseNs = p['envelope_parse/parse_envelope_bytes']?.mean_ns || 0;
   const buildNs = p['event_build/make_room_message']?.mean_ns || 0;
   const poolNs = p['pool_query/get_room_channel_1k']?.mean_ns || 0;
   const cryptoNs = p['crypto/ed25519_verify']?.mean_ns || 0;
