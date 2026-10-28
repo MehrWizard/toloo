@@ -18,7 +18,6 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::{spawn_local, LocalSet};
@@ -34,7 +33,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> AnyStream for T {}
 type BoxedStream = Box<dyn AnyStream>;
 
 use crate::pool::Pool;
-use crate::requests::handlers::handle_request;
+use crate::requests::batch::{try_batch_or_direct, BatchProcessor};
 use crate::types::{LocalNode, LocalRoom};
 
 // ══════════════════════════════════════════════════════════════════════
@@ -75,7 +74,10 @@ pub struct EndpointConfig {
     /// URL path for HTTP/HTTPS endpoints (default `/`).
     pub path: Option<String>,
     /// Pre-built TLS acceptor — required for `wss` and `https`, `None` otherwise.
+    #[cfg(feature = "tls")]
     pub tls: Option<Arc<tokio_rustls::TlsAcceptor>>,
+    #[cfg(not(feature = "tls"))]
+    pub tls: Option<()>,
 }
 
 /// Relay configuration passed to [`run_relay`].
@@ -90,6 +92,8 @@ pub struct RelayConfig {
     pub rooms: std::collections::HashMap<String, LocalRoom>,
     /// Optional live metrics counters.
     pub metrics: Option<Arc<RelayMetrics>>,
+    /// Optional batch processor for high-throughput request handling.
+    pub batch_processor: Option<BatchProcessor>,
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -112,20 +116,26 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
         let addr = ep.addr;
         let proto = ep.proto.clone();
         let path = ep.path.clone().unwrap_or_else(|| "/".to_owned());
+
+        #[cfg(feature = "tls")]
         let tls = ep.tls.clone();
 
         local.spawn_local(async move {
             let result = match proto.as_str() {
                 "ws" => run_accept_loop(addr, "WS".to_owned(), None, cfg, |s, p, c| do_ws_session(s, p, c)).await,
+                #[cfg(feature = "tls")]
                 "wss" => match tls {
                     Some(t) => run_accept_loop(addr, "WSS".to_owned(), Some(t), cfg, |s, p, c| do_ws_session(s, p, c)).await,
                     None => Err(anyhow::anyhow!("wss endpoint missing TLS acceptor")),
                 },
                 "http" => run_http_accept_loop(addr, path, None, cfg).await,
+                #[cfg(feature = "tls")]
                 "https" => match tls {
                     Some(t) => run_http_accept_loop(addr, path, Some(t), cfg).await,
                     None => Err(anyhow::anyhow!("https endpoint missing TLS acceptor")),
                 },
+                #[cfg(not(feature = "tls"))]
+                "wss" | "https" => Err(anyhow::anyhow!("TLS protocols (wss/https) require the 'tls' feature")),
                 p => {
                     log_info(format!("endpoint proto={p}: not supported, skipping"));
                     Ok(())
@@ -151,6 +161,7 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
 /// The `handler` closure is called for each accepted connection with the
 /// (possibly TLS-wrapped) stream and peer address. It should drive the
 /// protocol session to completion.
+#[cfg(feature = "tls")]
 async fn run_accept_loop<F, Fut>(
     addr: SocketAddr,
     proto: String,
@@ -202,6 +213,21 @@ where
     }
 }
 
+#[cfg(not(feature = "tls"))]
+async fn run_accept_loop<F, Fut>(
+    _addr: SocketAddr,
+    _proto: String,
+    _tls: Option<()>,
+    _config: Arc<RelayConfig>,
+    _handler: F,
+) -> Result<()>
+where
+    F: Fn(BoxedStream, SocketAddr, Arc<RelayConfig>) -> Fut + 'static + Clone,
+    Fut: Future<Output = Result<()>> + 'static,
+{
+    anyhow::bail!("TLS support requires the 'tls' feature")
+}
+
 /// Drive a WebSocket session over any `AsyncRead + AsyncWrite + Unpin` stream.
 /// Used by both plain `ws` and TLS `wss`.
 async fn do_ws_session(stream: BoxedStream, _peer_addr: SocketAddr, config: Arc<RelayConfig>) -> Result<()> {
@@ -217,16 +243,15 @@ async fn do_ws_session(stream: BoxedStream, _peer_addr: SocketAddr, config: Arc<
                     }
                     let responses = dispatch_common(&text, &config).await;
                     for v in responses {
-                        let out = v.to_string();
                         if let Some(m) = &config.metrics {
-                            m.bytes_out.fetch_add(out.len() as u64, Ordering::Relaxed);
+                            m.bytes_out.fetch_add(v.len() as u64, Ordering::Relaxed);
                         }
-                        ws.send(Message::Text(out.into()))
+                        ws.send(Message::Binary(v.into()))
                             .await
                             .context("WS send")?;
                     }
                     // Signal end of response batch so clients can proceed.
-                    ws.send(Message::Text(r#"{"done":true}"#.into()))
+                    ws.send(Message::Binary(r#"{"done":true}"#.as_bytes().to_vec().into()))
                         .await
                         .context("WS done")?;
                 }
@@ -252,6 +277,7 @@ async fn do_ws_session(stream: BoxedStream, _peer_addr: SocketAddr, config: Arc<
 // Returns a JSON array of response envelopes.
 // Plain HTTP uses a raw TcpStream; HTTPS wraps it with a TlsStream first.
 
+#[cfg(feature = "tls")]
 async fn run_http_accept_loop(
     addr: SocketAddr,
     path: String,
@@ -262,6 +288,20 @@ async fn run_http_accept_loop(
     let full_proto = format!("{} (path={})", proto, path);
 
     run_accept_loop(addr, full_proto, tls, config, move |stream: BoxedStream, peer, cfg| {
+        let path = path.clone();
+        async move { do_http_connection(stream, peer, cfg, &path).await }
+    }).await
+}
+
+#[cfg(not(feature = "tls"))]
+async fn run_http_accept_loop(
+    addr: SocketAddr,
+    path: String,
+    _tls: Option<()>,
+    config: Arc<RelayConfig>,
+) -> Result<()> {
+    // Only HTTP (no TLS) when tls feature is disabled
+    run_accept_loop(addr, format!("HTTP (path={})", path), None, config, move |stream: BoxedStream, peer, cfg| {
         let path = path.clone();
         async move { do_http_connection(stream, peer, cfg, &path).await }
     }).await
@@ -343,7 +383,16 @@ async fn do_http_connection(
 
     let json_str = std::str::from_utf8(&body).context("request body not UTF-8")?;
     let responses = dispatch_common(json_str, &config).await;
-    let resp_body = serde_json::to_vec(&responses).context("response serialise")?;
+    // Concatenate response bytes into a JSON array: [env1,env2,...]
+    let mut resp_body = Vec::with_capacity(responses.iter().map(|r| r.len()).sum::<usize>() + responses.len() + 2);
+    resp_body.push(b'[');
+    for (i, r) in responses.iter().enumerate() {
+        if i > 0 {
+            resp_body.push(b',');
+        }
+        resp_body.extend_from_slice(r);
+    }
+    resp_body.push(b']');
 
     if let Some(m) = &config.metrics {
         m.bytes_out
@@ -375,19 +424,24 @@ async fn do_http_connection(
 // Shared dispatch
 // ══════════════════════════════════════════════════════════════════════
 
-async fn dispatch_common(json_str: &str, config: &Arc<RelayConfig>) -> Vec<Value> {
-    let value: Value = match serde_json::from_str(json_str) {
-        Ok(v) => v,
-        Err(e) => {
-            return vec![serde_json::json!({"error": "parse_error", "message": e.to_string()})]
+async fn dispatch_common(json_str: &str, config: &Arc<RelayConfig>) -> Vec<Vec<u8>> {
+    // Zero-copy parse with simd-json (mutable slice required)
+    let mut bytes = json_str.as_bytes().to_vec();
+    match crate::envelope::parse_envelope_bytes(&mut bytes) {
+        Ok(env) => {
+            match try_batch_or_direct(
+                config.batch_processor.as_ref(),
+                env,
+                Arc::clone(&config.pool),
+                Arc::clone(config),
+            )
+            .await
+            {
+                Ok(responses) => responses,
+                Err(e) => vec![format!("{{\"error\":\"internal\",\"message\":\"{}\"}}", e).into_bytes()],
+            }
         }
-    };
-    match crate::envelope::parse_envelope(value) {
-        Ok(env) => match handle_request(env, &config.pool, config).await {
-            Ok(responses) => responses,
-            Err(e) => vec![serde_json::json!({"error": "internal", "message": e.to_string()})],
-        },
-        Err(e) => vec![serde_json::json!({"error": "invalid_envelope", "message": e.to_string()})],
+        Err(e) => vec![format!("{{\"error\":\"invalid_envelope\",\"message\":\"{}\"}}", e).into_bytes()],
     }
 }
 

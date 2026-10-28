@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,6 +28,8 @@ impl Default for DatumBody {
             exp: None,
             nonce: None,
             extra: HashMap::new(),
+            cached_canonical: OnceLock::new(),
+            verified_layer: OnceLock::new(),
         }
     }
 }
@@ -54,6 +57,17 @@ pub struct DatumBody {
     pub nonce: Option<u64>,
     #[serde(flatten, default)]
     pub extra: HashMap<String, Value>,
+
+    /// Cached canonical JSON bytes. Populated on first use.
+    /// Not serialized — cleared on any mutation (use new DatumBody for mutations).
+    #[serde(skip)]
+    pub cached_canonical: OnceLock<Vec<u8>>,
+
+    /// Cached verification result for commit/ack layer.
+    /// When Some(true), the commit or ack signature (this layer) has been verified.
+    /// Not serialized — set after successful verification.
+    #[serde(skip)]
+    pub verified_layer: OnceLock<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

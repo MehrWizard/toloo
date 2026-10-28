@@ -1,7 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use toloo_lib::base64url;
 use toloo_lib::canonical::canonical;
-use toloo_lib::crypto::{chacha20_decrypt, chacha20_encrypt, derive_private_message_key, ed25519_generate, ed25519_sign, ed25519_verify, x25519_generate, x25519_shared_secret};
-use toloo_lib::envelope::{make_envelope, parse_envelope, verify_chain};
+use toloo_lib::crypto::{chacha20_decrypt, chacha20_encrypt, derive_private_message_key, ed25519_generate, ed25519_sign, ed25519_verify, ed25519_verify_batch, x25519_generate, x25519_shared_secret, get_verifying_key};
+use toloo_lib::envelope::{make_envelope, parse_envelope, parse_envelope_bytes, verify_chain, envelope_to_json_bytes};
 use toloo_lib::events::{make_node_meta, make_room_create, make_room_message};
 use toloo_lib::types::{Keypair, LocalNode, LocalRoom};
 use serde_json::json;
@@ -98,10 +99,51 @@ fn envelope_parse_bench(c: &mut Criterion) {
         None,
     ).unwrap();
     let json_val = serde_json::to_value(&env).unwrap();
+    let json_bytes = serde_json::to_vec(&env).unwrap();
 
-    c.bench_function("parse_envelope", |b| {
+    let mut group = c.benchmark_group("envelope_parse");
+
+    // Old serde_json-based parsing (from Value)
+    group.bench_function("parse_envelope_from_value", |b| {
         b.iter(|| parse_envelope(black_box(json_val.clone())))
     });
+
+    // New zero-copy parsing from bytes (simd-json)
+    group.bench_function("parse_envelope_bytes", |b| {
+        b.iter(|| {
+            let mut bytes = json_bytes.clone();
+            parse_envelope_bytes(black_box(&mut bytes))
+        })
+    });
+
+    group.finish();
+}
+
+fn envelope_serialize_bench(c: &mut Criterion) {
+    let node = mk_node();
+    let env = make_envelope(
+        "room.message",
+        Some(json!({"ch": 1, "body": "hello world"})),
+        &node,
+        None,
+    ).unwrap();
+
+    let mut group = c.benchmark_group("envelope_serialize");
+
+    // Old serde_json-based serialization (to Value then to string)
+    group.bench_function("to_envelope_json_old", |b| {
+        b.iter(|| {
+            let bytes = serde_json::to_vec(black_box(&env)).unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        })
+    });
+
+    // New manual serialization
+    group.bench_function("envelope_to_json_bytes", |b| {
+        b.iter(|| envelope_to_json_bytes(black_box(&env)))
+    });
+
+    group.finish();
 }
 
 fn event_build_bench(c: &mut Criterion) {
@@ -161,6 +203,49 @@ fn pool_query_bench(c: &mut Criterion) {
     group.finish();
 }
 
+fn pool_write_bench(c: &mut Criterion) {
+    let node = mk_node();
+    let room = mk_room();
+    let room_pub = room.sig.pub_key.clone();
+
+    // Benchmark single put
+    let mut group = c.benchmark_group("pool_write");
+
+    group.bench_function("put_single", |b| {
+        let pool = toloo_lib::pool::Pool::memory().unwrap();
+        b.iter(|| {
+            let env = make_room_message(&node, &room_pub, 1, "benchmark message", vec![]).unwrap();
+            pool.put(black_box(&env))
+        })
+    });
+
+    // Benchmark batch put (100 events)
+    group.bench_function("put_batch_100", |b| {
+        b.iter(|| {
+            let pool = toloo_lib::pool::Pool::memory().unwrap();
+            let envelopes: Vec<_> = (0..100)
+                .map(|i| make_room_message(&node, &room_pub, 1, &format!("msg {}", i), vec![]).unwrap())
+                .collect();
+            let refs: Vec<_> = envelopes.iter().collect();
+            pool.put_batch(black_box(&refs))
+        })
+    });
+
+    // Benchmark batch put (10 events)
+    group.bench_function("put_batch_10", |b| {
+        b.iter(|| {
+            let pool = toloo_lib::pool::Pool::memory().unwrap();
+            let envelopes: Vec<_> = (0..10)
+                .map(|i| make_room_message(&node, &room_pub, 1, &format!("msg {}", i), vec![]).unwrap())
+                .collect();
+            let refs: Vec<_> = envelopes.iter().collect();
+            pool.put_batch(black_box(&refs))
+        })
+    });
+
+    group.finish();
+}
+
 fn crypto_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("crypto");
 
@@ -176,8 +261,23 @@ fn crypto_bench(c: &mut Criterion) {
     });
 
     let sig = ed25519_sign(msg, &seed).unwrap();
+    let pub_key_b64 = base64url::encode(&pub_key);
     group.bench_function("ed25519_verify", |b| {
-        b.iter(|| ed25519_verify(black_box(msg), black_box(&sig), black_box(&pub_key)))
+        b.iter(|| ed25519_verify(black_box(msg), black_box(&sig), black_box(&pub_key_b64)))
+    });
+
+    // Batch verification benchmark
+    let vk = get_verifying_key(&pub_key_b64).unwrap();
+    let msg_refs: Vec<&[u8]> = (0..10).map(|_| msg.as_slice()).collect();
+    let sig_refs: Vec<&[u8]> = (0..10).map(|_| sig.as_slice()).collect();
+    let vk_refs: Vec<&ed25519_dalek::VerifyingKey> = (0..10).map(|_| &vk).collect();
+
+    group.bench_function("ed25519_verify_batch_10", |b| {
+        b.iter(|| {
+            ed25519_verify_batch(
+                msg_refs.iter().zip(sig_refs.iter()).zip(vk_refs.iter()).map(|((m, s), vk)| (*m, *s, *vk))
+            )
+        })
     });
 
     group.bench_function("x25519_generate", |b| {
@@ -211,8 +311,10 @@ criterion_group!(
     canonical_bench,
     envelope_verify_bench,
     envelope_parse_bench,
+    envelope_serialize_bench,
     event_build_bench,
     pool_query_bench,
+    pool_write_bench,
     crypto_bench
 );
 criterion_main!(benches);

@@ -2,11 +2,16 @@
 //!
 //! Uses Argon2id to derive an encryption key from a passphrase,
 //! then wraps private keys with ChaCha20-Poly1305.
+//!
+//! This module requires the `argon2` feature.
 
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::base64url;
 use crate::crypto::{chacha20_decrypt, chacha20_encrypt};
+
+#[cfg(feature = "argon2")]
+use argon2::{Algorithm, Argon2, Params, Version};
 
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -56,12 +61,20 @@ pub struct EncryptedKey {
     pub blob: String,
 }
 
+#[cfg(feature = "argon2")]
 /// Encrypt a private key (raw bytes) under a passphrase.
 /// Uses the default preset from TOLOO_ARGON2_PRESET env var (Standard).
 pub fn encrypt_key(private_key: &[u8], passphrase: &str) -> Result<EncryptedKey> {
     encrypt_key_with_preset(private_key, passphrase, Argon2Preset::from_env())
 }
 
+#[cfg(not(feature = "argon2"))]
+/// Encrypt a private key (stub - requires `argon2` feature).
+pub fn encrypt_key(_private_key: &[u8], _passphrase: &str) -> Result<EncryptedKey> {
+    anyhow::bail!("encryption requires the 'argon2' feature")
+}
+
+#[cfg(feature = "argon2")]
 /// Encrypt a private key with an explicit Argon2 preset.
 pub fn encrypt_key_with_preset(
     private_key: &[u8],
@@ -88,12 +101,30 @@ pub fn encrypt_key_with_preset(
     })
 }
 
+#[cfg(not(feature = "argon2"))]
+/// Encrypt a private key with an explicit Argon2 preset (stub).
+pub fn encrypt_key_with_preset(
+    _private_key: &[u8],
+    _passphrase: &str,
+    _preset: Argon2Preset,
+) -> Result<EncryptedKey> {
+    anyhow::bail!("encryption requires the 'argon2' feature")
+}
+
+#[cfg(feature = "argon2")]
 /// Decrypt a private key from an encrypted blob using a passphrase.
 /// Uses the default preset from TOLOO_ARGON2_PRESET env var (Standard).
 pub fn decrypt_key(encrypted: &EncryptedKey, passphrase: &str) -> Result<Vec<u8>> {
     decrypt_key_with_preset(encrypted, passphrase, Argon2Preset::from_env())
 }
 
+#[cfg(not(feature = "argon2"))]
+/// Decrypt a private key from an encrypted blob (stub - requires `argon2` feature).
+pub fn decrypt_key(_encrypted: &EncryptedKey, _passphrase: &str) -> Result<Vec<u8>> {
+    anyhow::bail!("decryption requires the 'argon2' feature")
+}
+
+#[cfg(feature = "argon2")]
 /// Decrypt a private key with an explicit Argon2 preset.
 pub fn decrypt_key_with_preset(
     encrypted: &EncryptedKey,
@@ -117,10 +148,19 @@ pub fn decrypt_key_with_preset(
         .context("decryption failed — wrong passphrase or corrupted data")
 }
 
+#[cfg(not(feature = "argon2"))]
+/// Decrypt a private key with an explicit Argon2 preset (stub).
+pub fn decrypt_key_with_preset(
+    _encrypted: &EncryptedKey,
+    _passphrase: &str,
+    _preset: Argon2Preset,
+) -> Result<Vec<u8>> {
+    anyhow::bail!("decryption requires the 'argon2' feature")
+}
+
+#[cfg(feature = "argon2")]
 /// Derive a 32-byte key from a passphrase and salt using Argon2id with the given preset.
 fn derive_key(passphrase: &str, salt: &[u8], preset: Argon2Preset) -> Result<[u8; 32]> {
-    use argon2::{Algorithm, Argon2, Params, Version};
-
     let (mem_kib, iters, lanes) = preset.params();
     let params = Params::new(mem_kib, iters, lanes, Some(32))
         .map_err(|e| anyhow!("argon2 params error: {e}"))?;
@@ -146,7 +186,7 @@ fn generate_nonce() -> [u8; NONCE_LEN] {
     nonce
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "argon2"))]
 mod tests {
     use super::*;
 

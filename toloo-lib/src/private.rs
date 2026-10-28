@@ -48,10 +48,10 @@ pub fn encrypt_private_with_eph(
     // Step 2: X25519 shared secret.
     let shared = x25519_shared_secret(&eph_priv_bytes, &rec_enc_bytes)?;
 
-    // Step 3: salt = SHA-256(eph_pub || recipient_enc_pub).
-    let mut salt_input = Vec::with_capacity(64);
-    salt_input.extend_from_slice(&eph_pub_bytes);
-    salt_input.extend_from_slice(&rec_enc_bytes);
+    // Step 3: salt = SHA-256(eph_pub || recipient_enc_pub) — stack allocated.
+    let mut salt_input = [0u8; 64];
+    salt_input[..32].copy_from_slice(&eph_pub_bytes);
+    salt_input[32..].copy_from_slice(&rec_enc_bytes);
     let salt = sha256(&salt_input);
 
     // Steps 4-5: HKDF → key + nonce.

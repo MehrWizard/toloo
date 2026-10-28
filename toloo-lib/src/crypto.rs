@@ -1,12 +1,50 @@
 use anyhow::{anyhow, Context, Result};
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use dashmap::DashMap;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey, verify_batch};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use std::sync::LazyLock;
 use x25519_dalek::{PublicKey, StaticSecret};
 
+use crate::base64url;
+
 type HmacSha256 = Hmac<Sha256>;
+
+/// Lock-free cache for VerifyingKey to avoid repeated parsing of public keys.
+/// Max 1024 entries to bound memory usage.
+const VERIFYING_KEY_CACHE_SIZE: usize = 1024;
+
+static VERIFYING_KEY_CACHE: LazyLock<DashMap<String, VerifyingKey>> =
+    LazyLock::new(|| DashMap::with_capacity(VERIFYING_KEY_CACHE_SIZE));
+
+/// Get or create a VerifyingKey from base64url-encoded public key bytes.
+/// Uses a lock-free cache to avoid repeated parsing/validation.
+pub fn get_verifying_key(pub_key_b64: &str) -> Result<VerifyingKey> {
+    if let Some(vk) = VERIFYING_KEY_CACHE.get(pub_key_b64) {
+        return Ok(*vk);
+    }
+    let pub_bytes = base64url::decode(pub_key_b64).context("invalid pubkey base64url")?;
+    let pub_bytes_arr: [u8; 32] = pub_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("pubkey must be 32 bytes"))?;
+    let vk = VerifyingKey::from_bytes(&pub_bytes_arr).context("invalid Ed25519 public key bytes")?;
+    // Simple eviction: if full, clear half (cheap LRU approximation)
+    if VERIFYING_KEY_CACHE.len() >= VERIFYING_KEY_CACHE_SIZE {
+        let keys_to_remove: Vec<String> = VERIFYING_KEY_CACHE
+            .iter()
+            .take(VERIFYING_KEY_CACHE_SIZE / 2)
+            .map(|e| e.key().clone())
+            .collect();
+        for k in keys_to_remove {
+            VERIFYING_KEY_CACHE.remove(&k);
+        }
+    }
+    VERIFYING_KEY_CACHE.insert(pub_key_b64.to_owned(), vk);
+    Ok(vk)
+}
 
 /// Create HMAC-SHA256 key from bytes using KeyInit trait.
 fn hmac_sha256_key(key: &[u8]) -> HmacSha256 {
@@ -38,18 +76,63 @@ pub fn ed25519_sign(message: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
     Ok(signature.to_bytes().to_vec())
 }
 
-/// Verify Ed25519 signature.
-pub fn ed25519_verify(message: &[u8], sig: &[u8], pub_key: &[u8]) -> Result<()> {
+/// Verify Ed25519 signature using base64url-encoded public key (uses cache).
+pub fn ed25519_verify(message: &[u8], sig: &[u8], pub_key_b64: &str) -> Result<()> {
+    let sig_bytes = exact_bytes(sig, "Ed25519 signature")?;
+    let verifying = get_verifying_key(pub_key_b64)?;
+    let signature = Signature::from_bytes(&sig_bytes);
+
+    verifying
+        .verify(message, &signature)
+        .context("Ed25519 signature verification failed")
+}
+
+/// Verify Ed25519 signature with raw public key bytes (no cache).
+/// Use when public key is not in base64url format.
+pub fn ed25519_verify_raw(message: &[u8], sig: &[u8], pub_key: &[u8]) -> Result<()> {
     let sig_bytes = exact_bytes(sig, "Ed25519 signature")?;
     let pub_bytes = exact_bytes(pub_key, "Ed25519 public key")?;
     let verifying =
         VerifyingKey::from_bytes(&pub_bytes).context("invalid Ed25519 public key bytes")?;
     let signature = Signature::from_bytes(&sig_bytes);
 
-    // Verification in dalek uses constant-time internals for signature checks.
     verifying
         .verify(message, &signature)
         .context("Ed25519 signature verification failed")
+}
+
+/// Batch verify multiple Ed25519 signatures.
+///
+/// Takes iterators of (message, signature, verifying_key) tuples and verifies
+/// all of them in a single batch operation, which is significantly faster than
+/// individual verification for large numbers of signatures.
+///
+/// Returns `Ok(())` if all signatures are valid, or an error if any signature
+/// fails verification or if the inputs have mismatched lengths.
+pub fn ed25519_verify_batch<'a, I>(items: I) -> Result<()>
+where
+    I: IntoIterator<Item = (&'a [u8], &'a [u8], &'a VerifyingKey)>,
+{
+    let items: Vec<_> = items.into_iter().collect();
+    if items.is_empty() {
+        return Ok(());
+    }
+
+    let mut messages = Vec::with_capacity(items.len());
+    let mut signatures = Vec::with_capacity(items.len());
+    let mut verifying_keys = Vec::with_capacity(items.len());
+
+    for (msg, sig, vk) in items {
+        let sig_bytes: [u8; 64] = sig
+            .try_into()
+            .map_err(|_| anyhow!("signature must be 64 bytes"))?;
+        let signature = Signature::from_bytes(&sig_bytes);
+        messages.push(msg);
+        signatures.push(signature);
+        verifying_keys.push(*vk); // Dereference to owned VerifyingKey
+    }
+
+    verify_batch(&messages, &signatures, &verifying_keys).map_err(|e| anyhow!("batch verification failed: {e}"))
 }
 
 /// Generate an X25519 keypair (public key, private key) from system randomness.
@@ -147,11 +230,12 @@ fn exact_bytes<const N: usize>(input: &[u8], name: &str) -> Result<[u8; N]> {
 #[cfg(test)]
 mod tests {
     use crate::hex::encode as hex_encode;
+    use crate::base64url;
 
     use super::{
         chacha20_decrypt, chacha20_encrypt, derive_private_message_key, ed25519_generate,
-        ed25519_pub_from_seed, ed25519_sign, ed25519_verify, sha256, x25519_generate,
-        x25519_shared_secret,
+        ed25519_pub_from_seed, ed25519_sign, ed25519_verify, sha256,
+        x25519_generate, x25519_shared_secret,
     };
 
     #[test]
@@ -159,8 +243,9 @@ mod tests {
         let (pub_key, seed) = ed25519_generate();
         let msg = b"toloo-signature-surface";
         let sig = ed25519_sign(msg, &seed).expect("sign should succeed");
-        ed25519_verify(msg, &sig, &pub_key).expect("verify should succeed");
-        assert!(ed25519_verify(b"tampered", &sig, &pub_key).is_err());
+        let pub_key_b64 = base64url::encode(&pub_key);
+        ed25519_verify(msg, &sig, &pub_key_b64).expect("verify should succeed");
+        assert!(ed25519_verify(b"tampered", &sig, &pub_key_b64).is_err());
     }
 
     #[test]

@@ -11,33 +11,47 @@ path = "src/lib.rs"
 [dependencies]
 # Cryptography (audited crates)
 getrandom        = "0.3"
-ed25519-dalek    = { version = "3", default-features = false, features = ["fast", "zeroize", "pkcs8", "signature", "alloc"] }
+ed25519-dalek    = { version = "3", default-features = false, features = ["fast", "zeroize", "pkcs8", "signature", "alloc", "batch"] }
 x25519-dalek     = { version = "2", default-features = false, features = ["static_secrets", "zeroize"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
-argon2           = { version = "0.5", default-features = false, features = ["alloc"] }
 hmac             = "0.12"
 sha2             = "0.10"
 
-# X.509 certificate generation (pure Rust, replaces rcgen)
-x509-cert        = { version = "0.3", features = ["builder", "std", "pem"] }
-der              = "0.8"
-const-oid        = "0.10"
+# Optional: Argon2 for key derivation (password hashing) - enabled by "argon2" feature
+argon2 = { version = "0.5", optional = true, default-features = false, features = ["alloc"] }
+
+# Optional: X.509 certificate generation for TLS (enabled by "tls" feature)
+x509-cert = { version = "0.3", optional = true, features = ["builder", "std", "pem"] }
+der = { version = "0.8", optional = true }
+const-oid = { version = "0.10", optional = true }
 
 # Async runtime and networking
-tokio             = { version = "1", default-features = false, features = ["rt", "macros", "net", "io-util"] }
+tokio             = { version = "1", default-features = false, features = ["rt", "macros", "net", "io-util", "time", "sync"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util      = "0.3"
 
-# TLS (wss / https relay endpoints)
-tokio-rustls = "0.26"
-rustls        = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+# Optional: TLS support (enabled by "tls" feature)
+tokio-rustls = { version = "0.26", optional = true }
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
 
 # Encoding / serialization
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
+simd-json  = { version = "0.8", features = ["allow-non-simd", "serde_impl"] }
+
+# Async batch processing
+crossbeam-channel = "0.5"
 
 # Error handling
 anyhow    = "1"
+dashmap = "6.2.1"
+
+[features]
+default = ["tls", "argon2"]
+# TLS support for wss/https relay endpoints
+tls = ["tokio-rustls", "rustls/std", "rustls/tls12", "rustls/aws-lc-rs", "x509-cert/std", "x509-cert/pem", "der", "const-oid", "tokio-tungstenite/rustls-tls-webpki-roots"]
+# Argon2 for key derivation (password hashing)
+argon2 = ["dep:argon2"]
 
 [dev-dependencies]
 tokio      = { version = "1", features = ["full", "test-util"] }

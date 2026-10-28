@@ -8,7 +8,6 @@ pub mod envelope;
 pub mod events;
 pub mod hex;
 pub mod ids;
-pub mod keystore;
 pub mod pow;
 pub mod private;
 pub mod rules;
@@ -24,3 +23,7 @@ pub mod pool;
 pub mod requests;
 pub mod transport;
 pub mod trust;
+
+// Optional features
+#[cfg(feature = "argon2")]
+pub mod keystore;

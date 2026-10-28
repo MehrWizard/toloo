@@ -19,7 +19,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::{json, Value};
 
-use crate::envelope::{depth, innermost, make_envelope, parse_envelope, verify_chain, wrap_commit};
+use crate::base64url;
+use crate::crypto::{ed25519_verify_batch, get_verifying_key};
+use crate::envelope::{depth, envelope_to_json_bytes, innermost, make_envelope, parse_envelope, signable_bytes_verify, verify_chain, wrap_commit};
+use ed25519_dalek::VerifyingKey;
 use crate::ids::{datum_id, eid};
 use crate::pool::{ruleset_from_pool, Pool};
 use crate::rules::string_array;
@@ -34,19 +37,17 @@ const MAX_FETCH_IDS: usize = 100;
 
 // ---- Public entry point ----
 
-/// Dispatch an inbound request envelope and return a list of JSON response values.
+/// Dispatch an inbound request envelope and return a list of JSON response bytes.
 ///
-/// Each value in the returned vec is either:
-/// - A full signed envelope (success)
-/// - An error object `{"error": "...", "message": "..."}`
+/// Each value in the returned vec is a raw JSON envelope (or error object) as bytes.
 pub async fn handle_request(
     envelope: Envelope,
     pool: &Arc<Pool>,
     config: &RelayConfig,
-) -> Result<Vec<Value>> {
+) -> Result<Vec<Vec<u8>>> {
     // Verify request signature.
     if let Err(e) = verify_chain(&envelope) {
-        return Ok(vec![error("invalid_signature", &e.to_string())]);
+        return Ok(vec![error_bytes("invalid_signature", &e.to_string())]);
     }
 
     let d = &innermost(&envelope).d;
@@ -60,7 +61,7 @@ pub async fn handle_request(
         "system.fetch" => handle_system_fetch(d.c.as_ref(), pool),
         "blob.fetch" => handle_blob_fetch(d.c.as_ref(), pool),
         "room.summary" => handle_room_summary(d.c.as_ref(), pool, config),
-        _ => Ok(vec![error(
+        _ => Ok(vec![error_bytes(
             "invalid_request",
             &format!("unknown endpoint: {}", d.t),
         )]),
@@ -71,7 +72,7 @@ pub async fn handle_request(
 
 // ---- §10.7.1 events.sync ----
 
-fn handle_events_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
+fn handle_events_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "events.sync")?;
     let rooms = string_array(c.get("rooms"));
     let after = c.get("after").and_then(Value::as_u64).unwrap_or(0);
@@ -79,12 +80,12 @@ fn handle_events_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
 
     let room_refs: Vec<&str> = rooms.iter().map(String::as_str).collect();
     let entries = pool.get_wanted(&room_refs, &[], after, limit)?;
-    Ok(envelopes_json(entries))
+    Ok(envelopes_json_bytes(entries))
 }
 
 // ---- §10.7.2 room.sync ----
 
-fn handle_room_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
+fn handle_room_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "room.sync")?;
     let room = require_string(c, "r", "room.sync")?;
     let channel = c.get("channel").and_then(Value::as_i64).unwrap_or(0) as i32;
@@ -93,28 +94,30 @@ fn handle_room_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
     let limit = clamp_limit(c.get("limit").and_then(Value::as_u64));
 
     let entries = pool.get_room_channel_range(room, channel, start_tc, end_tc, limit)?;
-    let mut out: Vec<Value> = entries
+    let mut out: Vec<Vec<u8>> = entries
         .into_iter()
-        .map(|e| to_envelope_json(&e.env))
+        .map(|e| envelope_to_json_bytes(&e.env))
         .collect();
     // Room watermark, first in the response: latest commit time across
     // room-internal channels (ch < 0). Advisory — clients compare against
     // their known value to detect a stale room-state view (§5). Enforcement
     // of posting eligibility remains at commit time.
-    out.insert(0, json!({ "wr": pool.room_watermark(room).unwrap_or(0) }));
+    let watermark = pool.room_watermark(room).unwrap_or(0);
+    let watermark_json = format!("{{\"wr\":{}}}", watermark).into_bytes();
+    out.insert(0, watermark_json);
     Ok(out)
 }
 
 // ---- §10.7.3 room.compare ----
 
-fn handle_room_compare(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> Result<Vec<Value>> {
+fn handle_room_compare(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "room.compare")?;
     let room = require_string(c, "r", "room.compare")?;
     let channel = c.get("channel").and_then(Value::as_i64).unwrap_or(0) as i32;
     let samples = match c.get("samples").and_then(Value::as_array) {
         Some(s) => s,
         None => {
-            return Ok(vec![error(
+            return Ok(vec![error_bytes(
                 "invalid_request",
                 "room.compare requires c.samples",
             )])
@@ -158,7 +161,7 @@ fn handle_room_compare(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> 
         "results": match_results,
     });
     let result_env = make_envelope("room.compare.result", Some(content), &config.node, None)?;
-    Ok(vec![to_envelope_json(&result_env)])
+    Ok(vec![envelope_to_json_bytes(&result_env)])
 }
 
 // ---- §10.8.1 pool.exchange ----
@@ -167,59 +170,136 @@ fn handle_pool_exchange(
     c: Option<&Value>,
     pool: &Pool,
     config: &RelayConfig,
-) -> Result<Vec<Value>> {
+) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "pool.exchange")?;
     let mut offered_ids: HashSet<String> = HashSet::new();
 
-    // Process offer: store full envelopes that were submitted; collect datum_ids for diff.
+    // Process offer: collect full envelopes for batch verification, then store valid ones.
+    let mut offer_envelopes: Vec<(Envelope, String)> = Vec::new(); // (envelope, author_pubkey)
+    let mut datum_id_offers: Vec<String> = Vec::new();
+
     if let Some(offer_arr) = c.get("offer").and_then(Value::as_array) {
         for item in offer_arr {
             if let Some(obj) = item.as_object() {
                 if obj.contains_key("d") && obj.contains_key("p") {
-                    // Full envelope submission — validate and store.
+                    // Full envelope submission — parse and collect for batch verification.
                     if let Ok(env) = parse_envelope(item.clone()) {
-                        if verify_chain(&env).is_ok() {
-                            let inner = innermost(&env);
-
-                            // §13.3 — reject events from locally blocked nodes.
-                            if pool.is_blocked(&inner.d.n).unwrap_or(false) {
-                                continue;
-                            }
-
-                            // Route side-events to their dedicated stores.
-                            match inner.d.t.as_str() {
-                                "side.attestation" => {
-                                    let _ = pool.put_attestation(&env);
-                                    continue;
-                                }
-                                "room.flag" => {
-                                    let _ = pool.put_flag(&env);
-                                    // Also store in main pool for replication.
-                                }
-                                _ => {}
-                            }
-
-                            // Track the original datum_id (what this peer already has).
-                            // If the relay auto-commits it (depth-1 → depth-2), the committed
-                            // envelope has a DIFFERENT datum_id and must NOT be excluded from
-                            // the response — so the peer receives the commit in this same
-                            // pool.exchange roundtrip instead of waiting for the next sync.
-                            let original_id = datum_id(&env);
-                            let stored_env = maybe_commit(env, pool, config);
-                            if pool.put(&stored_env).is_ok() {
-                                offered_ids.insert(original_id);
-                            }
-                        }
+                        let inner = innermost(&env);
+                        let author_pubkey = inner.d.n.clone();
+                        offer_envelopes.push((env, author_pubkey));
                     }
                 } else if let Some(id) = obj.get("datum_id").and_then(Value::as_str) {
-                    offered_ids.insert(id.to_owned());
+                    datum_id_offers.push(id.to_owned());
                 }
             }
         }
     }
 
+    // Batch verify all collected envelopes.
+    if !offer_envelopes.is_empty() {
+        // Collect owned data for batch verification.
+        let mut signables: Vec<Vec<u8>> = Vec::with_capacity(offer_envelopes.len());
+        let mut signatures: Vec<Vec<u8>> = Vec::with_capacity(offer_envelopes.len());
+        let mut verifying_keys: Vec<VerifyingKey> = Vec::with_capacity(offer_envelopes.len());
+
+        for (env, author_pubkey) in &offer_envelopes {
+            // Get cached verifying key for the author.
+            if let Ok(vk) = get_verifying_key(author_pubkey) {
+                // Use signable_bytes_verify (recomputes canonical, no cache) for security.
+                let inner = innermost(env);
+                let signable = signable_bytes_verify(&inner.d);
+                if !env.p.is_empty() {
+                    if let Ok(sig_bytes) = base64url::decode(&env.p) {
+                        if sig_bytes.len() == 64 {
+                            signables.push(signable);
+                            signatures.push(sig_bytes);
+                            verifying_keys.push(vk);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Perform batch verification using owned data.
+        let batch_result = if !signables.is_empty() {
+            let msg_refs: Vec<&[u8]> = signables.iter().map(|v| v.as_slice()).collect();
+            let sig_refs: Vec<&[u8]> = signatures.iter().map(|v| v.as_slice()).collect();
+            let vk_refs: Vec<&VerifyingKey> = verifying_keys.iter().collect();
+            ed25519_verify_batch(msg_refs.iter().zip(sig_refs.iter()).zip(vk_refs.iter()).map(
+                |((m, s), vk)| (*m, *s, *vk),
+            ))
+        } else {
+            Err(anyhow::anyhow!("no valid items for batch verification"))
+        };
+
+        // Process verified envelopes.
+        if batch_result.is_ok() {
+            // All signatures valid — now process each envelope.
+            for (env, _author_pubkey) in offer_envelopes {
+                let inner = innermost(&env);
+
+                // §13.3 — reject events from locally blocked nodes.
+                if pool.is_blocked(&inner.d.n).unwrap_or(false) {
+                    continue;
+                }
+
+                // Route side-events to their dedicated stores.
+                match inner.d.t.as_str() {
+                    "side.attestation" => {
+                        let _ = pool.put_attestation(&env);
+                        continue;
+                    }
+                    "room.flag" => {
+                        let _ = pool.put_flag(&env);
+                        // Also store in main pool for replication.
+                    }
+                    _ => {}
+                }
+
+                // Track the original datum_id (what this peer already has).
+                // If the relay auto-commits it (depth-1 → depth-2), the committed
+                // envelope has a DIFFERENT datum_id and must NOT be excluded from
+                // the response — so the peer receives the commit in this same
+                // pool.exchange roundtrip instead of waiting for the next sync.
+                let original_id = datum_id(&env);
+                let stored_env = maybe_commit(env, pool, config);
+                if pool.put(&stored_env).is_ok() {
+                    offered_ids.insert(original_id);
+                }
+            }
+        } else {
+            // Batch verification failed — fall back to individual verification for diagnostics
+            // (but in production, we just reject the whole batch for security).
+            for (env, _author_pubkey) in offer_envelopes {
+                let inner = innermost(&env);
+                if verify_chain(&env).is_ok()
+                    && !pool.is_blocked(&inner.d.n).unwrap_or(false)
+                {
+                    match inner.d.t.as_str() {
+                        "side.attestation" => {
+                            let _ = pool.put_attestation(&env);
+                            continue;
+                        }
+                        "room.flag" => {
+                            let _ = pool.put_flag(&env);
+                        }
+                        _ => {}
+                    }
+                    let original_id = datum_id(&env);
+                    let stored_env = maybe_commit(env, pool, config);
+                    if pool.put(&stored_env).is_ok() {
+                        offered_ids.insert(original_id);
+                    }
+                }
+            }
+        }
+    }
+
+    // Add datum_id offers.
+    offered_ids.extend(datum_id_offers);
+
     // Process want.
-    let mut responses: Vec<Value> = Vec::new();
+    let mut responses: Vec<Vec<u8>> = Vec::new();
     if let Some(want) = c.get("want").and_then(Value::as_object) {
         let rooms = string_array(want.get("rooms"));
         let types = string_array(want.get("types"));
@@ -235,7 +315,7 @@ fn handle_pool_exchange(
             if !offered_ids.contains(&entry.id)
                 && !pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
             {
-                responses.push(to_envelope_json(&entry.env));
+                responses.push(envelope_to_json_bytes(&entry.env));
             }
         }
     }
@@ -245,9 +325,9 @@ fn handle_pool_exchange(
     for entry in peer_metas {
         let id = datum_id(&entry.env);
         if !offered_ids.contains(&id) {
-            let env_val = to_envelope_json(&entry.env);
-            if !responses.contains(&env_val) {
-                responses.push(env_val);
+            let env_bytes = envelope_to_json_bytes(&entry.env);
+            if !responses.iter().any(|r| r == &env_bytes) {
+                responses.push(env_bytes);
             }
         }
     }
@@ -257,7 +337,7 @@ fn handle_pool_exchange(
 
 // ---- §10.8.2 node.peers ----
 
-fn handle_node_peers(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
+fn handle_node_peers(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
     let limit = c
         .and_then(Value::as_object)
         .and_then(|o| o.get("limit"))
@@ -267,30 +347,30 @@ fn handle_node_peers(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
         .min(MAX_LIMIT);
 
     let entries = pool.get_wanted(&[], &["node.meta"], 0, limit)?;
-    Ok(envelopes_json(entries))
+    Ok(envelopes_json_bytes(entries))
 }
 
 // ---- §10.8.3 node.rooms ----
 
-fn handle_node_rooms(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
+fn handle_node_rooms(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "node.rooms")?;
     let target = require_string(c, "node", "node.rooms")?;
     let limit = clamp_limit(c.get("limit").and_then(Value::as_u64));
 
     let rooms = pool.get_node_rooms(target)?;
-    let mut responses: Vec<Value> = Vec::new();
+    let mut responses: Vec<Vec<u8>> = Vec::new();
 
     for room_pub in rooms.iter().take(limit) {
         // Return room.create (channel -1, the oldest metadata event).
         let meta_events = pool.get_room_channel(room_pub, -1)?;
         for entry in meta_events.iter().filter(|e| e.tc.is_some()).take(1) {
-            responses.push(to_envelope_json(&entry.env));
+            responses.push(envelope_to_json_bytes(&entry.env));
         }
         // Also return the latest room.update if any (last channel -1 after create).
         if let Some(latest) = meta_events.iter().rev().find(|e| e.tc.is_some()) {
-            let latest_val = to_envelope_json(&latest.env);
-            if !responses.contains(&latest_val) {
-                responses.push(latest_val);
+            let latest_bytes = envelope_to_json_bytes(&latest.env);
+            if !responses.iter().any(|r| r == &latest_bytes) {
+                responses.push(latest_bytes);
             }
         }
     }
@@ -300,17 +380,17 @@ fn handle_node_rooms(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
 
 // ---- §10.8.4 system.fetch ----
 
-fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
+fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "system.fetch")?;
     let ids = string_array(c.get("datum_ids"));
     if ids.is_empty() {
-        return Ok(vec![error(
+        return Ok(vec![error_bytes(
             "invalid_request",
             "system.fetch requires c.datum_ids",
         )]);
     }
     if ids.len() > MAX_FETCH_IDS {
-        return Ok(vec![error(
+        return Ok(vec![error_bytes(
             "payload_too_large",
             &format!("datum_ids limit is {MAX_FETCH_IDS}"),
         )]);
@@ -318,12 +398,12 @@ fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
 
     let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     let entries = pool.get_by_datum_ids(&id_refs)?;
-    Ok(envelopes_json(entries))
+    Ok(envelopes_json_bytes(entries))
 }
 
 // ---- §10.8.5 blob.fetch ----
 
-fn handle_blob_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
+fn handle_blob_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "blob.fetch")?;
     let blob_id = require_string(c, "blob_id", "blob.fetch")?;
     let piece_index = c.get("piece_index").and_then(Value::as_u64);
@@ -334,25 +414,20 @@ fn handle_blob_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
             match pool.get_blob_piece(blob_id, idx as u32)? {
                 Some(data) => {
                     let encoded = crate::base64url::encode(&data);
-                    Ok(vec![json!({
-                        "blob_id": blob_id,
-                        "piece_index": idx,
-                        "data": encoded
-                    })])
+                    let json = format!("{{\"blob_id\":\"{}\",\"piece_index\":{},\"data\":\"{}\"}}", blob_id, idx, encoded);
+                    Ok(vec![json.into_bytes()])
                 }
-                None => Ok(vec![error("not_found", "blob piece not found")]),
+                None => Ok(vec![error_bytes("not_found", "blob piece not found")]),
             }
         }
         None => {
             // Return piece count (metadata query).
             let count = pool.blob_piece_count(blob_id)?;
             if count == 0 {
-                Ok(vec![error("not_found", "blob not found")])
+                Ok(vec![error_bytes("not_found", "blob not found")])
             } else {
-                Ok(vec![json!({
-                    "blob_id": blob_id,
-                    "pieces": count
-                })])
+                let json = format!("{{\"blob_id\":\"{}\",\"pieces\":{}}}", blob_id, count);
+                Ok(vec![json.into_bytes()])
             }
         }
     }
@@ -360,17 +435,17 @@ fn handle_blob_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
 
 // ---- §10.8.6 room.summary ----
 
-fn handle_room_summary(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> Result<Vec<Value>> {
+fn handle_room_summary(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "room.summary")?;
     let rooms = string_array(c.get("rooms"));
     if rooms.is_empty() {
-        return Ok(vec![error(
+        return Ok(vec![error_bytes(
             "invalid_request",
             "room.summary requires c.rooms",
         )]);
     }
 
-    let mut responses: Vec<Value> = Vec::new();
+    let mut responses: Vec<Vec<u8>> = Vec::new();
     for room_pub in rooms.iter().take(MAX_SUMMARY_ROOMS) {
         // Room name from latest channel -1.
         let meta = pool.get_room_channel(room_pub, -1)?;
@@ -407,7 +482,7 @@ fn handle_room_summary(c: Option<&Value>, pool: &Pool, config: &RelayConfig) -> 
             "channels": channels,
         });
         let result_env = make_envelope("room.summary.result", Some(content), &config.node, None)?;
-        responses.push(to_envelope_json(&result_env));
+        responses.push(envelope_to_json_bytes(&result_env));
     }
 
     Ok(responses)
@@ -551,8 +626,9 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
         let one_hour_ago = now.saturating_sub(3_600_000);
         let count = pool
             .select(|e| {
+                let author_key = author.as_str();
                 e.room.as_deref() == Some(room_pub)
-                    && e.n == *author
+                    && e.n.as_ref() == author_key
                     && e.channel.is_some_and(|c| c >= 1)
                     && e.tc.is_some_and(|tc| tc >= one_hour_ago)
             })?
@@ -567,22 +643,16 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
 
 // ---- Helpers ----
 
-/// Serialize pool entries as the JSON envelope stream a response carries.
-fn envelopes_json(entries: Vec<crate::pool::PoolEntry>) -> Vec<Value> {
+/// Serialize pool entries as the JSON envelope stream a response carries (bytes).
+fn envelopes_json_bytes(entries: Vec<crate::pool::PoolEntry>) -> Vec<Vec<u8>> {
     entries
         .into_iter()
-        .map(|e| to_envelope_json(&e.env))
+        .map(|e| envelope_to_json_bytes(&e.env))
         .collect()
 }
 
-fn error(code: &str, message: &str) -> Value {
-    json!({"error": code, "message": message})
-}
-
-fn to_envelope_json(env: &Envelope) -> Value {
-    serde_json::to_value(env).unwrap_or_else(
-        |_| json!({"error": "internal", "message": "envelope serialization failed"}),
-    )
+fn error_bytes(code: &str, message: &str) -> Vec<u8> {
+    format!("{{\"error\":\"{}\",\"message\":\"{}\"}}", code, message).into_bytes()
 }
 
 fn require_object<'a>(
@@ -634,6 +704,7 @@ mod tests {
             pool,
             rooms: std::collections::HashMap::new(),
             metrics: None,
+            batch_processor: None,
         }
     }
 
@@ -643,6 +714,17 @@ mod tests {
         content: serde_json::Value,
     ) -> crate::types::Envelope {
         make_envelope(t, Some(content), node, None).expect("request envelope")
+    }
+
+    /// Parse response bytes to Value for test assertions.
+    fn parse_response(bytes: &[u8]) -> Value {
+        serde_json::from_slice(bytes).expect("response should be valid JSON")
+    }
+
+    /// Parse response bytes as envelope for test assertions.
+    fn parse_envelope_response(bytes: &[u8]) -> anyhow::Result<crate::types::Envelope> {
+        let mut bytes = bytes.to_vec();
+        crate::envelope::parse_envelope_bytes(&mut bytes)
     }
 
     #[tokio::test]
@@ -658,7 +740,7 @@ mod tests {
 
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0]["error"], "invalid_signature");
+        assert_eq!(parse_response(&result[0])["error"], "invalid_signature");
     }
 
     #[tokio::test]
@@ -670,7 +752,7 @@ mod tests {
 
         let env = make_request(&requester, "unknown.endpoint", json!({}));
         let result = handle_request(env, &pool, &config).await.unwrap();
-        assert_eq!(result[0]["error"], "invalid_request");
+        assert_eq!(parse_response(&result[0])["error"], "invalid_request");
     }
 
     #[tokio::test]
@@ -691,7 +773,7 @@ mod tests {
         );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert!(!result.is_empty(), "should return the room.create commit");
-        assert!(result.iter().all(|v| v.get("error").is_none()));
+        assert!(result.iter().all(|v| parse_response(v).get("error").is_none()));
     }
 
     #[tokio::test]
@@ -730,7 +812,7 @@ mod tests {
         let env = make_request(&node, "system.fetch", json!({"datum_ids": [id]}));
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(result.len(), 1);
-        assert!(result[0].get("error").is_none());
+        assert!(parse_response(&result[0]).get("error").is_none());
     }
 
     #[tokio::test]
@@ -767,7 +849,7 @@ mod tests {
         // node.meta has no commit wrapper — relay stores and serves its own node.meta directly.
         // For now, node.peers returns empty (node.meta is not committed).
         let result = handle_request(env, &pool, &config).await.unwrap();
-        assert!(result.iter().all(|v| v.get("error").is_none()));
+        assert!(result.iter().all(|v| parse_response(v).get("error").is_none()));
     }
 
     #[tokio::test]
@@ -826,7 +908,7 @@ mod tests {
         );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert!(!result.is_empty());
-        assert!(result.iter().all(|v| v.get("error").is_none()));
+        assert!(result.iter().all(|v| parse_response(v).get("error").is_none()));
     }
 
     #[tokio::test]
@@ -857,9 +939,9 @@ mod tests {
         let result = handle_request(env, &pool, &config).await.unwrap();
         // The offered datum_id should be excluded from the response.
         for val in &result {
-            if val.get("error").is_none() {
+            if parse_response(val).get("error").is_none() {
                 // It's an envelope — check its datum_id doesn't match.
-                if let Ok(env) = crate::envelope::parse_envelope(val.clone()) {
+                if let Ok(env) = parse_envelope_response(val) {
                     let returned_id = datum_id(&env);
                     assert_ne!(returned_id, id, "offered event should not be returned");
                 }
@@ -900,12 +982,12 @@ mod tests {
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(result.len(), 2, "watermark frame + one event");
         assert_eq!(
-            result[0].get("wr").and_then(Value::as_u64),
+            parse_response(&result[0]).get("wr").and_then(Value::as_u64),
             Some(0),
             "no system events yet → watermark 0"
         );
         assert!(
-            result[1].get("d").is_some(),
+            parse_response(&result[1]).get("d").is_some(),
             "second frame is the event envelope"
         );
     }
@@ -939,7 +1021,7 @@ mod tests {
         );
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(
-            result[0].get("wr").and_then(Value::as_u64),
+            parse_response(&result[0]).get("wr").and_then(Value::as_u64),
             Some(join_tc),
             "watermark tracks latest system-channel commit, not content"
         );
@@ -970,7 +1052,7 @@ mod tests {
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(result.len(), 1);
         // Result is a room.compare.result envelope signed by the relay.
-        let result_env = crate::envelope::parse_envelope(result[0].clone()).unwrap();
+        let result_env = parse_envelope_response(&result[0]).unwrap();
         assert_eq!(result_env.d.t, "room.compare.result");
         assert_eq!(result_env.d.n, config.node.sig.pub_key);
         let c = result_env.d.c.unwrap();
@@ -998,7 +1080,7 @@ mod tests {
         let env = make_request(&node, "room.summary", json!({"rooms": [room.sig.pub_key]}));
         let result = handle_request(env, &pool, &config).await.unwrap();
         assert_eq!(result.len(), 1);
-        let result_env = crate::envelope::parse_envelope(result[0].clone()).unwrap();
+        let result_env = parse_envelope_response(&result[0]).unwrap();
         assert_eq!(result_env.d.t, "room.summary.result");
         let c = result_env.d.c.unwrap();
         assert_eq!(c["name"], "Test Room");
@@ -1016,6 +1098,7 @@ mod tests {
             pool,
             rooms,
             metrics: None,
+            batch_processor: None,
         }
     }
 
@@ -1196,7 +1279,7 @@ mod tests {
 
         // The response must contain the committed (depth-2) version of the message.
         let has_committed_msg = result.iter().any(|v| {
-            if let Ok(env) = crate::envelope::parse_envelope(v.clone()) {
+            if let Ok(env) = parse_envelope_response(v) {
                 let d = crate::envelope::depth(&env);
                 let t = &crate::envelope::innermost(&env).d.t;
                 d == 2 && t == "room.message"

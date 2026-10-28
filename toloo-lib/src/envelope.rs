@@ -2,9 +2,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
+use simd_json;
 
 use crate::base64url;
-use crate::canonical::canonical_bytes;
+use crate::canonical::{canonical, canonical_bytes, canonical_datum_bytes};
 use crate::crypto::{ed25519_sign, ed25519_verify};
 use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
@@ -31,8 +32,15 @@ pub struct DatumBodyExtra {
 }
 
 /// Signable payload bytes for a datum: utf8(canonical(d)).
+/// Uses cached canonical for signing (trusted path).
 pub fn signable_bytes(d: &DatumBody) -> Vec<u8> {
-    canonical_bytes(d).expect("DatumBody canonical serialization should not fail")
+    canonical_datum_bytes(d).expect("DatumBody canonical serialization should not fail")
+}
+
+/// Signable payload bytes for verification: utf8(canonical(d)).
+/// Always recomputes to detect tampering (untrusted path).
+pub fn signable_bytes_verify(d: &DatumBody) -> Vec<u8> {
+    canonical(d).expect("DatumBody canonical serialization should not fail").into_bytes()
 }
 
 /// Sign a datum and produce an envelope.
@@ -151,32 +159,52 @@ pub fn depth(env: &Envelope) -> u8 {
 
 /// Verify one envelope layer signature only.
 pub fn verify_single(env: &Envelope) -> Result<()> {
-    let payload = signable_bytes(&env.d);
+    let payload = signable_bytes_verify(&env.d);
     let sig = base64url::decode(&env.p).context("invalid envelope signature encoding")?;
     if sig.len() != SIGNATURE_BYTES {
         bail!("signature must decode to {SIGNATURE_BYTES} bytes");
     }
 
-    let pub_key = base64url::decode(&env.d.n).context("invalid signer pubkey encoding")?;
-    if pub_key.len() != PUBKEY_BYTES {
-        bail!("signer pubkey must decode to {PUBKEY_BYTES} bytes");
+    // env.d.n is already base64url-encoded; pass directly to use cache.
+    if env.d.n.len() != N_PUBKEY_LEN_B64 {
+        bail!("signer pubkey must be {N_PUBKEY_LEN_B64} chars");
     }
 
-    ed25519_verify(&payload, &sig, &pub_key).context("signature verification failed")
+    ed25519_verify(&payload, &sig, &env.d.n).context("signature verification failed")
 }
 
 /// Verify all signatures and signer alternation across depth.
+/// Uses cached verification for commit/ack layers when available.
 pub fn verify_chain(env: &Envelope) -> Result<()> {
     let chain = chain_outer_to_inner(env);
     if chain.len() > MAX_DEPTH as usize {
         bail!("envelope depth exceeds maximum ({MAX_DEPTH})");
     }
 
-    for layer in &chain {
-        verify_single(layer)?;
+    let inner = chain.last().expect("chain always has at least one layer");
+
+    // For depth >= 2, check if inner commit layer is already verified
+    if chain.len() >= 2 {
+        let commit_layer = &chain[chain.len() - 2]; // Depth-2 layer (commit)
+        if commit_layer.d.verified_layer.get().is_some() {
+            // Commit layer already verified - only verify outer layers
+            for layer in &chain[..chain.len() - 1] {
+                verify_single(layer)?;
+            }
+        } else {
+            // Full verification needed
+            for layer in &chain {
+                verify_single(layer)?;
+            }
+            // Cache the commit layer verification result
+            let _ = commit_layer.d.verified_layer.set(true);
+        }
+    } else {
+        // Depth 1 - just verify the single layer
+        verify_single(&chain[0])?;
     }
 
-    let inner = chain.last().expect("chain always has at least one layer");
+    // Signer alternation checks
     match chain.len() {
         1 => Ok(()),
         2 => {
@@ -186,6 +214,8 @@ pub fn verify_chain(env: &Envelope) -> Result<()> {
             if chain[0].d.n != expected {
                 bail!("depth-2 outer signer does not match expected receiver");
             }
+            // Cache the commit layer verification result
+            let _ = chain[0].d.verified_layer.set(true);
             Ok(())
         }
         3 => {
@@ -198,6 +228,8 @@ pub fn verify_chain(env: &Envelope) -> Result<()> {
             if chain[0].d.n != inner.d.n {
                 bail!("depth-3 outer signer must match innermost author");
             }
+            // Cache the ack layer verification result
+            let _ = chain[0].d.verified_layer.set(true);
             Ok(())
         }
         _ => bail!("unsupported envelope depth"),
@@ -217,6 +249,15 @@ pub fn parse_envelope(value: serde_json::Value) -> Result<Envelope> {
     Ok(env)
 }
 
+/// Zero-copy parse and validate an envelope from JSON bytes.
+///
+/// Uses simd-json for parsing without intermediate string allocation.
+/// Takes a mutable byte slice (simd-json may reorder bytes for lazy parsing).
+pub fn parse_envelope_bytes(bytes: &mut [u8]) -> Result<Envelope> {
+    let value: Value = simd_json::from_slice(bytes).context("envelope JSON parse failed")?;
+    parse_envelope(value)
+}
+
 /// Validate structure and field invariants on an already-deserialized envelope.
 pub fn validate_structure(env: &Envelope) -> Result<()> {
     validate_structure_inner(env, 1)
@@ -230,7 +271,7 @@ fn validate_structure_inner(env: &Envelope, level: u8) -> Result<()> {
     validate_signature_field(&env.p)?;
     validate_datum(&env.d)?;
 
-    if canonical_bytes(&env.d)?.len() > MAX_D_BYTES {
+    if canonical_datum_bytes(&env.d)?.len() > MAX_D_BYTES {
         bail!("datum exceeds {MAX_D_BYTES} bytes");
     }
     if canonical_bytes(env)?.len() > MAX_ENV_BYTES {
@@ -378,6 +419,230 @@ pub(crate) fn now_ms() -> Result<u64> {
     Ok(dur.as_millis() as u64)
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Manual JSON serialization (zero-allocation, matches serde_json exactly)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Serialize an Envelope to JSON bytes without serde_json allocation.
+/// Produces identical output to `serde_json::to_vec()`.
+pub fn envelope_to_json_bytes(env: &Envelope) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(256);
+    write_envelope(env, &mut buf).expect("envelope serialization should not fail");
+    buf
+}
+
+/// Serialize an Envelope to JSON string without serde_json allocation.
+pub fn envelope_to_json_string(env: &Envelope) -> String {
+    String::from_utf8(envelope_to_json_bytes(env)).expect("envelope JSON is valid UTF-8")
+}
+
+fn write_envelope(env: &Envelope, buf: &mut Vec<u8>) -> Result<()> {
+    // Envelope always has exactly {d, p} in that order (validated on parse)
+    buf.push(b'{');
+    write_datum(&env.d, buf)?;
+    buf.push(b',');
+    // "p" is always a string field
+    let mut dummy_first = true;
+    write_string_field("p", &env.p, buf, &mut dummy_first)?;
+    buf.push(b'}');
+    Ok(())
+}
+
+fn write_datum(d: &DatumBody, buf: &mut Vec<u8>) -> Result<()> {
+    buf.push(b'"');
+    buf.push(b'd');
+    buf.push(b'"');
+    buf.push(b':');
+    buf.push(b'{');
+
+    let mut first = true;
+
+    // Required fields (always present)
+    write_string_field("n", &d.n, buf, &mut first)?;
+    write_string_field("v", &d.v, buf, &mut first)?;
+    write_string_field("t", &d.t, buf, &mut first)?;
+    write_number_field("ts", d.ts, buf, &mut first)?;
+
+    // Optional fields (only if Some)
+    if let Some(r) = &d.r {
+        write_string_field("r", r, buf, &mut first)?;
+    }
+    if let Some(to) = &d.to {
+        write_string_field("to", to, buf, &mut first)?;
+    }
+    if let Some(c) = &d.c {
+        write_value_field("c", c, buf, &mut first)?;
+    }
+    if let Some(env) = &d.env {
+        write_object_field("env", env.as_ref(), buf, &mut first)?;
+    }
+    if let Some(tc) = d.tc {
+        write_number_field("tc", tc, buf, &mut first)?;
+    }
+    if let Some(exp) = d.exp {
+        write_number_field("exp", exp, buf, &mut first)?;
+    }
+    if let Some(nonce) = d.nonce {
+        write_number_field("nonce", nonce, buf, &mut first)?;
+    }
+
+    // Extra fields (flattened) - these are already JSON values
+    for (k, v) in &d.extra {
+        if !first {
+            buf.push(b',');
+        }
+        first = false;
+        write_json_field(k, v, buf)?;
+    }
+
+    buf.push(b'}');
+    Ok(())
+}
+
+fn write_string_field(key: &str, val: &str, buf: &mut Vec<u8>, first: &mut bool) -> Result<()> {
+    if !*first {
+        buf.push(b',');
+    }
+    *first = false;
+    buf.push(b'"');
+    write_escaped_str(key, buf)?;
+    buf.extend_from_slice(b"\":\"");
+    write_escaped_str(val, buf)?;
+    buf.push(b'"');
+    Ok(())
+}
+
+fn write_number_field(key: &str, val: u64, buf: &mut Vec<u8>, first: &mut bool) -> Result<()> {
+    if !*first {
+        buf.push(b',');
+    }
+    *first = false;
+    buf.push(b'"');
+    write_escaped_str(key, buf)?;
+    buf.extend_from_slice(b"\":");
+    write_number(val, buf)?;
+    Ok(())
+}
+
+fn write_number(val: u64, buf: &mut Vec<u8>) -> Result<()> {
+    // Fast u64 to decimal string conversion
+    if val == 0 {
+        buf.push(b'0');
+        return Ok(());
+    }
+    let mut digits = [0u8; 20];
+    let mut n = val;
+    let mut len = 0;
+    while n > 0 {
+        digits[len] = b'0' + (n % 10) as u8;
+        n /= 10;
+        len += 1;
+    }
+    for i in (0..len).rev() {
+        buf.push(digits[i]);
+    }
+    Ok(())
+}
+
+fn write_object_field(key: &str, env: &Envelope, buf: &mut Vec<u8>, first: &mut bool) -> Result<()> {
+    if !*first {
+        buf.push(b',');
+    }
+    *first = false;
+    buf.push(b'"');
+    write_escaped_str(key, buf)?;
+    buf.extend_from_slice(b"\":");
+    // Write nested envelope directly to buffer
+    write_envelope(env, buf)?;
+    Ok(())
+}
+
+fn write_value_field(key: &str, val: &Value, buf: &mut Vec<u8>, first: &mut bool) -> Result<()> {
+    if !*first {
+        buf.push(b',');
+    }
+    *first = false;
+    buf.push(b'"');
+    write_escaped_str(key, buf)?;
+    buf.extend_from_slice(b"\":");
+    write_value(val, buf)?;
+    Ok(())
+}
+
+fn write_json_field(key: &str, val: &Value, buf: &mut Vec<u8>) -> Result<()> {
+    buf.push(b'"');
+    write_escaped_str(key, buf)?;
+    buf.extend_from_slice(b"\":");
+    write_value(val, buf)?;
+    Ok(())
+}
+
+fn write_escaped_str(s: &str, buf: &mut Vec<u8>) -> Result<()> {
+    use std::io::Write;
+    for ch in s.chars() {
+        match ch {
+            '"' => buf.extend_from_slice(b"\\\""),
+            '\\' => buf.extend_from_slice(b"\\\\"),
+            '\u{08}' => buf.extend_from_slice(b"\\b"),
+            '\u{0C}' => buf.extend_from_slice(b"\\f"),
+            '\n' => buf.extend_from_slice(b"\\n"),
+            '\r' => buf.extend_from_slice(b"\\r"),
+            '\t' => buf.extend_from_slice(b"\\t"),
+            c if (c as u32) <= 0x1F => write!(buf, "\\u{:04x}", c as u32)?,
+            c => {
+                let mut utf8_buf = [0u8; 4];
+                buf.extend_from_slice(c.encode_utf8(&mut utf8_buf).as_bytes());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_value(v: &Value, buf: &mut Vec<u8>) -> Result<()> {
+    match v {
+        Value::Null => buf.extend_from_slice(b"null"),
+        Value::Bool(b) => {
+            if *b {
+                buf.extend_from_slice(b"true");
+            } else {
+                buf.extend_from_slice(b"false");
+            }
+        }
+        Value::Number(n) => buf.extend_from_slice(n.to_string().as_bytes()),
+        Value::String(s) => {
+            buf.push(b'"');
+            write_escaped_str(s, buf)?;
+            buf.push(b'"');
+        }
+        Value::Array(arr) => {
+            buf.push(b'[');
+            for (i, item) in arr.iter().enumerate() {
+                if i > 0 {
+                    buf.push(b',');
+                }
+                write_value(item, buf)?;
+            }
+            buf.push(b']');
+        }
+        Value::Object(obj) => {
+            buf.push(b'{');
+            let mut first = true;
+            for (k, v) in obj {
+                if !first {
+                    buf.push(b',');
+                }
+                first = false;
+                buf.push(b'"');
+                write_escaped_str(k, buf)?;
+                buf.extend_from_slice(b"\":");
+                write_value(v, buf)?;
+            }
+            buf.push(b'}');
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::fixtures::*;
@@ -388,8 +653,9 @@ mod tests {
     use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
     use super::{
-        depth, innermost, make_envelope, parse_envelope, sign_envelope, validate_structure,
-        verify_chain, verify_single, wrap_commit, DatumBodyExtra,
+        depth, innermost, make_envelope, now_ms, parse_envelope, parse_envelope_bytes, sign_envelope,
+        validate_structure, verify_chain, verify_single, wrap_commit, DatumBodyExtra,
+        envelope_to_json_bytes, VERSION,
     };
     fn mk_inner_room_event(author: &LocalNode, room: &LocalRoom, ts: u64) -> Envelope {
         let d = DatumBody {
@@ -658,5 +924,107 @@ mod tests {
         assert_eq!(env.d.tc, Some(10));
         assert_eq!(env.d.exp, Some(11));
         assert_eq!(env.d.nonce, Some(12));
+    }
+
+    #[test]
+    fn manual_json_matches_serde_json() {
+        let node = mk_node();
+        let room = mk_room();
+
+        // Test simple envelope
+        let env = make_envelope("node.meta", Some(json!({"x": 1})), &node, None)
+            .expect("make_envelope should succeed");
+        let manual = envelope_to_json_bytes(&env);
+        let serde = serde_json::to_vec(&env).expect("serde_json should succeed");
+        assert_eq!(manual, serde, "simple envelope serialization mismatch");
+
+        // Test envelope with content and extra fields
+        let extra = DatumBodyExtra {
+            r: Some(room.sig.pub_key.clone()),
+            to: Some(node.sig.pub_key.clone()),
+            tc: Some(100),
+            exp: Some(200),
+            nonce: Some(300),
+        };
+        let env2 = make_envelope(
+            "room.message",
+            Some(json!({"ch": 1, "body": "hello"})),
+            &node,
+            Some(extra),
+        )
+        .expect("make_envelope should succeed");
+        let manual2 = envelope_to_json_bytes(&env2);
+        let serde2 = serde_json::to_vec(&env2).expect("serde_json should succeed");
+        assert_eq!(manual2, serde2, "complex envelope serialization mismatch");
+
+        // Test depth-2 envelope (wrapped)
+        let inner = mk_inner_room_event(&node, &room, 1000);
+        let commit = wrap_commit(inner, &room, 1001).expect("wrap should succeed");
+        let manual3 = envelope_to_json_bytes(&commit);
+        let serde3 = serde_json::to_vec(&commit).expect("serde_json should succeed");
+        assert_eq!(manual3, serde3, "depth-2 envelope serialization mismatch");
+
+        // Test nested envelope (depth-3)
+        let inner2 = mk_inner_room_event(&node, &room, 2000);
+        let commit2 = wrap_commit(inner2, &room, 2001).expect("wrap should succeed");
+        let env3 = make_envelope(
+            "events.sync",
+            Some(json!({"rooms": [room.sig.pub_key], "after": 0})),
+            &node,
+            Some(DatumBodyExtra {
+                r: None,
+                to: Some(commit2.d.n.clone()),
+                tc: None,
+                exp: None,
+                nonce: None,
+            }),
+        )
+        .expect("make_envelope should succeed");
+        let manual4 = envelope_to_json_bytes(&env3);
+        let serde4 = serde_json::to_vec(&env3).expect("serde_json should succeed");
+        assert_eq!(manual4, serde4, "nested envelope serialization mismatch");
+    }
+
+    #[test]
+    fn parse_envelope_bytes_zero_copy() {
+        let node = mk_node();
+        let room = mk_room();
+
+        // Test simple envelope
+        let env = make_envelope("node.meta", Some(json!({"x": 1})), &node, None)
+            .expect("make_envelope should succeed");
+        let json_bytes = serde_json::to_vec(&env).expect("serde_json should succeed");
+        let mut bytes = json_bytes.clone();
+        let parsed = parse_envelope_bytes(&mut bytes).expect("parse_envelope_bytes should succeed");
+        assert_eq!(parsed.d.t, env.d.t);
+        assert_eq!(parsed.d.n, env.d.n);
+        assert_eq!(parsed.p, env.p);
+
+        // Test depth-2 envelope
+        let inner = mk_inner_room_event(&node, &room, 1000);
+        let commit = wrap_commit(inner, &room, 1001).expect("wrap should succeed");
+        let json_bytes2 = serde_json::to_vec(&commit).expect("serde_json should succeed");
+        let mut bytes2 = json_bytes2.clone();
+        let parsed2 = parse_envelope_bytes(&mut bytes2).expect("parse_envelope_bytes should succeed for depth-2");
+        assert_eq!(parsed2.d.t, commit.d.t);
+        assert_eq!(depth(&parsed2), 2);
+
+        // Test depth-3 envelope
+        let inner2 = mk_inner_room_event(&node, &room, 2000);
+        let commit2 = wrap_commit(inner2, &room, 2001).expect("wrap should succeed");
+        // Create depth-3 by wrapping the commit in another envelope (e.g., ack)
+        let d3 = DatumBody {
+            n: node.sig.pub_key.clone(),
+            v: VERSION.to_owned(),
+            t: "ack".to_owned(),
+            ts: now_ms().unwrap(),
+            env: Some(Box::new(commit2)),
+            ..DatumBody::default()
+        };
+        let env3 = sign_envelope(d3, &node.sig.priv_key).expect("sign should succeed");
+        let json_bytes3 = serde_json::to_vec(&env3).expect("serde_json should succeed");
+        let mut bytes3 = json_bytes3.clone();
+        let parsed3 = parse_envelope_bytes(&mut bytes3).expect("parse_envelope_bytes should succeed for depth-3");
+        assert_eq!(depth(&parsed3), 3);
     }
 }

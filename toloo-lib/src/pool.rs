@@ -26,6 +26,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard, Arc, Mutex};
 
+/// String interning for pool keys to reduce allocations and enable zero-copy cloning.
+/// Uses `Arc<str>` for shared ownership of string data.
+type InternedStr = Arc<str>;
+
 use anyhow::{anyhow, Context, Result};
 
 use crate::canonical::canonical;
@@ -117,11 +121,14 @@ struct Shard {
     /// id -> index in events vec
     by_id: HashMap<String, usize>,
     /// (room, channel) -> list of event indices (for get_room_channel)
+    /// Uses `String` for room key to allow fast `&str` lookup without Arc overhead.
     by_room_channel: HashMap<(String, i32), Vec<usize>>,
     /// (room, tc) -> event index (for get_wanted / latest_tc)
-    by_room_tc: BTreeMap<(String, u64), usize>,
+    /// Uses `InternedStr` (Arc<str>) for room key to share allocation across index entries.
+    by_room_tc: BTreeMap<(InternedStr, u64), usize>,
     /// (author, room, tc) -> event index (for author-specific queries)
-    by_author_room_tc: BTreeMap<(String, String, u64), usize>,
+    /// Uses `InternedStr` for author and room keys to share allocation.
+    by_author_room_tc: BTreeMap<(InternedStr, InternedStr, u64), usize>,
     /// Mutable side state (pins, blocklist, attestations, flags, room meta)
     meta: MetaState,
     // In-memory mirror of blob pieces is removed — blob pieces are on-disk only.
@@ -142,16 +149,18 @@ impl Default for Shard {
 }
 
 /// Pool entry with Arc<Envelope> for zero-copy sharing.
+/// Uses `InternedStr` (Arc<str>) for string fields to enable zero-copy cloning
+/// and reduce memory allocations when the same strings appear across many entries.
 #[derive(Debug, Clone)]
 pub struct PoolEntry {
     pub id: String,
     pub env: Arc<Envelope>,
-    pub room: Option<String>,
-    pub n: String,
-    pub to_node: Option<String>,
+    pub room: Option<InternedStr>,
+    pub n: InternedStr,
+    pub to_node: Option<InternedStr>,
     pub ts: u64,
     pub tc: Option<u64>,
-    pub event_type: String,
+    pub event_type: InternedStr,
     pub channel: Option<i32>,
 }
 
@@ -795,7 +804,7 @@ impl Pool {
                             .filter(|e| {
                                 // eid match: same room + signer + ts + channel
                                 let matches_key = e.room.as_deref() == Some(room_ref.as_str())
-                                    && e.n == inner.d.n
+                                    && e.n.as_ref() == inner.d.n.as_str()
                                     && e.ts == inner.d.ts
                                     && e.channel == Some(channel);
                                 let replaced = if depth(env) >= 3 {
@@ -836,6 +845,104 @@ impl Pool {
         Ok(id)
     }
 
+    /// Batch insert multiple envelopes, reducing lock acquisitions.
+    /// Groups envelopes by shard and acquires each shard lock once.
+    /// Deduplicates within the batch and against existing pool entries.
+    /// Returns vector of datum_ids in same order as input.
+    pub fn put_batch(&self, envelopes: &[&Envelope]) -> Result<Vec<String>> {
+        if envelopes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Group envelopes by target shard
+        let mut by_shard: Vec<Vec<(usize, &Envelope)>> = vec![Vec::new(); NUM_SHARDS];
+        for (input_idx, env) in envelopes.iter().enumerate() {
+            let inner = innermost(env);
+            let room = inner.d.r.clone();
+            let shard_idx = Self::shard_idx(room.as_deref());
+            by_shard[shard_idx].push((input_idx, env));
+        }
+
+        // Prepare results
+        let mut results = vec![None; envelopes.len()];
+        let mut all_json = Vec::new();
+
+        // Process each shard with its batch
+        for (shard_idx, batch) in by_shard.into_iter().enumerate() {
+            if batch.is_empty() {
+                continue;
+            }
+
+            let shard_lock = &self.shards[shard_idx];
+            let mut shard = shard_lock.write().map_err(lock_err)?;
+
+            // Track IDs seen in this batch for intra-batch deduplication
+            let mut seen_in_batch: HashSet<String> = HashSet::new();
+
+            for (input_idx, env) in batch {
+                let json = canonical(env)?;
+                let id = datum_id(env);
+                let inner = innermost(env);
+                let room = inner.d.r.clone();
+
+                // Check if already exists in pool OR in this batch
+                if shard.by_id.contains_key(&id) || seen_in_batch.contains(&id) {
+                    results[input_idx] = Some(id);
+                    continue;
+                }
+                seen_in_batch.insert(id.clone());
+
+                // Find superseded events
+                let channel_opt = channel_of(&inner.d);
+                let superseded: Vec<String> = if let (Some(room_ref), Some(channel)) = (room.as_ref(), channel_opt) {
+                    if let Some(indices) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
+                        indices.iter()
+                            .filter_map(|&idx| shard.events[idx].as_ref())
+                            .filter(|e| {
+                                let matches_key = e.room.as_deref() == Some(room_ref.as_str())
+                                    && e.n.as_ref() == inner.d.n.as_str()
+                                    && e.ts == inner.d.ts
+                                    && e.channel == Some(channel);
+                                let replaced = if depth(env) >= 3 {
+                                    e.tc.is_some()
+                                } else {
+                                    e.tc.is_none()
+                                };
+                                matches_key && replaced
+                            })
+                            .map(|e| e.id.clone())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                // Remove superseded entries
+                for sid in &superseded {
+                    remove_id(&mut shard, sid);
+                }
+
+                // Insert new entry
+                insert_new(&mut shard, env);
+                results[input_idx] = Some(id);
+                all_json.push(json);
+            }
+        }
+
+        // Persist all to log (outside locks)
+        for json in all_json {
+            self.append_event(&json)?;
+        }
+
+        // Check if we need to spill to cold storage
+        self.maybe_spill_to_cold()?;
+
+        // Convert results to expected format
+        Ok(results.into_iter().flatten().collect())
+    }
+
     pub fn get(&self, id: &str) -> Result<Option<Envelope>> {
         // Search all shards for the ID
         for shard_lock in &self.shards {
@@ -873,7 +980,8 @@ impl Pool {
         let shard = self.read_shard(Some(room)).map_err(lock_err)?;
 
         // Use by_room_tc index for O(log n) lookup
-        if let Some((_, &idx)) = shard.by_room_tc.iter().rev().find(|((r, _), _)| r == room) {
+        // by_room_tc uses InternedStr (Arc<str>) for room key
+        if let Some((_, &idx)) = shard.by_room_tc.iter().rev().find(|((r, _), _)| r.as_ref() == room) {
             if let Some(entry) = &shard.events[idx] {
                 if let Some(tc) = entry.tc {
                     return Ok(tc);
@@ -945,9 +1053,9 @@ impl Pool {
     pub fn get_private(&self, node_pub: &str) -> Result<Vec<PoolEntry>> {
         let mut out = self.select(|e| {
             matches!(
-                e.event_type.as_str(),
+                e.event_type.as_ref(),
                 "private.message" | "private.read" | "private.blob"
-            ) && (e.n == node_pub || e.to_node.as_deref() == Some(node_pub))
+            ) && (e.n.as_ref() == node_pub || e.to_node.as_deref() == Some(node_pub))
         })?;
         out.sort_by(cmp_committed_first);
         Ok(out)
@@ -1038,13 +1146,14 @@ impl Pool {
             for shard_lock in &self.shards {
                 if let Ok(shard) = shard_lock.read() {
                     // Find first entry with tc > after_tc
-                    let range = shard.by_room_tc.range((String::new(), after_tc + 1)..);
+                    // by_room_tc uses InternedStr (Arc<str>) for room key
+                    let range = shard.by_room_tc.range((InternedStr::from(""), after_tc + 1)..);
                     for (_, &idx) in range.take(limit * 2) { // take extra for filtering
                         if let Some(entry) = &shard.events[idx] {
                             if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
                                 continue;
                             }
-                            if !types.is_empty() && !types.contains(&entry.event_type.as_str()) {
+                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
                                 continue;
                             }
                             out.push(entry.as_ref().clone());
@@ -1057,13 +1166,13 @@ impl Pool {
             for room in rooms {
                 let shard_idx = Self::shard_idx(Some(room));
                 if let Ok(shard) = self.shards[shard_idx].read() {
-                    let range = shard.by_room_tc.range((room.to_string(), after_tc + 1)..);
+                    let range = shard.by_room_tc.range((InternedStr::from(room.as_ref()), after_tc + 1)..);
                     for (_, &idx) in range.take(limit * 2) {
                         if let Some(entry) = &shard.events[idx] {
                             if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
                                 continue;
                             }
-                            if !types.is_empty() && !types.contains(&entry.event_type.as_str()) {
+                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
                                 continue;
                             }
                             out.push(entry.as_ref().clone());
@@ -1101,7 +1210,7 @@ impl Pool {
                     .as_deref()
                     .map(|r| rooms.contains(&r))
                     .unwrap_or(false))
-                && (types.is_empty() || types.contains(&e.event_type.as_str()))
+                && (types.is_empty() || types.contains(&e.event_type.as_ref()))
         })?;
 
         // If tiered storage enabled, also read from cold
@@ -1112,12 +1221,12 @@ impl Pool {
                 let entry = PoolEntry {
                     id: datum_id(&env),
                     env: Arc::new(env.clone()),
-                    room: inner.d.r.clone(),
-                    n: inner.d.n.clone(),
-                    to_node: inner.d.to.clone(),
+                    room: inner.d.r.clone().map(InternedStr::from),
+                    n: InternedStr::from(inner.d.n.clone()),
+                    to_node: inner.d.to.clone().map(InternedStr::from),
                     ts: inner.d.ts,
                     tc: inner.d.tc,
-                    event_type: inner.d.t.clone(),
+                    event_type: InternedStr::from(inner.d.t.clone()),
                     channel: channel_of(&inner.d),
                 };
                 // Only add if not already in hot (by id)
@@ -1209,9 +1318,9 @@ impl Pool {
         self.read_all_shards(|shard| {
             for entry_opt in &shard.events {
                 if let Some(entry) = entry_opt {
-                    if entry.n == node_pub {
+                    if entry.n.as_ref() == node_pub {
                         if let Some(r) = &entry.room {
-                            rooms.insert(r.clone());
+                            rooms.insert(r.as_ref().to_string());
                         }
                     }
                 }
@@ -1650,7 +1759,7 @@ impl Pool {
                     }
                 }
             });
-            rooms.into_iter().collect()
+            rooms.into_iter().map(|s| s.as_ref().to_string()).collect()
         };
 
         let mut total = 0u64;
@@ -1753,12 +1862,12 @@ fn insert_new(shard: &mut Shard, env: &Envelope) {
     let entry = Arc::new(PoolEntry {
         id: id.clone(),
         env: Arc::new(env.clone()),
-        room: inner.d.r.clone(),
-        n: inner.d.n.clone(),
-        to_node: inner.d.to.clone(),
+        room: inner.d.r.clone().map(InternedStr::from),
+        n: InternedStr::from(inner.d.n.clone()),
+        to_node: inner.d.to.clone().map(InternedStr::from),
         ts: inner.d.ts,
         tc: env.d.tc,
-        event_type: inner.d.t.clone(),
+        event_type: InternedStr::from(inner.d.t.clone()),
         channel: channel_of(&inner.d),
     });
     let idx = shard.events.len();
@@ -1768,14 +1877,16 @@ fn insert_new(shard: &mut Shard, env: &Envelope) {
     // Update secondary indexes
     if let Some(room) = &entry.room {
         if let Some(ch) = entry.channel {
+            // by_room_channel uses String for fast &str lookup
             shard.by_room_channel
-                .entry((room.clone(), ch))
+                .entry((room.as_ref().to_string(), ch))
                 .or_default()
                 .push(idx);
         }
     }
     if let Some(tc) = entry.tc {
         if let Some(room) = &entry.room {
+            // by_room_tc and by_author_room_tc use InternedStr for shared allocation
             shard.by_room_tc.insert((room.clone(), tc), idx);
             shard.by_author_room_tc.insert((entry.n.clone(), room.clone(), tc), idx);
         }
@@ -1801,14 +1912,16 @@ fn rebuild_indexes(shard: &mut Shard) {
         if let Some(entry) = entry_opt {
             if let Some(room) = &entry.room {
                 if let Some(ch) = entry.channel {
+                    // by_room_channel uses String for fast &str lookup
                     shard.by_room_channel
-                        .entry((room.clone(), ch))
+                        .entry((room.as_ref().to_string(), ch))
                         .or_default()
                         .push(idx);
                 }
             }
             if let Some(tc) = entry.tc {
                 if let Some(room) = &entry.room {
+                    // by_room_tc and by_author_room_tc use InternedStr for shared allocation
                     shard.by_room_tc.insert((room.clone(), tc), idx);
                     shard.by_author_room_tc.insert((entry.n.clone(), room.clone(), tc), idx);
                 }
@@ -1909,6 +2022,62 @@ mod tests {
             .get_room_channel(&room.sig.pub_key, 1)
             .expect("query should succeed");
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn put_batch_inserts_multiple_envelopes() {
+        let pool = Pool::memory().expect("pool should initialize");
+        let node = mk_node();
+        let room = mk_room();
+
+        // Create 10 envelopes
+        let envelopes: Vec<_> = (0..10)
+            .map(|i| {
+                mk_room_event(
+                    &node,
+                    &room,
+                    "room.message",
+                    1000 + i,
+                    json!({"ch": 1, "body": format!("msg{}", i)}),
+                )
+            })
+            .collect();
+        let refs: Vec<_> = envelopes.iter().collect();
+
+        // Batch insert
+        let ids = pool.put_batch(&refs).expect("put_batch should succeed");
+        assert_eq!(ids.len(), 10);
+
+        // Verify all are retrievable
+        for id in &ids {
+            let got = pool.get(id).expect("get").expect("must exist");
+            assert_eq!(got.d.t, "room.message");
+        }
+
+        // Verify count in room channel
+        let entries = pool.get_room_channel(&room.sig.pub_key, 1).expect("query");
+        assert_eq!(entries.len(), 10);
+    }
+
+    #[test]
+    fn put_batch_deduplicates() {
+        let pool = Pool::memory().expect("pool should initialize");
+        let node = mk_node();
+        let room = mk_room();
+
+        let env = mk_room_event(
+            &node,
+            &room,
+            "room.message",
+            100,
+            json!({"ch": 1, "body": "duplicate"}),
+        );
+        let refs = vec![&env, &env, &env];
+
+        let ids = pool.put_batch(&refs).expect("put_batch");
+        assert_eq!(ids.len(), 3); // returns ID for each input position
+        assert_eq!(ids[0], ids[1]); // but deduplicated to same ID
+        assert_eq!(ids[1], ids[2]);
     }
 
     #[test]

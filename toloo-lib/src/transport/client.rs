@@ -10,12 +10,15 @@ use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, Connector, MaybeTlsStream};
-use tokio_rustls::rustls::{self, pki_types::ServerName};
-use tokio_rustls::TlsConnector;
 use std::sync::Arc;
 
 use crate::envelope::{make_envelope, parse_envelope, verify_chain};
 use crate::types::{Envelope, LocalNode};
+
+#[cfg(feature = "tls")]
+use tokio_rustls::rustls::{self, pki_types::ServerName};
+#[cfg(feature = "tls")]
+use tokio_rustls::TlsConnector;
 
 /// TLS verification mode for client connections.
 #[derive(Debug, Clone, Copy)]
@@ -158,6 +161,7 @@ fn build_pool_exchange_request(node: &LocalNode, config: &PoolExchangeConfig) ->
     })), node, None)
 }
 
+#[cfg(feature = "tls")]
 async fn connect_ws(
     url: &str,
     tls_verify: TlsVerify,
@@ -182,6 +186,21 @@ async fn connect_ws(
     }
 }
 
+#[cfg(not(feature = "tls"))]
+async fn connect_ws(
+    _url: &str,
+    tls_verify: TlsVerify,
+) -> Result<(
+    tokio_tungstenite::WebSocketStream<MaybeTlsStream<TcpStream>>,
+    tokio_tungstenite::tungstenite::handshake::client::Response
+)> {
+    if matches!(tls_verify, TlsVerify::AcceptAny) {
+        anyhow::bail!("TLS support (wss) requires the 'tls' feature");
+    }
+    connect_async(_url).await.map_err(|e| anyhow::anyhow!("WS connect: {}", e))
+}
+
+#[cfg(feature = "tls")]
 fn make_accept_any_connector() -> Arc<rustls::ClientConfig> {
     #[derive(Debug)]
     struct AcceptAny;
@@ -252,6 +271,7 @@ async fn do_http_request(url: &str, body: &str) -> Result<Vec<u8>> {
 
     let stream = TcpStream::connect(format!("{host}:{port}")).await?;
 
+    #[cfg(feature = "tls")]
     let resp_body: Vec<u8> = if is_https {
         let connector = TlsConnector::from(make_accept_any_connector());
         let server_name = ServerName::try_from(host.to_owned())?;
@@ -261,6 +281,18 @@ async fn do_http_request(url: &str, body: &str) -> Result<Vec<u8>> {
         tls.flush().await?;
         read_http_response_body(&mut tls).await?
     } else {
+        let mut plain = stream;
+        plain.write_all(req_headers.as_bytes()).await?;
+        plain.write_all(body_bytes).await?;
+        plain.flush().await?;
+        read_http_response_body(&mut plain).await?
+    };
+
+    #[cfg(not(feature = "tls"))]
+    let resp_body: Vec<u8> = {
+        if is_https {
+            anyhow::bail!("HTTPS support requires the 'tls' feature");
+        }
         let mut plain = stream;
         plain.write_all(req_headers.as_bytes()).await?;
         plain.write_all(body_bytes).await?;
