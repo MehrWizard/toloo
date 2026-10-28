@@ -586,6 +586,7 @@ mod commands {
                     pool,
                     rooms:     rooms_snapshot,
                     metrics:   Some(metrics_thread),
+                    batch_processor: None,
                 });
                 tokio::select! {
                     res = run_relay(config) => {

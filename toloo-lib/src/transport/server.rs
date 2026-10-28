@@ -66,6 +66,7 @@ impl Default for RelayMetrics {
 }
 
 /// One transport endpoint that this relay should listen on.
+#[derive(Clone)]
 pub struct EndpointConfig {
     /// Socket address to bind on (e.g. `0.0.0.0:17701`).
     pub addr: SocketAddr,

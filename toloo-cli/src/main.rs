@@ -16,6 +16,7 @@ use toloo_lib::vectors::VectorSet;
 use toloo_lib::discovery::{decode as discovery_decode, encode_file, encode_uri};
 use toloo_lib::pool::{Pool, PoolConfig};
 use toloo_lib::transport::server::{EndpointConfig, RelayConfig, run_relay};
+use toloo_lib::requests::batch::BatchProcessor;
 
 // ---- CLI definition ----
 
@@ -525,7 +526,9 @@ async fn cmd_relay(
     eprintln!("[toloo] node: {}", node.sig.pub_key);
     eprintln!("[toloo] WS  {ws_addr}");
 
-    let config = Arc::new(RelayConfig { node, endpoints, pool, rooms, metrics: None });
+    let base_config = Arc::new(RelayConfig { node, endpoints, pool: pool.clone(), rooms, metrics: None, batch_processor: None });
+    let batch_processor = BatchProcessor::new(Arc::clone(&pool), Arc::clone(&base_config));
+    let config = Arc::new(RelayConfig { node: base_config.node.clone(), endpoints: base_config.endpoints.clone(), pool: base_config.pool.clone(), rooms: base_config.rooms.clone(), metrics: None, batch_processor: Some(batch_processor) });
     run_relay(config).await
 }
 

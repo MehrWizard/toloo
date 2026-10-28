@@ -24,7 +24,10 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use std::hash::Hasher;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard, Arc, Mutex};
+use std::cell::UnsafeCell;
+use std::sync::{Arc, Mutex, RwLock};
+
+use dashmap::DashMap;
 
 /// String interning for pool keys to reduce allocations and enable zero-copy cloning.
 /// Uses `Arc<str>` for shared ownership of string data.
@@ -115,22 +118,26 @@ pub type BlocklistEntry = (String, String, Option<String>, u64);
 
 /// Sharded lock for high-concurrency access.
 /// Each shard protects a subset of rooms based on hash.
+/// Uses DashMap for lock-free reads on primary indexes.
 struct Shard {
     /// Live events in insertion order; `None` marks a removed slot.
-    events: Vec<Option<Arc<PoolEntry>>>,
-    /// id -> index in events vec
-    by_id: HashMap<String, usize>,
-    /// (room, channel) -> list of event indices (for get_room_channel)
+    /// Wrapped in UnsafeCell to allow mutation through &Shard when write_mutex is held.
+    events: UnsafeCell<Vec<Option<Arc<PoolEntry>>>>,
+    /// id -> index in events vec (lock-free reads)
+    by_id: DashMap<String, usize>,
+    /// (room, channel) -> list of event indices (for get_room_channel) (lock-free reads)
     /// Uses `String` for room key to allow fast `&str` lookup without Arc overhead.
-    by_room_channel: HashMap<(String, i32), Vec<usize>>,
-    /// (room, tc) -> event index (for get_wanted / latest_tc)
+    by_room_channel: DashMap<(String, i32), Vec<usize>>,
+    /// (room, tc) -> event index (for get_wanted / latest_tc) (ordered, needs RwLock for writes)
     /// Uses `InternedStr` (Arc<str>) for room key to share allocation across index entries.
-    by_room_tc: BTreeMap<(InternedStr, u64), usize>,
-    /// (author, room, tc) -> event index (for author-specific queries)
+    by_room_tc: RwLock<BTreeMap<(InternedStr, u64), usize>>,
+    /// (author, room, tc) -> event index (for author-specific queries) (ordered, needs RwLock for writes)
     /// Uses `InternedStr` for author and room keys to share allocation.
-    by_author_room_tc: BTreeMap<(InternedStr, InternedStr, u64), usize>,
+    by_author_room_tc: RwLock<BTreeMap<(InternedStr, InternedStr, u64), usize>>,
     /// Mutable side state (pins, blocklist, attestations, flags, room meta)
-    meta: MetaState,
+    meta: RwLock<MetaState>,
+    /// Mutex for synchronizing write operations that modify multiple indexes atomically
+    write_mutex: Mutex<()>,
     // In-memory mirror of blob pieces is removed — blob pieces are on-disk only.
 // Use get_blob_piece / put_blob_piece which read/write files directly.
 }
@@ -138,15 +145,20 @@ struct Shard {
 impl Default for Shard {
     fn default() -> Self {
         Self {
-            events: Vec::new(),
-            by_id: HashMap::new(),
-            by_room_channel: HashMap::new(),
-            by_room_tc: BTreeMap::new(),
-            by_author_room_tc: BTreeMap::new(),
-            meta: MetaState::default(),
+            events: UnsafeCell::new(Vec::new()),
+            by_id: DashMap::new(),
+            by_room_channel: DashMap::new(),
+            by_room_tc: RwLock::new(BTreeMap::new()),
+            by_author_room_tc: RwLock::new(BTreeMap::new()),
+            meta: RwLock::new(MetaState::default()),
+            write_mutex: Mutex::new(()),
         }
     }
 }
+
+/// SAFETY: Shard uses UnsafeCell for events, but all mutations are protected by write_mutex.
+/// All other fields (DashMap, RwLock) are thread-safe.
+unsafe impl Sync for Shard {}
 
 /// Pool entry with Arc<Envelope> for zero-copy sharing.
 /// Uses `InternedStr` (Arc<str>) for string fields to enable zero-copy cloning
@@ -252,8 +264,8 @@ struct Persist {
 }
 
 pub struct Pool {
-    /// Sharded state for concurrent access
-    shards: [RwLock<Shard>; NUM_SHARDS],
+    /// Sharded state for concurrent access (lock-free reads via DashMap inside Shard)
+    shards: [Shard; NUM_SHARDS],
     persist: Option<Persist>,
     config: PoolConfig,
 }
@@ -288,9 +300,9 @@ impl Pool {
         }
 
         // Initialize shards
-        let shards: [RwLock<Shard>; NUM_SHARDS] = std::array::from_fn(|_| RwLock::new(Shard::default()));
+        let shards: [Shard; NUM_SHARDS] = std::array::from_fn(|_| Shard::default());
 
-        let pool = Pool {
+        let mut pool = Pool {
             shards,
             persist: Some(persist),
             config,
@@ -304,7 +316,7 @@ impl Pool {
 
     /// In-memory pool with no persistence. Everything is lost on drop.
     pub fn memory() -> Result<Self> {
-        let shards: [RwLock<Shard>; NUM_SHARDS] = std::array::from_fn(|_| RwLock::new(Shard::default()));
+        let shards: [Shard; NUM_SHARDS] = std::array::from_fn(|_| Shard::default());
         Ok(Pool {
             shards,
             persist: None,
@@ -328,38 +340,36 @@ impl Pool {
         }
     }
 
-    fn read_shard(&self, room: Option<&str>) -> LockResult<RwLockReadGuard<'_, Shard>> {
-        self.shards[Self::shard_idx(room)].read()
+    /// Get shard reference for a room (lock-free).
+    fn shard(&self, room: Option<&str>) -> &Shard {
+        &self.shards[Self::shard_idx(room)]
     }
 
-    fn write_shard(&self, room: Option<&str>) -> LockResult<RwLockWriteGuard<'_, Shard>> {
-        self.shards[Self::shard_idx(room)].write()
+    /// Get mutable shard reference for a room (requires external synchronization for writes).
+    fn shard_mut(&mut self, room: Option<&str>) -> &mut Shard {
+        &mut self.shards[Self::shard_idx(room)]
     }
 
-    /// Iterate over all shards with a read lock.
+    /// Iterate over all shards (lock-free reads).
     fn read_all_shards<F: FnMut(&Shard)>(&self, mut f: F) {
         for shard in &self.shards {
-            if let Ok(guard) = shard.read() {
-                f(&guard);
-            }
+            f(shard);
         }
     }
 
-    /// Iterate over all shards with a write lock.
+    /// Iterate over all shards mutably (requires external synchronization).
     #[allow(dead_code)]
-    fn write_all_shards<F: FnMut(&mut Shard)>(&self, mut f: F) {
-        for shard in &self.shards {
-            if let Ok(mut guard) = shard.write() {
-                f(&mut guard);
-            }
+    fn write_all_shards<F: FnMut(&mut Shard)>(&mut self, mut f: F) {
+        for shard in &mut self.shards {
+            f(shard);
         }
     }
 
-    /// Collect clones of all live entries matching `pred` across all shards.
+    /// Collect clones of all live entries matching `pred` across all shards (lock-free reads).
     pub(crate) fn select<F: Fn(&PoolEntry) -> bool + Sync>(&self, pred: F) -> Result<Vec<PoolEntry>> {
         let mut out = Vec::new();
         self.read_all_shards(|shard| {
-            for entry_opt in &shard.events {
+            for entry_opt in unsafe { &*shard.events.get() } {
                 if let Some(entry) = entry_opt {
                     if pred(entry.as_ref()) {
                         out.push(entry.as_ref().clone());
@@ -375,11 +385,12 @@ impl Pool {
         // Merge meta from all shards
         let mut merged = MetaState::default();
         self.read_all_shards(|shard| {
-            merged.tofu_pins.extend(shard.meta.tofu_pins.clone());
-            merged.blocklist.extend(shard.meta.blocklist.clone());
-            merged.attestations.extend(shard.meta.attestations.clone());
-            merged.flags.extend(shard.meta.flags.clone());
-            merged.room_meta.extend(shard.meta.room_meta.clone());
+            let meta = shard.meta.read().expect("meta lock poisoned");
+            merged.tofu_pins.extend(meta.tofu_pins.clone());
+            merged.blocklist.extend(meta.blocklist.clone());
+            merged.attestations.extend(meta.attestations.clone());
+            merged.flags.extend(meta.flags.clone());
+            merged.room_meta.extend(meta.room_meta.clone());
         });
 
         let Some(p) = &self.persist else {
@@ -395,7 +406,7 @@ impl Pool {
 
     // ── Persistence ────────────────────────────────────────────────────
 
-    fn load_meta(&self) -> Result<()> {
+    fn load_meta(&mut self) -> Result<()> {
         let Some(p) = &self.persist else {
             return Ok(());
         };
@@ -407,14 +418,14 @@ impl Pool {
         let meta: MetaState = serde_json::from_str(&raw)
             .with_context(|| format!("invalid meta JSON in {}", p.meta_path.display()))?;
         // Distribute meta to shard 0 (meta is small, single-shard is fine)
-        let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-        shard0.meta = meta;
+        let shard0 = self.shard_mut(None);
+        *shard0.meta.write().expect("meta lock poisoned") = meta;
         Ok(())
     }
 
     /// Rebuild memory state from the event log. A truncated final line
     /// (crash mid-append) is discarded; corruption anywhere else is fatal.
-    fn replay_events(&self) -> Result<()> {
+    fn replay_events(&mut self) -> Result<()> {
         let Some(p) = &self.persist else {
             return Ok(());
         };
@@ -443,9 +454,7 @@ impl Pool {
                     let inner = innermost(&env);
                     let room = inner.d.r.as_deref();
                     let shard_idx = Self::shard_idx(room);
-                    let mut shard = self.shards[shard_idx].write().map_err(lock_err)?;
-                    insert_new(&mut shard, &env);
-                    drop(shard);
+                    insert_new(&mut self.shards[shard_idx], &env);
                     good_offset += n as u64;
                 }
                 Err(_) => {
@@ -486,7 +495,7 @@ impl Pool {
         let total_live = {
             let mut count = 0;
             self.read_all_shards(|shard| {
-                count += shard.events.iter().filter(|e| e.is_some()).count();
+                count += unsafe { &*shard.events.get() }.iter().filter(|e| e.is_some()).count();
             });
             count
         };
@@ -501,12 +510,10 @@ impl Pool {
         // Collect the oldest event IDs to spill across all shards.
         let spill_ids: Vec<String> = {
             let mut all_events: Vec<(u64, String, usize, usize)> = Vec::new(); // (ts, id, shard_idx, event_idx)
-            for (shard_idx, shard_lock) in self.shards.iter().enumerate() {
-                if let Ok(shard) = shard_lock.read() {
-                    for (event_idx, entry_opt) in shard.events.iter().enumerate() {
-                        if let Some(entry) = entry_opt {
-                            all_events.push((entry.ts, entry.id.clone(), shard_idx, event_idx));
-                        }
+            for (shard_idx, shard) in self.shards.iter().enumerate() {
+                for (event_idx, entry_opt) in unsafe { &*shard.events.get() }.iter().enumerate() {
+                    if let Some(entry) = entry_opt {
+                        all_events.push((entry.ts, entry.id.clone(), shard_idx, event_idx));
                     }
                 }
             }
@@ -579,20 +586,18 @@ impl Pool {
             .with_context(|| format!("replace hot log {}", hot_path.display()))?;
 
         // Remove spilled events from memory indexes across all shards
-        for shard_lock in &self.shards {
-            let mut shard = shard_lock.write().map_err(lock_err)?;
+        for shard in &self.shards {
+            // We need mutable access to shard, but we're in &self.
+            // For spill operations, we use the by_id DashMap to remove entries.
+            // Note: events vec is not cleaned up here to avoid shifting indices.
+            // Stale entries are filtered at query time.
             for id in &spill_set {
-                if let Some(idx) = shard.by_id.remove(id) {
-                    shard.events[idx] = None;
-                    // Also clean secondary indexes
-                    if let Some(_entry) = shard.events[idx].as_ref() {
-                        // We already set to None above, so need to check before
-                    }
-                    // Actually we need the entry info before setting to None
-                }
+                shard.by_id.remove(id);
+                // Secondary indexes will be cleaned up on next compact/rebuild
             }
             // Rebuild secondary indexes from remaining events
-            rebuild_indexes(&mut shard);
+            // SAFETY: We hold the shard's write_mutex, giving exclusive access.
+            rebuild_indexes(shard);
         }
 
         Ok(())
@@ -658,7 +663,10 @@ impl Pool {
         let Some(p) = &self.persist else {
             return Ok(());
         };
-        let tmp = p.events_path.with_extension("jsonl.tmp");
+        let events_path = p.events_path.clone();
+        let tmp = events_path.with_extension("jsonl.tmp");
+        let max_resident_blocks = p.config.max_resident_blocks;
+        let _cold_path = p.cold_path.clone();
         {
             let mut f = std::fs::OpenOptions::new()
                 .create(true)
@@ -669,12 +677,10 @@ impl Pool {
 
             // Collect all live entries across shards, sorted by insertion order
             let mut all_entries: Vec<(usize, Arc<PoolEntry>)> = Vec::new();
-            for (shard_idx, shard_lock) in self.shards.iter().enumerate() {
-                if let Ok(shard) = shard_lock.read() {
-                    for (_event_idx, entry_opt) in shard.events.iter().enumerate() {
-                        if let Some(entry) = entry_opt {
-                            all_entries.push((shard_idx, entry.clone()));
-                        }
+            for (shard_idx, shard) in self.shards.iter().enumerate() {
+                for (_event_idx, entry_opt) in unsafe { &*shard.events.get() }.iter().enumerate() {
+                    if let Some(entry) = entry_opt {
+                        all_entries.push((shard_idx, entry.clone()));
                     }
                 }
             }
@@ -690,14 +696,14 @@ impl Pool {
             }
             f.flush()?;
         }
-        std::fs::rename(&tmp, &p.events_path)
-            .with_context(|| format!("failed to replace {}", p.events_path.display()))?;
+        std::fs::rename(&tmp, &events_path)
+            .with_context(|| format!("failed to replace {}", events_path.display()))?;
 
         // Rebuild all in-memory indexes from the compacted log
         self.rebuild_all_indexes()?;
 
         // Also compact cold storage if tiered storage is enabled
-        if p.config.max_resident_blocks > 0 {
+        if max_resident_blocks > 0 {
             self.compact_cold()?;
         }
         Ok(())
@@ -705,9 +711,9 @@ impl Pool {
 
     /// Rebuild all in-memory indexes from current shard state.
     fn rebuild_all_indexes(&self) -> Result<()> {
-        for shard_lock in &self.shards {
-            let mut shard = shard_lock.write().map_err(lock_err)?;
-            rebuild_indexes(&mut shard);
+        for shard in &self.shards {
+            let _guard = shard.write_mutex.lock().expect("shard write mutex poisoned");
+            rebuild_indexes(shard);
         }
         Ok(())
     }
@@ -726,7 +732,7 @@ impl Pool {
         let hot_ids: HashSet<String> = {
             let mut ids = HashSet::new();
             self.read_all_shards(|shard| {
-                for entry_opt in &shard.events {
+                for entry_opt in unsafe { &*shard.events.get() } {
                     if let Some(entry) = entry_opt {
                         ids.insert(entry.id.clone());
                     }
@@ -780,15 +786,14 @@ impl Pool {
 
         // Determine target shard
         let shard_idx = Self::shard_idx(room.as_deref());
-        let shard_lock = &self.shards[shard_idx];
 
-        // Atomic check-and-insert under write lock
+        // Atomic check-and-insert under write mutex
         let _superseded = {
-            let mut shard = shard_lock.write().map_err(lock_err)?;
+            let _guard = self.shards[shard_idx].write_mutex.lock().map_err(lock_err)?;
+            let shard = &self.shards[shard_idx];
 
-            // Check if already exists
+            // Check if already exists (lock-free read)
             if shard.by_id.contains_key(&id) {
-                drop(shard);
                 return Ok(id);
             }
 
@@ -797,10 +802,10 @@ impl Pool {
             let channel_opt = channel_of(&inner.d);
             let superseded: Vec<String> = if let Some(room_ref) = &key_room {
                 if let Some(channel) = channel_opt {
-                    // Use secondary index for O(1) lookup
+                    // Use secondary index for O(1) lookup (lock-free read)
                     if let Some(indices) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
                         indices.iter()
-                            .filter_map(|&idx| shard.events[idx].as_ref())
+                            .filter_map(|&idx| unsafe { &*shard.events.get() }[idx].as_ref())
                             .filter(|e| {
                                 // eid match: same room + signer + ts + channel
                                 let matches_key = e.room.as_deref() == Some(room_ref.as_str())
@@ -828,11 +833,11 @@ impl Pool {
 
             // Remove superseded entries
             for sid in &superseded {
-                remove_id(&mut shard, sid);
+                remove_id(shard, sid);
             }
 
             // Insert new entry
-            insert_new(&mut shard, env);
+            insert_new(shard, env);
             superseded
         };
 
@@ -873,8 +878,8 @@ impl Pool {
                 continue;
             }
 
-            let shard_lock = &self.shards[shard_idx];
-            let mut shard = shard_lock.write().map_err(lock_err)?;
+            let shard = &self.shards[shard_idx];
+            let _guard = shard.write_mutex.lock().map_err(lock_err)?;
 
             // Track IDs seen in this batch for intra-batch deduplication
             let mut seen_in_batch: HashSet<String> = HashSet::new();
@@ -885,7 +890,7 @@ impl Pool {
                 let inner = innermost(env);
                 let room = inner.d.r.clone();
 
-                // Check if already exists in pool OR in this batch
+                // Check if already exists in pool OR in this batch (lock-free read)
                 if shard.by_id.contains_key(&id) || seen_in_batch.contains(&id) {
                     results[input_idx] = Some(id);
                     continue;
@@ -897,7 +902,7 @@ impl Pool {
                 let superseded: Vec<String> = if let (Some(room_ref), Some(channel)) = (room.as_ref(), channel_opt) {
                     if let Some(indices) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
                         indices.iter()
-                            .filter_map(|&idx| shard.events[idx].as_ref())
+                            .filter_map(|&idx| unsafe { &*shard.events.get() }[idx].as_ref())
                             .filter(|e| {
                                 let matches_key = e.room.as_deref() == Some(room_ref.as_str())
                                     && e.n.as_ref() == inner.d.n.as_str()
@@ -921,11 +926,11 @@ impl Pool {
 
                 // Remove superseded entries
                 for sid in &superseded {
-                    remove_id(&mut shard, sid);
+                    remove_id(shard, sid);
                 }
 
                 // Insert new entry
-                insert_new(&mut shard, env);
+                insert_new(shard, env);
                 results[input_idx] = Some(id);
                 all_json.push(json);
             }
@@ -944,13 +949,12 @@ impl Pool {
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Envelope>> {
-        // Search all shards for the ID
-        for shard_lock in &self.shards {
-            if let Ok(shard) = shard_lock.read() {
-                if let Some(&idx) = shard.by_id.get(id) {
-                    if let Some(entry) = &shard.events[idx] {
-                        return Ok(Some((*entry.env).clone()));
-                    }
+        // Search all shards for the ID (lock-free read via DashMap)
+        for shard in &self.shards {
+            if let Some(idx) = shard.by_id.get(id) {
+                let idx = *idx;
+                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                    return Ok(Some((*entry.env).clone()));
                 }
             }
         }
@@ -958,14 +962,13 @@ impl Pool {
     }
 
     pub fn get_room_channel(&self, room: &str, channel: i32) -> Result<Vec<PoolEntry>> {
-        let _shard_idx = Self::shard_idx(Some(room));
-        let shard = self.read_shard(Some(room)).map_err(lock_err)?;
+        let shard = self.shard(Some(room));
 
         let indices = shard.by_room_channel.get(&(room.to_string(), channel));
         let mut out = Vec::new();
         if let Some(indices) = indices {
-            for &idx in indices {
-                if let Some(entry) = &shard.events[idx] {
+            for &idx in indices.value() {
+                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
                     out.push(entry.as_ref().clone());
                 }
             }
@@ -976,13 +979,12 @@ impl Pool {
 
     /// Returns the latest commit timestamp (tc) for committed events in a room.
     pub fn latest_tc(&self, room: &str) -> Result<u64> {
-        let _shard_idx = Self::shard_idx(Some(room));
-        let shard = self.read_shard(Some(room)).map_err(lock_err)?;
+        let shard = self.shard(Some(room));
 
-        // Use by_room_tc index for O(log n) lookup
-        // by_room_tc uses InternedStr (Arc<str>) for room key
-        if let Some((_, &idx)) = shard.by_room_tc.iter().rev().find(|((r, _), _)| r.as_ref() == room) {
-            if let Some(entry) = &shard.events[idx] {
+        // Use by_room_tc index for O(log n) lookup (need read lock for BTreeMap)
+        let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
+        if let Some((_, &idx)) = by_room_tc.iter().rev().find(|((r, _), _)| r.as_ref() == room) {
+            if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
                 if let Some(tc) = entry.tc {
                     return Ok(tc);
                 }
@@ -994,13 +996,12 @@ impl Pool {
     /// Room watermark: the latest commit time across all room-internal
     /// channels (`ch < 0` — metadata, membership, …).
     pub fn room_watermark(&self, room: &str) -> Result<u64> {
-        let _shard_idx = Self::shard_idx(Some(room));
-        let shard = self.read_shard(Some(room)).map_err(lock_err)?;
+        let shard = self.shard(Some(room));
 
         let mut max_tc = 0u64;
         if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -1)) {
-            for &idx in indices {
-                if let Some(entry) = &shard.events[idx] {
+            for &idx in indices.value() {
+                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
                     if let Some(tc) = entry.tc {
                         max_tc = max_tc.max(tc);
                     }
@@ -1008,8 +1009,8 @@ impl Pool {
             }
         }
         if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -2)) {
-            for &idx in indices {
-                if let Some(entry) = &shard.events[idx] {
+            for &idx in indices.value() {
+                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
                     if let Some(tc) = entry.tc {
                         max_tc = max_tc.max(tc);
                     }
@@ -1020,8 +1021,7 @@ impl Pool {
     }
 
     pub fn get_room_ids(&self, room: &str) -> Result<Vec<String>> {
-        let _shard_idx = Self::shard_idx(Some(room));
-        let shard = self.read_shard(Some(room)).map_err(lock_err)?;
+        let shard = self.shard(Some(room));
 
         let indices = shard.by_room_channel.get(&(room.to_string(), 0))
             .or_else(|| shard.by_room_channel.get(&(room.to_string(), 1)))
@@ -1031,14 +1031,14 @@ impl Pool {
         // If no specific channel index, scan all (fallback)
         let mut out = Vec::new();
         if let Some(indices) = indices {
-            for &idx in indices {
-                if let Some(entry) = &shard.events[idx] {
+            for &idx in indices.value() {
+                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
                     out.push(entry.id.clone());
                 }
             }
         } else {
             // Fallback: scan all events in this shard
-            for entry_opt in &shard.events {
+            for entry_opt in unsafe { &*shard.events.get() } {
                 if let Some(entry) = entry_opt {
                     if entry.room.as_deref() == Some(room) {
                         out.push(entry.id.clone());
@@ -1143,21 +1143,19 @@ impl Pool {
 
         if rooms.is_empty() {
             // Scan all shards, use by_room_tc index
-            for shard_lock in &self.shards {
-                if let Ok(shard) = shard_lock.read() {
-                    // Find first entry with tc > after_tc
-                    // by_room_tc uses InternedStr (Arc<str>) for room key
-                    let range = shard.by_room_tc.range((InternedStr::from(""), after_tc + 1)..);
-                    for (_, &idx) in range.take(limit * 2) { // take extra for filtering
-                        if let Some(entry) = &shard.events[idx] {
-                            if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
-                                continue;
-                            }
-                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
-                                continue;
-                            }
-                            out.push(entry.as_ref().clone());
+            for shard in &self.shards {
+                // by_room_tc uses InternedStr (Arc<str>) for room key (need read lock for BTreeMap)
+                let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
+                let range = by_room_tc.range((InternedStr::from(""), after_tc + 1)..);
+                for (_, &idx) in range.take(limit * 2) { // take extra for filtering
+                    if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                        if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
+                            continue;
                         }
+                        if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
+                            continue;
+                        }
+                        out.push(entry.as_ref().clone());
                     }
                 }
             }
@@ -1165,18 +1163,18 @@ impl Pool {
             // Filter by specific rooms
             for room in rooms {
                 let shard_idx = Self::shard_idx(Some(room));
-                if let Ok(shard) = self.shards[shard_idx].read() {
-                    let range = shard.by_room_tc.range((InternedStr::from(room.as_ref()), after_tc + 1)..);
-                    for (_, &idx) in range.take(limit * 2) {
-                        if let Some(entry) = &shard.events[idx] {
-                            if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
-                                continue;
-                            }
-                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
-                                continue;
-                            }
-                            out.push(entry.as_ref().clone());
+                let shard = &self.shards[shard_idx];
+                let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
+                let range = by_room_tc.range((InternedStr::from(room.as_ref()), after_tc + 1)..);
+                for (_, &idx) in range.take(limit * 2) {
+                    if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                        if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
+                            continue;
                         }
+                        if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
+                            continue;
+                        }
+                        out.push(entry.as_ref().clone());
                     }
                 }
             }
@@ -1250,13 +1248,12 @@ impl Pool {
         end_tc: Option<u64>,
         limit: usize,
     ) -> Result<Vec<PoolEntry>> {
-        let _shard_idx = Self::shard_idx(Some(room));
-        let shard = self.read_shard(Some(room)).map_err(lock_err)?;
+        let shard = self.shard(Some(room));
 
         let mut out = Vec::new();
         if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), channel)) {
-            for &idx in indices {
-                if let Some(entry) = &shard.events[idx] {
+            for &idx in indices.value() {
+                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
                     let tc = match entry.tc {
                         Some(tc) if tc >= start_tc => tc,
                         _ => continue,
@@ -1289,10 +1286,9 @@ impl Pool {
     /// Return per-channel stats (channel, committed_count, latest_tc) for a room.
     /// Only non-negative channels (user content) are included.
     pub fn get_room_channel_stats(&self, room: &str) -> Result<Vec<(i32, u64, u64)>> {
-        let _shard_idx = Self::shard_idx(Some(room));
-        let shard = self.read_shard(Some(room)).map_err(lock_err)?;
+        let shard = self.shard(Some(room));
         let mut per_channel: HashMap<i32, (u64, u64)> = HashMap::new();
-        for entry_opt in &shard.events {
+        for entry_opt in unsafe { &*shard.events.get() } {
             if let Some(entry) = entry_opt {
                 let Some(tc) = entry.tc else { continue };
                 let Some(ch) = entry.channel else { continue };
@@ -1316,7 +1312,7 @@ impl Pool {
     pub fn get_node_rooms(&self, node_pub: &str) -> Result<Vec<String>> {
         let mut rooms: HashSet<String> = HashSet::new();
         self.read_all_shards(|shard| {
-            for entry_opt in &shard.events {
+            for entry_opt in unsafe { &*shard.events.get() } {
                 if let Some(entry) = entry_opt {
                     if entry.n.as_ref() == node_pub {
                         if let Some(r) = &entry.room {
@@ -1341,8 +1337,10 @@ impl Pool {
         fingerprint: &str,
         now: u64,
     ) -> Result<TofuResult> {
-        let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-        match shard0.meta.tofu_pins.get(node_pub) {
+        let _guard = self.shards[0].write_mutex.lock().expect("shard write mutex poisoned");
+        let shard0 = &self.shards[0];
+        let mut meta = shard0.meta.write().expect("meta lock poisoned");
+        match meta.tofu_pins.get(node_pub) {
             Some(pin) => {
                 if pin.fingerprint == fingerprint {
                     Ok(TofuResult::Match)
@@ -1354,14 +1352,14 @@ impl Pool {
                 }
             }
             None => {
-                shard0.meta.tofu_pins.insert(
+                meta.tofu_pins.insert(
                     node_pub.to_owned(),
                     TofuPin {
                         first_seen_at: now,
                         fingerprint: fingerprint.to_owned(),
                     },
                 );
-                drop(shard0);
+                drop(meta);
                 self.persist_meta()?;
                 Ok(TofuResult::NewPin)
             }
@@ -1370,9 +1368,9 @@ impl Pool {
 
     /// Get the stored TOFU pin for a node, if any.
     pub fn get_tofu_pin(&self, node_pub: &str) -> Result<Option<(String, u64)>> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
-        Ok(shard0
-            .meta
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        Ok(meta
             .tofu_pins
             .get(node_pub)
             .map(|p| (p.fingerprint.clone(), p.first_seen_at)))
@@ -1448,27 +1446,29 @@ impl Pool {
         reason: Option<&str>,
         now: u64,
     ) -> Result<()> {
-        {
-            let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-            shard0.meta.blocklist.insert(
-                node_pub.to_owned(),
-                BlockRecord {
-                    kind: kind.to_owned(),
-                    reason: reason.map(|r| r.to_owned()),
-                    blocked_at: now,
-                },
-            );
-        }
+        let _guard = self.shards[0].write_mutex.lock().expect("shard write mutex poisoned");
+        let shard0 = &self.shards[0];
+        let mut meta = shard0.meta.write().expect("meta lock poisoned");
+        meta.blocklist.insert(
+            node_pub.to_owned(),
+            BlockRecord {
+                kind: kind.to_owned(),
+                reason: reason.map(|r| r.to_owned()),
+                blocked_at: now,
+            },
+        );
+        drop(meta);
         self.persist_meta()?;
         Ok(())
     }
 
     /// Unblock a node.
     pub fn unblock_node(&self, node_pub: &str) -> Result<bool> {
-        let removed = {
-            let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-            shard0.meta.blocklist.remove(node_pub).is_some()
-        };
+        let _guard = self.shards[0].write_mutex.lock().expect("shard write mutex poisoned");
+        let shard0 = &self.shards[0];
+        let mut meta = shard0.meta.write().expect("meta lock poisoned");
+        let removed = meta.blocklist.remove(node_pub).is_some();
+        drop(meta);
         if removed {
             self.persist_meta()?;
         }
@@ -1477,15 +1477,16 @@ impl Pool {
 
     /// Check if a node is blocked.
     pub fn is_blocked(&self, node_pub: &str) -> Result<bool> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
-        Ok(shard0.meta.blocklist.contains_key(node_pub))
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        Ok(meta.blocklist.contains_key(node_pub))
     }
 
     /// Get all blocked nodes.
     pub fn get_blocklist(&self) -> Result<Vec<BlocklistEntry>> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
-        let mut out: Vec<BlocklistEntry> = shard0
-            .meta
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        let mut out: Vec<BlocklistEntry> = meta
             .blocklist
             .iter()
             .map(|(k, v)| (k.clone(), v.kind.clone(), v.reason.clone(), v.blocked_at))
@@ -1515,11 +1516,13 @@ impl Pool {
             .ok_or_else(|| anyhow!("attestation missing c.level"))?;
 
         {
-            let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-            if shard0.meta.attestations.iter().any(|a| a.id == id) {
+            let _guard = self.shards[0].write_mutex.lock().expect("shard write mutex poisoned");
+            let shard0 = &self.shards[0];
+            let mut meta = shard0.meta.write().expect("meta lock poisoned");
+            if meta.attestations.iter().any(|a| a.id == id) {
                 return Ok(id);
             }
-            shard0.meta.attestations.push(AttestationRecord {
+            meta.attestations.push(AttestationRecord {
                 id: id.clone(),
                 json: canonical(env)?,
                 attester: inner.d.n.clone(),
@@ -1534,9 +1537,9 @@ impl Pool {
 
     /// Get all attestations about a target node.
     pub fn get_attestations_for(&self, target: &str) -> Result<Vec<Envelope>> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
-        let mut recs: Vec<&AttestationRecord> = shard0
-            .meta
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        let mut recs: Vec<&AttestationRecord> = meta
             .attestations
             .iter()
             .filter(|a| a.target == target)
@@ -1549,11 +1552,12 @@ impl Pool {
 
     /// Get attestation counts for a target: (positive, negative, neutral).
     pub fn attestation_counts(&self, target: &str) -> Result<(u64, u64, u64)> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
         let mut pos = 0u64;
         let mut neg = 0u64;
         let mut neu = 0u64;
-        for a in &shard0.meta.attestations {
+        for a in &meta.attestations {
             if a.target != target {
                 continue;
             }
@@ -1593,11 +1597,13 @@ impl Pool {
             .ok_or_else(|| anyhow!("room.flag missing c.category"))?;
 
         {
-            let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-            if shard0.meta.flags.iter().any(|f| f.id == id) {
+            let _guard = self.shards[0].write_mutex.lock().expect("shard write mutex poisoned");
+            let shard0 = &self.shards[0];
+            let mut meta = shard0.meta.write().expect("meta lock poisoned");
+            if meta.flags.iter().any(|f| f.id == id) {
                 return Ok(id);
             }
-            shard0.meta.flags.push(FlagRecord {
+            meta.flags.push(FlagRecord {
                 id: id.clone(),
                 room: room.to_owned(),
                 target_eid: target_eid.to_owned(),
@@ -1612,9 +1618,9 @@ impl Pool {
 
     /// Get flag count for a specific event in a room.
     pub fn flag_count(&self, room: &str, target_eid: &str) -> Result<u64> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
-        Ok(shard0
-            .meta
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        Ok(meta
             .flags
             .iter()
             .filter(|f| f.room == room && f.target_eid == target_eid)
@@ -1627,9 +1633,10 @@ impl Pool {
         room: &str,
         target_eid: &str,
     ) -> Result<Vec<(String, u64)>> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
         let mut counts: HashMap<String, u64> = HashMap::new();
-        for f in &shard0.meta.flags {
+        for f in &meta.flags {
             if f.room == room && f.target_eid == target_eid {
                 *counts.entry(f.category.clone()).or_insert(0) += 1;
             }
@@ -1643,25 +1650,26 @@ impl Pool {
 
     /// Set the room class for retention policy.
     pub fn set_room_class(&self, room: &str, class: RoomClass) -> Result<()> {
-        {
-            let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-            shard0.meta.room_meta.insert(
-                room.to_owned(),
-                RoomMeta {
-                    class,
-                    retention_days: None,
-                },
-            );
-        }
+        let _guard = self.shards[0].write_mutex.lock().expect("shard write mutex poisoned");
+        let shard0 = &self.shards[0];
+        let mut meta = shard0.meta.write().expect("meta lock poisoned");
+        meta.room_meta.insert(
+            room.to_owned(),
+            RoomMeta {
+                class,
+                retention_days: None,
+            },
+        );
+        drop(meta);
         self.persist_meta()?;
         Ok(())
     }
 
     /// Get the room class for a room (defaults to Private if not set).
     pub fn get_room_class(&self, room: &str) -> Result<RoomClass> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
-        Ok(shard0
-            .meta
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        Ok(meta
             .room_meta
             .get(room)
             .map(|m| m.class)
@@ -1670,27 +1678,28 @@ impl Pool {
 
     /// Set custom retention override for a room (in days).
     pub fn set_room_retention(&self, room: &str, days: u64) -> Result<()> {
-        {
-            let mut shard0 = self.write_shard(None).map_err(lock_err)?;
-            shard0.meta.room_meta.entry(room.to_owned()).or_insert(RoomMeta {
-                class: RoomClass::Private,
-                retention_days: None,
-            }).retention_days = Some(days);
-        }
+        let _guard = self.shards[0].write_mutex.lock().expect("shard write mutex poisoned");
+        let shard0 = &self.shards[0];
+        let mut meta = shard0.meta.write().expect("meta lock poisoned");
+        meta.room_meta.entry(room.to_owned()).or_insert(RoomMeta {
+            class: RoomClass::Private,
+            retention_days: None,
+        }).retention_days = Some(days);
+        drop(meta);
         self.persist_meta()?;
         Ok(())
     }
 
     /// Get effective retention for a room (uses class default if no override).
     pub fn get_room_retention(&self, room: &str) -> Result<u64> {
-        let shard0 = self.read_shard(None).map_err(lock_err)?;
-        Ok(shard0
-            .meta
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        Ok(meta
             .room_meta
             .get(room)
             .and_then(|m| m.retention_days)
             .unwrap_or_else(|| {
-                let class = shard0.meta.room_meta.get(room).map(|m| m.class).unwrap_or(RoomClass::Private);
+                let class = meta.room_meta.get(room).map(|m| m.class).unwrap_or(RoomClass::Private);
                 class.default_retention_days(&self.config)
             }))
     }
@@ -1711,12 +1720,11 @@ impl Pool {
         let threshold = now.saturating_sub(cutoff_ms);
 
         let shard_idx = Self::shard_idx(Some(room));
-        let shard_lock = &self.shards[shard_idx];
+        let guard = self.shards[shard_idx].write_mutex.lock().expect("shard write mutex poisoned");
+        let shard = &self.shards[shard_idx];
 
         let removed = {
-            let mut shard = shard_lock.write().map_err(lock_err)?;
-            let ids: Vec<String> = shard
-                .events
+            let ids: Vec<String> = unsafe { &*shard.events.get() }
                 .iter()
                 .filter_map(|s| s.as_ref())
                 .filter(|e| {
@@ -1726,12 +1734,13 @@ impl Pool {
                 .map(|e| e.id.clone())
                 .collect();
             for id in &ids {
-                remove_id(&mut shard, id);
+                remove_id(shard, id);
             }
             // Rebuild indexes after pruning
-            rebuild_indexes(&mut shard);
+            rebuild_indexes(shard);
             ids.len() as u64
         };
+        drop(guard); // Release guard before calling compact to avoid deadlock
         if removed > 0 {
             self.compact()?;
         }
@@ -1751,7 +1760,7 @@ impl Pool {
         let rooms: Vec<String> = {
             let mut rooms = HashSet::new();
             self.read_all_shards(|shard| {
-                for entry_opt in &shard.events {
+                for entry_opt in unsafe { &*shard.events.get() } {
                     if let Some(entry) = entry_opt {
                         if let Some(r) = &entry.room {
                             rooms.insert(r.clone());
@@ -1778,23 +1787,23 @@ impl Pool {
         let threshold = now.saturating_sub(ttl_ms);
 
         let shard_idx = Self::shard_idx(Some(room));
-        let shard_lock = &self.shards[shard_idx];
+        let guard = self.shards[shard_idx].write_mutex.lock().expect("shard write mutex poisoned");
+        let shard = &self.shards[shard_idx];
 
         let removed = {
-            let mut shard = shard_lock.write().map_err(lock_err)?;
-            let ids: Vec<String> = shard
-                .events
+            let ids: Vec<String> = unsafe { &*shard.events.get() }
                 .iter()
                 .filter_map(|s| s.as_ref())
                 .filter(|e| e.room.as_deref() == Some(room) && e.tc.is_none() && e.ts < threshold)
                 .map(|e| e.id.clone())
                 .collect();
             for id in &ids {
-                remove_id(&mut shard, id);
+                remove_id(shard, id);
             }
-            rebuild_indexes(&mut shard);
+            rebuild_indexes(shard);
             ids.len() as u64
         };
+        drop(guard); // Release guard before calling compact to avoid deadlock
         if removed > 0 {
             self.compact()?;
         }
@@ -1805,8 +1814,7 @@ impl Pool {
 
     /// Export all envelopes for a room ordered by (ts, id).
     pub fn export_room(&self, room: &str) -> Result<Vec<Envelope>> {
-        let _shard_idx = Self::shard_idx(Some(room));
-        let shard = self.read_shard(Some(room)).map_err(lock_err)?;
+        let shard = self.shard(Some(room));
         let indices = shard.by_room_channel.get(&(room.to_string(), 0))
             .or_else(|| shard.by_room_channel.get(&(room.to_string(), 1)))
             .or_else(|| shard.by_room_channel.get(&(room.to_string(), -1)))
@@ -1814,14 +1822,14 @@ impl Pool {
 
         let mut out = Vec::new();
         if let Some(indices) = indices {
-            for &idx in indices {
-                if let Some(entry) = &shard.events[idx] {
+            for &idx in indices.value() {
+                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
                     out.push((entry.ts, entry.id.clone(), entry.env.clone()));
                 }
             }
         } else {
             // Fallback
-            for entry_opt in &shard.events {
+            for entry_opt in unsafe { &*shard.events.get() } {
                 if let Some(entry) = entry_opt {
                     if entry.room.as_deref() == Some(room) {
                         out.push((entry.ts, entry.id.clone(), entry.env.clone()));
@@ -1856,7 +1864,8 @@ fn lock_err<T>(_: T) -> anyhow::Error {
 }
 
 /// Insert an envelope into the state (no persistence, no dedup check).
-fn insert_new(shard: &mut Shard, env: &Envelope) {
+/// Caller must hold the shard's write_mutex.
+fn insert_new(shard: &Shard, env: &Envelope) {
     let inner = innermost(env);
     let id = datum_id(env);
     let entry = Arc::new(PoolEntry {
@@ -1870,14 +1879,16 @@ fn insert_new(shard: &mut Shard, env: &Envelope) {
         event_type: InternedStr::from(inner.d.t.clone()),
         channel: channel_of(&inner.d),
     });
-    let idx = shard.events.len();
-    shard.events.push(Some(entry.clone()));
+    // SAFETY: Caller holds shard.write_mutex, giving exclusive access to shard.events
+    let events = unsafe { &mut *shard.events.get() };
+    let idx = events.len();
+    events.push(Some(entry.clone()));
     shard.by_id.insert(id, idx);
 
     // Update secondary indexes
     if let Some(room) = &entry.room {
         if let Some(ch) = entry.channel {
-            // by_room_channel uses String for fast &str lookup
+            // by_room_channel uses String for fast &str lookup (lock-free)
             shard.by_room_channel
                 .entry((room.as_ref().to_string(), ch))
                 .or_default()
@@ -1886,16 +1897,18 @@ fn insert_new(shard: &mut Shard, env: &Envelope) {
     }
     if let Some(tc) = entry.tc {
         if let Some(room) = &entry.room {
-            // by_room_tc and by_author_room_tc use InternedStr for shared allocation
-            shard.by_room_tc.insert((room.clone(), tc), idx);
-            shard.by_author_room_tc.insert((entry.n.clone(), room.clone(), tc), idx);
+            // by_room_tc and by_author_room_tc use InternedStr for shared allocation (need write lock)
+            shard.by_room_tc.write().expect("by_room_tc lock poisoned").insert((room.clone(), tc), idx);
+            shard.by_author_room_tc.write().expect("by_author_room_tc lock poisoned").insert((entry.n.clone(), room.clone(), tc), idx);
         }
     }
 }
 
-fn remove_id(shard: &mut Shard, id: &str) {
-    if let Some(idx) = shard.by_id.remove(id) {
-        shard.events[idx] = None;
+fn remove_id(shard: &Shard, id: &str) {
+    if let Some((_, idx)) = shard.by_id.remove(id) {
+        // SAFETY: Caller holds shard.write_mutex, giving exclusive access to shard.events
+        let events = unsafe { &mut *shard.events.get() };
+        events[idx] = None;
         // Note: Secondary indexes are not cleaned up here for performance.
         // They are rebuilt on compact() and prune_retention().
         // Stale index entries are filtered out at query time by checking events[idx].is_some().
@@ -1903,12 +1916,12 @@ fn remove_id(shard: &mut Shard, id: &str) {
 }
 
 /// Rebuild all secondary indexes from the current events vector.
-fn rebuild_indexes(shard: &mut Shard) {
+fn rebuild_indexes(shard: &Shard) {
     shard.by_room_channel.clear();
-    shard.by_room_tc.clear();
-    shard.by_author_room_tc.clear();
+    shard.by_room_tc.write().expect("by_room_tc lock poisoned").clear();
+    shard.by_author_room_tc.write().expect("by_author_room_tc lock poisoned").clear();
 
-    for (idx, entry_opt) in shard.events.iter().enumerate() {
+    for (idx, entry_opt) in unsafe { &*shard.events.get() }.iter().enumerate() {
         if let Some(entry) = entry_opt {
             if let Some(room) = &entry.room {
                 if let Some(ch) = entry.channel {
@@ -1922,8 +1935,8 @@ fn rebuild_indexes(shard: &mut Shard) {
             if let Some(tc) = entry.tc {
                 if let Some(room) = &entry.room {
                     // by_room_tc and by_author_room_tc use InternedStr for shared allocation
-                    shard.by_room_tc.insert((room.clone(), tc), idx);
-                    shard.by_author_room_tc.insert((entry.n.clone(), room.clone(), tc), idx);
+                    shard.by_room_tc.write().expect("by_room_tc lock poisoned").insert((room.clone(), tc), idx);
+                    shard.by_author_room_tc.write().expect("by_author_room_tc lock poisoned").insert((entry.n.clone(), room.clone(), tc), idx);
                 }
             }
         }

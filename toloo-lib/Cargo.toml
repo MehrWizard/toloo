@@ -41,6 +41,7 @@ simd-json  = { version = "0.8", features = ["allow-non-simd", "serde_impl"] }
 
 # Async batch processing
 crossbeam-channel = "0.5"
+crossbeam-skiplist = "0.1.3"
 
 # Error handling
 anyhow    = "1"
