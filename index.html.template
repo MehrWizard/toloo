@@ -79,11 +79,10 @@
     text-align:right;flex-shrink:0;padding-right:.4rem;letter-spacing:.01em;
   }
   .proto-bar{
-    flex:1;height:14px;background:rgba(255,255,255,.04);border:1px solid var(--line);
-    border-radius:4px;overflow:hidden;position:relative;
+    flex:1;height:14px;border-radius:4px;overflow:hidden;position:relative;
   }
   .proto-fill{
-    height:100%;border-radius:3px;display:flex;align-items:center;padding-left:.3rem;
+    height:100%;border-radius:3px;display:flex;align-items:center;min-width:4px;
     font-family:var(--mono);font-size:.55rem;font-weight:600;color:#0d0d12;white-space:nowrap;
   }
   .proto-val{
@@ -149,18 +148,17 @@
   <span class="meta-item">Runner: %{RUNNER_INFO}%</span>
 </div>
 
-<!-- FULL WIDTH: Protocol comparison - 2 column grid -->
+<!-- FULL WIDTH: Protocol comparison - responsive grid, one card per category -->
 <section class="section full">
   <div class="card">
     <h2>Toloo vs. Other Protocols</h2>
-    <p class="sub">Per-message latency (lower = better). Measured Toloo vs reference estimates for IRC/XMPP/Matrix.</p>
+    <p class="sub">Per-message latency (lower = better). Measured Toloo vs reference estimates for IRC/XMPP/Matrix. Bar width uses log scale for readability across extreme ratios.</p>
     <div class="proto-grid">
-      <!-- Column 1: Canonical Encode, Envelope Verify, Parse Envelope -->
       <div class="proto-card">
-        <h3>Encoding & Parsing</h3>
+        <h3>Canonical Encode</h3>
         <div class="proto-rows">
           <div class="proto-row">
-            <span class="proto-label">Toloo: Canonical Encode</span>
+            <span class="proto-label">Toloo</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_CANONICAL_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -187,9 +185,14 @@
             </div>
             <span class="proto-val">%{PROTO_CANONICAL_MATRIX_RATIO}%x slower</span>
           </div>
+        </div>
+      </div>
 
-          <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Toloo: Envelope Verify</span>
+      <div class="proto-card">
+        <h3>Envelope Verify</h3>
+        <div class="proto-rows">
+          <div class="proto-row">
+            <span class="proto-label">Toloo</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_VERIFY_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -216,9 +219,14 @@
             </div>
             <span class="proto-val">%{PROTO_VERIFY_MATRIX_RATIO}%x slower</span>
           </div>
+        </div>
+      </div>
 
-          <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Toloo: Parse Envelope</span>
+      <div class="proto-card">
+        <h3>Parse Envelope</h3>
+        <div class="proto-rows">
+          <div class="proto-row">
+            <span class="proto-label">Toloo</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_PARSE_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -248,12 +256,11 @@
         </div>
       </div>
 
-      <!-- Column 2: Event Build, Pool Query, Crypto -->
       <div class="proto-card">
-        <h3>Event Processing & Crypto</h3>
+        <h3>Event Build</h3>
         <div class="proto-rows">
           <div class="proto-row">
-            <span class="proto-label">Toloo: Event Build</span>
+            <span class="proto-label">Toloo</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_BUILD_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -280,9 +287,14 @@
             </div>
             <span class="proto-val">%{PROTO_BUILD_MATRIX_RATIO}%x slower</span>
           </div>
+        </div>
+      </div>
 
-          <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Toloo: Pool Query (1k)</span>
+      <div class="proto-card">
+        <h3>Pool Query (1k)</h3>
+        <div class="proto-rows">
+          <div class="proto-row">
+            <span class="proto-label">Toloo</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_POOL_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -309,9 +321,14 @@
             </div>
             <span class="proto-val">%{PROTO_POOL_MATRIX_RATIO}%x slower</span>
           </div>
+        </div>
+      </div>
 
-          <div class="proto-row" style="margin-top:.5rem">
-            <span class="proto-label">Toloo: Crypto (ed25519)</span>
+      <div class="proto-card">
+        <h3>Crypto (ed25519)</h3>
+        <div class="proto-rows">
+          <div class="proto-row">
+            <span class="proto-label">Toloo</span>
             <div class="proto-bar">
               <div class="proto-fill" style="width:%{PROTO_CRYPTO_TOLOO_PCT}%;background:var(--green)"></div>
             </div>
@@ -343,6 +360,7 @@
     </div>
   </div>
 </section>
+
 
 <!-- LEFT: Cross-Platform Latency (CSS-based static chart) -->
 <div>

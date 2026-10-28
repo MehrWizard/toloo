@@ -2,6 +2,7 @@
 """Substitute template variables with benchmark data to produce static HTML."""
 
 import json
+import math
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 REF_PROTOCOLS = {
     'canonical/encode/medium': {'IRC': 150000, 'XMPP': 800000, 'MATRIX': 2500000},
     'envelope_verify/verify_chain/depth1': {'IRC': 50000, 'XMPP': 300000, 'MATRIX': 1200000},
-    'envelope_parse/parse_envelope_bytes': {'IRC': 20000, 'XMPP': 150000, 'MATRIX': 600000},
+    'parse_envelope/parse_envelope_bytes': {'IRC': 20000, 'XMPP': 150000, 'MATRIX': 600000},
     'event_build/make_room_message': {'IRC': 100000, 'XMPP': 500000, 'MATRIX': 2000000},
     'pool_query/get_room_channel_1k': {'IRC': 500000, 'XMPP': 2000000, 'MATRIX': 8000000},
     'crypto/ed25519_verify': {'IRC': 45000, 'XMPP': 200000, 'MATRIX': 800000},
@@ -19,7 +20,7 @@ REF_PROTOCOLS = {
 CATEGORIES = [
     ('canonical/encode/medium', 'Canonical Encode'),
     ('envelope_verify/verify_chain/depth1', 'Envelope Verify'),
-    ('envelope_parse/parse_envelope_bytes', 'Parse Envelope'),
+    ('parse_envelope/parse_envelope_bytes', 'Parse Envelope'),
     ('event_build/make_room_message', 'Event Build'),
     ('pool_query/get_room_channel_1k', 'Pool Query (1k)'),
     ('crypto/ed25519_verify', 'Crypto (ed25519)'),
@@ -49,15 +50,19 @@ def get_mean(data, platform, key):
     return data.get('platforms', {}).get(platform, {}).get(key, {}).get('mean_ns', 0)
 
 def compute_proto_vars(data):
-    """Compute all protocol comparison variables."""
+    """Compute all protocol comparison variables.
+
+    Bar widths use log scale: log10(ratio+1)/log10(max_ratio+1)*100.
+    This keeps Toloo visible (~10%) while Matrix reaches 100%,
+    unlike linear scale where extreme ratios (<0.1%) make Toloo invisible.
+    """
     vars = {}
     p = data.get('platforms', {}).get('linux-x86', {})
 
-    # Use short consistent prefixes matching template
     PREFIX_MAP = {
         'canonical/encode/medium': 'CANONICAL',
         'envelope_verify/verify_chain/depth1': 'VERIFY',
-        'envelope_parse/parse_envelope_bytes': 'PARSE',
+        'parse_envelope/parse_envelope_bytes': 'PARSE',
         'event_build/make_room_message': 'BUILD',
         'pool_query/get_room_channel_1k': 'POOL',
         'crypto/ed25519_verify': 'CRYPTO',
@@ -68,19 +73,29 @@ def compute_proto_vars(data):
         toloo_ns = p.get(key, {}).get('mean_ns', 0)
         refs = REF_PROTOCOLS.get(key, {})
 
-        all_vals = [toloo_ns] + [refs.get(r, 0) for r in ['IRC', 'XMPP', 'MATRIX']]
-        max_val = max(all_vals) if any(all_vals) else 1
+        all_ns = [toloo_ns] + [refs.get(r, 0) for r in ['IRC', 'XMPP', 'MATRIX']]
+        min_ns = min(v for v in all_ns if v > 0)
+        max_ns = max(all_ns)
+        max_ratio = max_ns / min_ns if min_ns > 0 else 1
+        log_max = math.log10(max_ratio + 1) if max_ratio > 1 else 1
+
+        def log_pct(ns):
+            if ns <= 0 or min_ns <= 0:
+                return 0
+            ratio = ns / min_ns
+            log_ratio = math.log10(ratio + 1)
+            return (log_ratio / log_max * 100)
 
         vars[f'PROTO_{prefix}_TOLOO_NS'] = f"{toloo_ns:,.0f}"
-        vars[f'PROTO_{prefix}_TOLOO_PCT'] = f"{(toloo_ns / max_val * 100):.1f}"
+        vars[f'PROTO_{prefix}_TOLOO_PCT'] = f"{log_pct(toloo_ns):.1f}%"
 
         for ref_name in ['IRC', 'XMPP', 'MATRIX']:
             ref_ns = refs.get(ref_name, 0)
             if ref_ns > 0:
-                vars[f'PROTO_{prefix}_{ref_name}_PCT'] = f"{(ref_ns / max_val * 100):.1f}"
+                vars[f'PROTO_{prefix}_{ref_name}_PCT'] = f"{log_pct(ref_ns):.1f}%"
                 vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = f"{round(ref_ns / toloo_ns):,}" if toloo_ns > 0 else "N/A"
             else:
-                vars[f'PROTO_{prefix}_{ref_name}_PCT'] = "0"
+                vars[f'PROTO_{prefix}_{ref_name}_PCT'] = "0%"
                 vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = "N/A"
 
     return vars
