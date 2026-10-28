@@ -8,12 +8,12 @@ from datetime import datetime, timezone
 
 # Reference protocol latencies (ns) - fixed estimates
 REF_PROTOCOLS = {
-    'canonical/encode/medium': {'IRC': 150000, 'XMPP': 800000, 'Matrix': 2500000},
-    'envelope_verify/verify_chain/depth1': {'IRC': 50000, 'XMPP': 300000, 'Matrix': 1200000},
-    'envelope_parse/parse_envelope_bytes': {'IRC': 20000, 'XMPP': 150000, 'Matrix': 600000},
-    'event_build/make_room_message': {'IRC': 100000, 'XMPP': 500000, 'Matrix': 2000000},
-    'pool_query/get_room_channel_1k': {'IRC': 500000, 'XMPP': 2000000, 'Matrix': 8000000},
-    'crypto/ed25519_verify': {'IRC': 45000, 'XMPP': 200000, 'Matrix': 800000},
+    'canonical/encode/medium': {'IRC': 150000, 'XMPP': 800000, 'MATRIX': 2500000},
+    'envelope_verify/verify_chain/depth1': {'IRC': 50000, 'XMPP': 300000, 'MATRIX': 1200000},
+    'envelope_parse/parse_envelope_bytes': {'IRC': 20000, 'XMPP': 150000, 'MATRIX': 600000},
+    'event_build/make_room_message': {'IRC': 100000, 'XMPP': 500000, 'MATRIX': 2000000},
+    'pool_query/get_room_channel_1k': {'IRC': 500000, 'XMPP': 2000000, 'MATRIX': 8000000},
+    'crypto/ed25519_verify': {'IRC': 45000, 'XMPP': 200000, 'MATRIX': 800000},
 }
 
 CATEGORIES = [
@@ -68,13 +68,13 @@ def compute_proto_vars(data):
         toloo_ns = p.get(key, {}).get('mean_ns', 0)
         refs = REF_PROTOCOLS.get(key, {})
 
-        all_vals = [toloo_ns] + [refs.get(r, 0) for r in ['IRC', 'XMPP', 'Matrix']]
+        all_vals = [toloo_ns] + [refs.get(r, 0) for r in ['IRC', 'XMPP', 'MATRIX']]
         max_val = max(all_vals) if any(all_vals) else 1
 
         vars[f'PROTO_{prefix}_TOLOO_NS'] = f"{toloo_ns:,.0f}"
         vars[f'PROTO_{prefix}_TOLOO_PCT'] = f"{(toloo_ns / max_val * 100):.1f}"
 
-        for ref_name in ['IRC', 'XMPP', 'Matrix']:
+        for ref_name in ['IRC', 'XMPP', 'MATRIX']:
             ref_ns = refs.get(ref_name, 0)
             if ref_ns > 0:
                 vars[f'PROTO_{prefix}_{ref_name}_PCT'] = f"{(ref_ns / max_val * 100):.1f}"
