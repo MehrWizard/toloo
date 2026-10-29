@@ -202,33 +202,39 @@ pub fn verify_single(env: &Envelope) -> Result<()> {
         .context("signature verification failed")
 }
 
+/// Prepare one envelope layer for verification: payload, signature bytes, key.
+fn prepare_layer(layer: &Envelope) -> Result<(Vec<u8>, Vec<u8>, VerifyingKey)> {
+    let payload = signable_bytes_verify(&layer.d);
+
+    // Get signature bytes: prefer cached parse, fall back to decode
+    let sig_bytes: Vec<u8> = if let Some(cached) = layer.cached_sig.get() {
+        cached.to_bytes().to_vec()
+    } else {
+        let decoded = base64url::decode(&layer.p).context("invalid envelope signature encoding")?;
+        let sig_arr: [u8; SIGNATURE_BYTES] = decoded
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow!("signature must be {SIGNATURE_BYTES} bytes"))?;
+        let sig = Signature::from_bytes(&sig_arr);
+        let _ = layer.cached_sig.set(sig);
+        sig.to_bytes().to_vec()
+    };
+
+    if sig_bytes.len() != SIGNATURE_BYTES {
+        bail!("signature must be {SIGNATURE_BYTES} bytes");
+    }
+
+    let verifying = get_verifying_key(&layer.d.n)?;
+    Ok((payload, sig_bytes, verifying))
+}
+
 /// Batch-verify a slice of envelope layers.
 /// Collects (payload, signature, vk) for each layer and verifies in a single
 /// batch, achieving ~2x per-signature speedup via Pippenger multiscalar mul.
 fn batch_verify_layers(layers: &[&Envelope]) -> Result<()> {
     let mut items: Vec<(Vec<u8>, Vec<u8>, VerifyingKey)> = Vec::with_capacity(layers.len());
-
     for layer in layers {
-        let payload = signable_bytes_verify(&layer.d);
-
-        // Get signature bytes: prefer cached parse, fall back to decode
-        let sig_bytes: Vec<u8> = if let Some(cached) = layer.cached_sig.get() {
-            cached.to_bytes().to_vec()
-        } else {
-            base64url::decode(&layer.p).context("invalid envelope signature encoding")?
-        };
-
-        if sig_bytes.len() != SIGNATURE_BYTES {
-            bail!("signature must be {SIGNATURE_BYTES} bytes");
-        }
-
-        let verifying = get_verifying_key(&layer.d.n)?;
-
-        // Cache the parsed signature for future single-verify calls
-        let sig = Signature::from_bytes(&sig_bytes[..].try_into().map_err(|_| anyhow!("signature must be {SIGNATURE_BYTES} bytes"))?);
-        let _ = layer.cached_sig.set(sig);
-
-        items.push((payload, sig_bytes, verifying));
+        items.push(prepare_layer(layer)?);
     }
 
     ed25519_verify_batch(
@@ -236,39 +242,9 @@ fn batch_verify_layers(layers: &[&Envelope]) -> Result<()> {
     ).context("batch envelope signature verification failed")
 }
 
-/// Verify all signatures and signer alternation across depth.
-/// Uses batch verification for depth >= 2 and cached verification for commit layers.
-pub fn verify_chain(env: &Envelope) -> Result<()> {
-    // Fast path: depth-1 envelope (no nesting) — skip Vec allocation.
-    if env.d.env.is_none() {
-        return verify_single(env);
-    }
-
-    let chain = chain_outer_to_inner(env);
-    if chain.len() > MAX_DEPTH as usize {
-        bail!("envelope depth exceeds maximum ({MAX_DEPTH})");
-    }
-
+/// Signer-alternation checks for an outer-to-inner chain.
+fn check_signer_alternation(chain: &[&Envelope]) -> Result<()> {
     let inner = chain.last().expect("chain always has at least one layer");
-
-    // For depth >= 2, check if inner commit layer is already verified
-    if chain.len() >= 2 {
-        let commit_layer = &chain[chain.len() - 2]; // Depth-2 layer (commit)
-        if commit_layer.d.verified_layer.get().is_some() {
-            // Commit layer already verified - only batch-verify outer layers
-            batch_verify_layers(&chain[..chain.len() - 1])?;
-        } else {
-            // Batch verify ALL layers at once for ~2x per-sig speedup
-            batch_verify_layers(&chain)?;
-            // Cache the commit layer verification result
-            let _ = commit_layer.d.verified_layer.set(true);
-        }
-    } else {
-        // Depth 1 - just verify the single layer
-        verify_single(&chain[0])?;
-    }
-
-    // Signer alternation checks
     match chain.len() {
         1 => Ok(()),
         2 => {
@@ -278,8 +254,6 @@ pub fn verify_chain(env: &Envelope) -> Result<()> {
             if chain[0].d.n != expected {
                 bail!("depth-2 outer signer does not match expected receiver");
             }
-            // Cache the commit layer verification result
-            let _ = chain[0].d.verified_layer.set(true);
             Ok(())
         }
         3 => {
@@ -292,12 +266,107 @@ pub fn verify_chain(env: &Envelope) -> Result<()> {
             if chain[0].d.n != inner.d.n {
                 bail!("depth-3 outer signer must match innermost author");
             }
-            // Cache the ack layer verification result
-            let _ = chain[0].d.verified_layer.set(true);
             Ok(())
         }
         _ => bail!("unsupported envelope depth"),
     }
+}
+
+/// Cache successful verification on the commit/ack layers of a chain.
+fn mark_chain_verified(chain: &[&Envelope]) {
+    if chain.len() >= 2 {
+        let _ = chain[chain.len() - 2].d.verified_layer.set(true);
+    }
+    let _ = chain[0].d.verified_layer.set(true);
+}
+
+/// Verify all signatures and signer alternation across depth.
+/// Uses batch verification for depth >= 2.
+pub fn verify_chain(env: &Envelope) -> Result<()> {
+    let chain = chain_outer_to_inner(env);
+    if chain.len() > MAX_DEPTH as usize {
+        bail!("envelope depth exceeds maximum ({MAX_DEPTH})");
+    }
+    check_signer_alternation(&chain)?;
+
+    if chain.len() == 1 {
+        // Fast path: depth-1 envelope — single verify avoids batch setup.
+        if chain[0].d.verified_layer.get().is_none() {
+            verify_single(chain[0])?;
+        }
+    } else {
+        let pending: Vec<&Envelope> = chain
+            .iter()
+            .copied()
+            .filter(|layer| layer.d.verified_layer.get().is_none())
+            .collect();
+        if !pending.is_empty() {
+            batch_verify_layers(&pending)?;
+        }
+    }
+
+    mark_chain_verified(&chain);
+    Ok(())
+}
+
+/// Batch-verify multiple envelopes (all layers across all chains) in one
+/// multiscalar multiplication. Returns one verdict per input, in order.
+///
+/// Signer-alternation and structure are checked per chain first; malformed
+/// chains are rejected without consuming batch capacity. If the combined
+/// batch fails, verdicts are attributed per envelope via [`verify_chain`].
+pub fn verify_chains_batch(envs: &[&Envelope]) -> Vec<Result<()>> {
+    let mut results: Vec<Option<Result<()>>> = (0..envs.len()).map(|_| None).collect();
+    let mut items: Vec<(Vec<u8>, Vec<u8>, VerifyingKey)> = Vec::new();
+
+    for (i, env) in envs.iter().enumerate() {
+        let chain = chain_outer_to_inner(env);
+        if chain.len() > MAX_DEPTH as usize {
+            results[i] = Some(Err(anyhow!("envelope depth exceeds maximum ({MAX_DEPTH})")));
+            continue;
+        }
+        if let Err(e) = check_signer_alternation(&chain) {
+            results[i] = Some(Err(e));
+            continue;
+        }
+        for layer in &chain {
+            if layer.d.verified_layer.get().is_some() {
+                continue;
+            }
+            match prepare_layer(layer) {
+                Ok(item) => items.push(item),
+                Err(e) => {
+                    results[i] = Some(Err(e));
+                    break;
+                }
+            }
+        }
+    }
+
+    if !items.is_empty() {
+        let batch = ed25519_verify_batch(
+            items.iter().map(|(msg, sig, vk)| (msg.as_slice(), sig.as_slice(), vk)),
+        );
+        if batch.is_ok() {
+            for (i, env) in envs.iter().enumerate() {
+                if results[i].is_none() {
+                    mark_chain_verified(&chain_outer_to_inner(env));
+                }
+            }
+        } else {
+            // Attribute the failure per envelope. Rare (attacker-driven) path.
+            for (i, env) in envs.iter().enumerate() {
+                if results[i].is_none() {
+                    results[i] = Some(verify_chain(env));
+                }
+            }
+        }
+    }
+
+    results
+        .into_iter()
+        .map(|r| r.unwrap_or(Ok(())))
+        .collect()
 }
 
 /// Parse and validate an envelope from a raw JSON value.
@@ -458,6 +527,9 @@ fn validate_pubkey_field(value: &str, label: &str) -> Result<()> {
     if bytes.len() != PUBKEY_BYTES {
         bail!("{label} must decode to {PUBKEY_BYTES} bytes");
     }
+    // Reject non-canonical / non-decompressible points at the parse boundary so
+    // an unverifiable key can never reach storage or batch prep.
+    get_verifying_key(value).with_context(|| format!("{label} is not a valid Ed25519 public key"))?;
     Ok(())
 }
 
@@ -717,10 +789,23 @@ mod tests {
     use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
     use super::{
-        depth, innermost, make_envelope, now_ms, parse_envelope, parse_envelope_bytes, sign_envelope,
-        validate_structure, verify_chain, verify_single, wrap_commit, DatumBodyExtra,
-        envelope_to_json_bytes, VERSION,
+        depth, innermost, make_envelope, now_ms, parse_envelope, parse_envelope_bytes,
+        sign_envelope, validate_structure, verify_chain, verify_chains_batch, verify_single,
+        wrap_commit, DatumBodyExtra, envelope_to_json_bytes, VERSION,
     };
+
+    /// A 32-byte public key that is not a valid Ed25519 point.
+    fn invalid_point_pubkey() -> String {
+        for i in 0u32..10_000 {
+            let mut cand = [0u8; 32];
+            cand[..4].copy_from_slice(&i.to_le_bytes());
+            let b64 = crate::base64url::encode(&cand);
+            if crate::crypto::get_verifying_key(&b64).is_err() {
+                return b64;
+            }
+        }
+        panic!("failed to find an invalid Ed25519 point");
+    }
     fn mk_inner_room_event(author: &LocalNode, room: &LocalRoom, ts: u64) -> Envelope {
         let d = DatumBody {
             n: author.sig.pub_key.clone(),
@@ -755,6 +840,57 @@ mod tests {
         assert_eq!(innermost(&commit).d.t, "room.message");
         verify_chain(&commit).expect("depth-2 chain verify should pass");
         validate_structure(&commit).expect("structure should validate");
+    }
+
+    #[test]
+    fn verify_chains_batch_verifies_all_layers() {
+        let author = mk_node();
+        let room = mk_room();
+        let inner = mk_inner_room_event(&author, &room, 3000);
+        let commit = wrap_commit(inner, &room, 3001).expect("commit wrapping should succeed");
+        let single = make_envelope("node.meta", Some(json!({"x": 1})), &author, None)
+            .expect("make_envelope should succeed");
+
+        let refs: Vec<&Envelope> = vec![&single, &commit];
+        let verdicts = verify_chains_batch(&refs);
+        assert_eq!(verdicts.len(), 2);
+        assert!(verdicts[0].is_ok(), "depth-1 envelope should verify");
+        assert!(
+            verdicts[1].is_ok(),
+            "depth-2 commit must verify in batch (all layers): {:?}",
+            verdicts[1]
+        );
+    }
+
+    #[test]
+    fn verify_chains_batch_rejects_tampered_entries() {
+        let author = mk_node();
+        let room = mk_room();
+        let good = mk_inner_room_event(&author, &room, 3100);
+        let mut bad = mk_inner_room_event(&author, &room, 3101);
+        bad.d.c = Some(json!({"ch": 1, "body": "tampered"}));
+
+        let refs: Vec<&Envelope> = vec![&good, &bad];
+        let verdicts = verify_chains_batch(&refs);
+        assert!(verdicts[0].is_ok(), "untampered envelope should verify");
+        assert!(
+            verdicts[1].is_err(),
+            "tampered envelope must be rejected even when batched with a valid one"
+        );
+    }
+
+    #[test]
+    fn parse_envelope_rejects_invalid_point_pubkey() {
+        let node = mk_node();
+        let mut env = make_envelope("node.meta", Some(json!({"x": 1})), &node, None)
+            .expect("make_envelope should succeed");
+        env.d.n = invalid_point_pubkey();
+
+        let value = serde_json::to_value(&env).expect("serialize");
+        assert!(
+            parse_envelope(value).is_err(),
+            "pubkey that does not decompress to an Ed25519 point must be rejected at parse"
+        );
     }
 
     #[test]

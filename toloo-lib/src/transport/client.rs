@@ -78,22 +78,27 @@ pub async fn pool_exchange_ws(
 
     let mut results = Vec::new();
     while let Some(msg) = ws.next().await {
-        match msg? {
-            Message::Text(text) => {
-                if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                    if v.get("done").is_some() { break; }
-                    if v.get("error").is_some() { continue; }
-                    if v.get("wr").is_some() { continue; }
-                    if let Ok(env) = parse_envelope(v) {
-                        if verify_chain(&env).is_ok() {
-                            results.push(env);
-                        }
-                    }
+        // The relay sends responses and the `{"done":true}` terminator as
+        // binary frames; accept text frames too for older relays.
+        let value = match msg? {
+            Message::Text(text) => serde_json::from_str::<Value>(&text).ok(),
+            Message::Binary(bytes) => serde_json::from_slice::<Value>(&bytes).ok(),
+            Message::Close(_) => break,
+            Message::Ping(p) => {
+                ws.send(Message::Pong(p)).await.ok();
+                None
+            }
+            _ => None,
+        };
+        if let Some(v) = value {
+            if v.get("done").is_some() { break; }
+            if v.get("error").is_some() { continue; }
+            if v.get("wr").is_some() { continue; }
+            if let Ok(env) = parse_envelope(v) {
+                if verify_chain(&env).is_ok() {
+                    results.push(env);
                 }
             }
-            Message::Close(_) => break,
-            Message::Ping(p) => { ws.send(Message::Pong(p)).await.ok(); }
-            _ => {}
         }
     }
     let _ = ws.close(None).await;

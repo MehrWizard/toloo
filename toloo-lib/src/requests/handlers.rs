@@ -19,10 +19,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::{json, Value};
 
-use crate::base64url;
-use crate::crypto::{ed25519_verify_batch, get_verifying_key};
-use crate::envelope::{depth, envelope_to_json_bytes, innermost, make_envelope, parse_envelope, signable_bytes_verify, verify_chain, wrap_commit};
-use ed25519_dalek::VerifyingKey;
+use crate::envelope::{
+    depth, envelope_to_json_bytes, innermost, make_envelope, parse_envelope,
+    verify_chain, verify_chains_batch, wrap_commit,
+};
 use crate::ids::{datum_id, eid};
 use crate::pool::{ruleset_from_pool, Pool};
 use crate::rules::string_array;
@@ -175,7 +175,7 @@ fn handle_pool_exchange(
     let mut offered_ids: HashSet<String> = HashSet::new();
 
     // Process offer: collect full envelopes for batch verification, then store valid ones.
-    let mut offer_envelopes: Vec<(Envelope, String)> = Vec::new(); // (envelope, author_pubkey)
+    let mut offer_envelopes: Vec<Envelope> = Vec::new();
     let mut datum_id_offers: Vec<String> = Vec::new();
 
     if let Some(offer_arr) = c.get("offer").and_then(Value::as_array) {
@@ -184,9 +184,7 @@ fn handle_pool_exchange(
                 if obj.contains_key("d") && obj.contains_key("p") {
                     // Full envelope submission — parse and collect for batch verification.
                     if let Ok(env) = parse_envelope(item.clone()) {
-                        let inner = innermost(&env);
-                        let author_pubkey = inner.d.n.clone();
-                        offer_envelopes.push((env, author_pubkey));
+                        offer_envelopes.push(env);
                     }
                 } else if let Some(id) = obj.get("datum_id").and_then(Value::as_str) {
                     datum_id_offers.push(id.to_owned());
@@ -195,102 +193,46 @@ fn handle_pool_exchange(
         }
     }
 
-    // Batch verify all collected envelopes.
+    // Batch-verify every signature layer across all offered chains. Only the
+    // envelopes with an `Ok` verdict are stored — anything that could not be
+    // prepared or verified is dropped (fail closed).
     if !offer_envelopes.is_empty() {
-        // Collect owned data for batch verification.
-        let mut signables: Vec<Vec<u8>> = Vec::with_capacity(offer_envelopes.len());
-        let mut signatures: Vec<Vec<u8>> = Vec::with_capacity(offer_envelopes.len());
-        let mut verifying_keys: Vec<VerifyingKey> = Vec::with_capacity(offer_envelopes.len());
+        let refs: Vec<&Envelope> = offer_envelopes.iter().collect();
+        let verdicts = verify_chains_batch(&refs);
 
-        for (env, author_pubkey) in &offer_envelopes {
-            // Get cached verifying key for the author.
-            if let Ok(vk) = get_verifying_key(author_pubkey) {
-                // Use signable_bytes_verify (recomputes canonical, no cache) for security.
-                let inner = innermost(env);
-                let signable = signable_bytes_verify(&inner.d);
-                if !env.p.is_empty() {
-                    if let Ok(sig_bytes) = base64url::decode(&env.p) {
-                        if sig_bytes.len() == 64 {
-                            signables.push(signable);
-                            signatures.push(sig_bytes);
-                            verifying_keys.push(vk);
-                        }
-                    }
-                }
+        for (env, verdict) in offer_envelopes.into_iter().zip(verdicts) {
+            if verdict.is_err() {
+                continue;
             }
-        }
+            let inner = innermost(&env);
 
-        // Perform batch verification using owned data.
-        let batch_result = if !signables.is_empty() {
-            let msg_refs: Vec<&[u8]> = signables.iter().map(|v| v.as_slice()).collect();
-            let sig_refs: Vec<&[u8]> = signatures.iter().map(|v| v.as_slice()).collect();
-            let vk_refs: Vec<&VerifyingKey> = verifying_keys.iter().collect();
-            ed25519_verify_batch(msg_refs.iter().zip(sig_refs.iter()).zip(vk_refs.iter()).map(
-                |((m, s), vk)| (*m, *s, *vk),
-            ))
-        } else {
-            Err(anyhow::anyhow!("no valid items for batch verification"))
-        };
+            // §13.3 — reject events from locally blocked nodes.
+            if pool.is_blocked(&inner.d.n).unwrap_or(false) {
+                continue;
+            }
 
-        // Process verified envelopes.
-        if batch_result.is_ok() {
-            // All signatures valid — now process each envelope.
-            for (env, _author_pubkey) in offer_envelopes {
-                let inner = innermost(&env);
-
-                // §13.3 — reject events from locally blocked nodes.
-                if pool.is_blocked(&inner.d.n).unwrap_or(false) {
+            // Route side-events to their dedicated stores.
+            match inner.d.t.as_str() {
+                "side.attestation" => {
+                    let _ = pool.put_attestation(&env);
                     continue;
                 }
-
-                // Route side-events to their dedicated stores.
-                match inner.d.t.as_str() {
-                    "side.attestation" => {
-                        let _ = pool.put_attestation(&env);
-                        continue;
-                    }
-                    "room.flag" => {
-                        let _ = pool.put_flag(&env);
-                        // Also store in main pool for replication.
-                    }
-                    _ => {}
+                "room.flag" => {
+                    let _ = pool.put_flag(&env);
+                    // Also store in main pool for replication.
                 }
-
-                // Track the original datum_id (what this peer already has).
-                // If the relay auto-commits it (depth-1 → depth-2), the committed
-                // envelope has a DIFFERENT datum_id and must NOT be excluded from
-                // the response — so the peer receives the commit in this same
-                // pool.exchange roundtrip instead of waiting for the next sync.
-                let original_id = datum_id(&env);
-                let stored_env = maybe_commit(env, pool, config);
-                if pool.put(&stored_env).is_ok() {
-                    offered_ids.insert(original_id);
-                }
+                _ => {}
             }
-        } else {
-            // Batch verification failed — fall back to individual verification for diagnostics
-            // (but in production, we just reject the whole batch for security).
-            for (env, _author_pubkey) in offer_envelopes {
-                let inner = innermost(&env);
-                if verify_chain(&env).is_ok()
-                    && !pool.is_blocked(&inner.d.n).unwrap_or(false)
-                {
-                    match inner.d.t.as_str() {
-                        "side.attestation" => {
-                            let _ = pool.put_attestation(&env);
-                            continue;
-                        }
-                        "room.flag" => {
-                            let _ = pool.put_flag(&env);
-                        }
-                        _ => {}
-                    }
-                    let original_id = datum_id(&env);
-                    let stored_env = maybe_commit(env, pool, config);
-                    if pool.put(&stored_env).is_ok() {
-                        offered_ids.insert(original_id);
-                    }
-                }
+
+            // Track the original datum_id (what this peer already has).
+            // If the relay auto-commits it (depth-1 → depth-2), the committed
+            // envelope has a DIFFERENT datum_id and must NOT be excluded from
+            // the response — so the peer receives the commit in this same
+            // pool.exchange roundtrip instead of waiting for the next sync.
+            let original_id = datum_id(&env);
+            let stored_env = maybe_commit(env, pool, config);
+            if pool.put(&stored_env).is_ok() {
+                offered_ids.insert(original_id);
             }
         }
     }
@@ -879,6 +821,41 @@ mod tests {
         let id = datum_id(&commit);
         let stored = pool.get(&id).unwrap();
         assert!(stored.is_some(), "submitted envelope should be in pool");
+    }
+
+    #[tokio::test]
+    async fn pool_exchange_stores_only_verified_envelopes() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let requester = mk_node();
+        let valid_author = mk_node();
+        let bad_author = mk_node();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let valid = make_node_meta(&valid_author, vec![]).unwrap();
+
+        // Structurally valid envelope whose signature cannot verify.
+        let mut bad = make_node_meta(&bad_author, vec![]).unwrap();
+        bad.p = crate::base64url::encode(&[0u8; 64]);
+
+        let valid_val = serde_json::to_value(&valid).unwrap();
+        let bad_val = serde_json::to_value(&bad).unwrap();
+
+        let req = make_request(
+            &requester,
+            "pool.exchange",
+            json!({"offer": [valid_val, bad_val], "want": {}}),
+        );
+        handle_request(req, &pool, &config).await.unwrap();
+
+        assert!(
+            pool.get(&datum_id(&valid)).unwrap().is_some(),
+            "valid envelope must be stored"
+        );
+        assert!(
+            pool.get(&datum_id(&bad)).unwrap().is_none(),
+            "SECURITY: unverified envelope must never be stored"
+        );
     }
 
     #[tokio::test]

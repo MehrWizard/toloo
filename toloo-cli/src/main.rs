@@ -386,7 +386,7 @@ async fn cmd_send(
     let join_json = serde_json::to_string(&join_env)?;
 
     // Sign the message.
-    let msg_env  = make_room_message(&node, &room_pub, 0, &body, vec![])?;
+    let msg_env  = make_room_message(&node, &room_pub, 1, &body, vec![])?;
     let msg_json = serde_json::to_string(&msg_env)?;
     let event_id = eid(&msg_env);
 

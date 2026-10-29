@@ -112,6 +112,18 @@ pub async fn run_relay(config: Arc<RelayConfig>) -> Result<()> {
 
     let local = LocalSet::new();
 
+    // Start the batch processor from inside the LocalSet — `spawn_local`
+    // panics when called outside one, and callers construct the processor
+    // before entering `run_relay`.
+    if config.batch_processor.is_some() {
+        let cfg = Arc::clone(&config);
+        local.spawn_local(async move {
+            if let Some(bp) = cfg.batch_processor.as_ref() {
+                bp.start();
+            }
+        });
+    }
+
     for ep in &config.endpoints {
         let cfg = Arc::clone(&config);
         let addr = ep.addr;

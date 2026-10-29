@@ -24,7 +24,6 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use std::hash::Hasher;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::cell::UnsafeCell;
 use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
@@ -121,8 +120,8 @@ pub type BlocklistEntry = (String, String, Option<String>, u64);
 /// Uses DashMap for lock-free reads on primary indexes.
 struct Shard {
     /// Live events in insertion order; `None` marks a removed slot.
-    /// Wrapped in UnsafeCell to allow mutation through &Shard when write_mutex is held.
-    events: UnsafeCell<Vec<Option<Arc<PoolEntry>>>>,
+    /// Live events in insertion order; `None` marks a removed/spilled slot.
+    events: RwLock<Vec<Option<Arc<PoolEntry>>>>,
     /// id -> index in events vec (lock-free reads)
     by_id: DashMap<String, usize>,
     /// (room, channel) -> list of event indices (for get_room_channel) (lock-free reads)
@@ -145,7 +144,7 @@ struct Shard {
 impl Default for Shard {
     fn default() -> Self {
         Self {
-            events: UnsafeCell::new(Vec::new()),
+            events: RwLock::new(Vec::new()),
             by_id: DashMap::new(),
             by_room_channel: DashMap::new(),
             by_room_tc: RwLock::new(BTreeMap::new()),
@@ -156,9 +155,10 @@ impl Default for Shard {
     }
 }
 
-/// SAFETY: Shard uses UnsafeCell for events, but all mutations are protected by write_mutex.
-/// All other fields (DashMap, RwLock) are thread-safe.
-unsafe impl Sync for Shard {}
+// `write_mutex` serializes writers (atomic multi-index updates); `events` is
+// separately RwLock-protected so readers never race a Vec reallocation.
+// Locking rule: a writer releases the `events` lock before taking an index
+// lock, while readers take the index lock first, then the `events` lock.
 
 /// Pool entry with Arc<Envelope> for zero-copy sharing.
 /// Uses `InternedStr` (Arc<str>) for string fields to enable zero-copy cloning
@@ -369,7 +369,7 @@ impl Pool {
     pub(crate) fn select<F: Fn(&PoolEntry) -> bool + Sync>(&self, pred: F) -> Result<Vec<PoolEntry>> {
         let mut out = Vec::new();
         self.read_all_shards(|shard| {
-            for entry_opt in unsafe { &*shard.events.get() } {
+            for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                 if let Some(entry) = entry_opt {
                     if pred(entry.as_ref()) {
                         out.push(entry.as_ref().clone());
@@ -495,7 +495,7 @@ impl Pool {
         let total_live = {
             let mut count = 0;
             self.read_all_shards(|shard| {
-                count += unsafe { &*shard.events.get() }.iter().filter(|e| e.is_some()).count();
+                count += shard.events.read().expect("events lock poisoned").iter().filter(|e| e.is_some()).count();
             });
             count
         };
@@ -511,7 +511,7 @@ impl Pool {
         let spill_ids: Vec<String> = {
             let mut all_events: Vec<(u64, String, usize, usize)> = Vec::new(); // (ts, id, shard_idx, event_idx)
             for (shard_idx, shard) in self.shards.iter().enumerate() {
-                for (event_idx, entry_opt) in unsafe { &*shard.events.get() }.iter().enumerate() {
+                for (event_idx, entry_opt) in shard.events.read().expect("events lock poisoned").iter().enumerate() {
                     if let Some(entry) = entry_opt {
                         all_events.push((entry.ts, entry.id.clone(), shard_idx, event_idx));
                     }
@@ -585,18 +585,27 @@ impl Pool {
         std::fs::rename(&tmp, hot_path)
             .with_context(|| format!("replace hot log {}", hot_path.display()))?;
 
-        // Remove spilled events from memory indexes across all shards
+        // Remove spilled events from memory across all shards. Slots are set to
+        // `None` so the envelope data is dropped (bounding resident memory);
+        // indexes are then rebuilt from the surviving entries.
         for shard in &self.shards {
-            // We need mutable access to shard, but we're in &self.
-            // For spill operations, we use the by_id DashMap to remove entries.
-            // Note: events vec is not cleaned up here to avoid shifting indices.
-            // Stale entries are filtered at query time.
-            for id in &spill_set {
-                shard.by_id.remove(id);
-                // Secondary indexes will be cleaned up on next compact/rebuild
+            let _guard = shard.write_mutex.lock().map_err(lock_err)?;
+            {
+                // SAFETY: we hold this shard's write_mutex, giving exclusive
+                // access to `events`.
+                let mut events = shard.events.write().expect("events lock poisoned");
+                for id in &spill_set {
+                    if let Some((_, idx)) = shard.by_id.remove(id) {
+                        let matches = events
+                            .get(idx)
+                            .and_then(|slot| slot.as_ref())
+                            .is_some_and(|entry| &entry.id == id);
+                        if matches {
+                            events[idx] = None;
+                        }
+                    }
+                }
             }
-            // Rebuild secondary indexes from remaining events
-            // SAFETY: We hold the shard's write_mutex, giving exclusive access.
             rebuild_indexes(shard);
         }
 
@@ -638,6 +647,13 @@ impl Pool {
         let Some(p) = &self.persist else {
             return Ok(());
         };
+        // In tiered mode the hot log is rewritten by the spill path; serialize
+        // appends with the same lock so a rewrite cannot drop an appended event.
+        let _lock = if p.config.max_resident_blocks > 0 {
+            Some(p.spill_lock.lock().map_err(lock_err)?)
+        } else {
+            None
+        };
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -678,7 +694,7 @@ impl Pool {
             // Collect all live entries across shards, sorted by insertion order
             let mut all_entries: Vec<(usize, Arc<PoolEntry>)> = Vec::new();
             for (shard_idx, shard) in self.shards.iter().enumerate() {
-                for (_event_idx, entry_opt) in unsafe { &*shard.events.get() }.iter().enumerate() {
+                for (_event_idx, entry_opt) in shard.events.read().expect("events lock poisoned").iter().enumerate() {
                     if let Some(entry) = entry_opt {
                         all_entries.push((shard_idx, entry.clone()));
                     }
@@ -732,7 +748,7 @@ impl Pool {
         let hot_ids: HashSet<String> = {
             let mut ids = HashSet::new();
             self.read_all_shards(|shard| {
-                for entry_opt in unsafe { &*shard.events.get() } {
+                for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                     if let Some(entry) = entry_opt {
                         ids.insert(entry.id.clone());
                     }
@@ -802,10 +818,11 @@ impl Pool {
             let channel_opt = channel_of(&inner.d);
             let superseded: Vec<String> = if let Some(room_ref) = &key_room {
                 if let Some(channel) = channel_opt {
-                    // Use secondary index for O(1) lookup (lock-free read)
+                    // Use secondary index for O(1) lookup
                     if let Some(indices) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
+                        let events = shard.events.read().expect("events lock poisoned");
                         indices.iter()
-                            .filter_map(|&idx| unsafe { &*shard.events.get() }[idx].as_ref())
+                            .filter_map(|&idx| events[idx].as_ref())
                             .filter(|e| {
                                 // eid match: same room + signer + ts + channel
                                 let matches_key = e.room.as_deref() == Some(room_ref.as_str())
@@ -901,8 +918,9 @@ impl Pool {
                 let channel_opt = channel_of(&inner.d);
                 let superseded: Vec<String> = if let (Some(room_ref), Some(channel)) = (room.as_ref(), channel_opt) {
                     if let Some(indices) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
+                        let events = shard.events.read().expect("events lock poisoned");
                         indices.iter()
-                            .filter_map(|&idx| unsafe { &*shard.events.get() }[idx].as_ref())
+                            .filter_map(|&idx| events[idx].as_ref())
                             .filter(|e| {
                                 let matches_key = e.room.as_deref() == Some(room_ref.as_str())
                                     && e.n.as_ref() == inner.d.n.as_str()
@@ -953,7 +971,7 @@ impl Pool {
         for shard in &self.shards {
             if let Some(idx) = shard.by_id.get(id) {
                 let idx = *idx;
-                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
                     return Ok(Some((*entry.env).clone()));
                 }
             }
@@ -967,8 +985,9 @@ impl Pool {
         let indices = shard.by_room_channel.get(&(room.to_string(), channel));
         let mut out = Vec::new();
         if let Some(indices) = indices {
+            let events = shard.events.read().expect("events lock poisoned");
             for &idx in indices.value() {
-                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                if let Some(entry) = &events[idx] {
                     out.push(entry.as_ref().clone());
                 }
             }
@@ -984,7 +1003,7 @@ impl Pool {
         // Use by_room_tc index for O(log n) lookup (need read lock for BTreeMap)
         let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
         if let Some((_, &idx)) = by_room_tc.iter().rev().find(|((r, _), _)| r.as_ref() == room) {
-            if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+            if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
                 if let Some(tc) = entry.tc {
                     return Ok(tc);
                 }
@@ -1001,7 +1020,7 @@ impl Pool {
         let mut max_tc = 0u64;
         if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -1)) {
             for &idx in indices.value() {
-                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
                     if let Some(tc) = entry.tc {
                         max_tc = max_tc.max(tc);
                     }
@@ -1010,7 +1029,7 @@ impl Pool {
         }
         if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -2)) {
             for &idx in indices.value() {
-                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
                     if let Some(tc) = entry.tc {
                         max_tc = max_tc.max(tc);
                     }
@@ -1032,13 +1051,13 @@ impl Pool {
         let mut out = Vec::new();
         if let Some(indices) = indices {
             for &idx in indices.value() {
-                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
                     out.push(entry.id.clone());
                 }
             }
         } else {
             // Fallback: scan all events in this shard
-            for entry_opt in unsafe { &*shard.events.get() } {
+            for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                 if let Some(entry) = entry_opt {
                     if entry.room.as_deref() == Some(room) {
                         out.push(entry.id.clone());
@@ -1146,9 +1165,10 @@ impl Pool {
             for shard in &self.shards {
                 // by_room_tc uses InternedStr (Arc<str>) for room key (need read lock for BTreeMap)
                 let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
+                let events = shard.events.read().expect("events lock poisoned");
                 let range = by_room_tc.range((InternedStr::from(""), after_tc + 1)..);
                 for (_, &idx) in range.take(limit * 2) { // take extra for filtering
-                    if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                    if let Some(entry) = &events[idx] {
                         if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
                             continue;
                         }
@@ -1165,9 +1185,10 @@ impl Pool {
                 let shard_idx = Self::shard_idx(Some(room));
                 let shard = &self.shards[shard_idx];
                 let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
+                let events = shard.events.read().expect("events lock poisoned");
                 let range = by_room_tc.range((InternedStr::from(room.as_ref()), after_tc + 1)..);
                 for (_, &idx) in range.take(limit * 2) {
-                    if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                    if let Some(entry) = &events[idx] {
                         if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
                             continue;
                         }
@@ -1252,8 +1273,9 @@ impl Pool {
 
         let mut out = Vec::new();
         if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), channel)) {
+            let events = shard.events.read().expect("events lock poisoned");
             for &idx in indices.value() {
-                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                if let Some(entry) = &events[idx] {
                     let tc = match entry.tc {
                         Some(tc) if tc >= start_tc => tc,
                         _ => continue,
@@ -1288,7 +1310,7 @@ impl Pool {
     pub fn get_room_channel_stats(&self, room: &str) -> Result<Vec<(i32, u64, u64)>> {
         let shard = self.shard(Some(room));
         let mut per_channel: HashMap<i32, (u64, u64)> = HashMap::new();
-        for entry_opt in unsafe { &*shard.events.get() } {
+        for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
             if let Some(entry) = entry_opt {
                 let Some(tc) = entry.tc else { continue };
                 let Some(ch) = entry.channel else { continue };
@@ -1312,7 +1334,7 @@ impl Pool {
     pub fn get_node_rooms(&self, node_pub: &str) -> Result<Vec<String>> {
         let mut rooms: HashSet<String> = HashSet::new();
         self.read_all_shards(|shard| {
-            for entry_opt in unsafe { &*shard.events.get() } {
+            for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                 if let Some(entry) = entry_opt {
                     if entry.n.as_ref() == node_pub {
                         if let Some(r) = &entry.room {
@@ -1724,7 +1746,7 @@ impl Pool {
         let shard = &self.shards[shard_idx];
 
         let removed = {
-            let ids: Vec<String> = unsafe { &*shard.events.get() }
+            let ids: Vec<String> = shard.events.read().expect("events lock poisoned")
                 .iter()
                 .filter_map(|s| s.as_ref())
                 .filter(|e| {
@@ -1760,7 +1782,7 @@ impl Pool {
         let rooms: Vec<String> = {
             let mut rooms = HashSet::new();
             self.read_all_shards(|shard| {
-                for entry_opt in unsafe { &*shard.events.get() } {
+                for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                     if let Some(entry) = entry_opt {
                         if let Some(r) = &entry.room {
                             rooms.insert(r.clone());
@@ -1791,7 +1813,7 @@ impl Pool {
         let shard = &self.shards[shard_idx];
 
         let removed = {
-            let ids: Vec<String> = unsafe { &*shard.events.get() }
+            let ids: Vec<String> = shard.events.read().expect("events lock poisoned")
                 .iter()
                 .filter_map(|s| s.as_ref())
                 .filter(|e| e.room.as_deref() == Some(room) && e.tc.is_none() && e.ts < threshold)
@@ -1823,13 +1845,13 @@ impl Pool {
         let mut out = Vec::new();
         if let Some(indices) = indices {
             for &idx in indices.value() {
-                if let Some(entry) = &unsafe { &*shard.events.get() }[idx] {
+                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
                     out.push((entry.ts, entry.id.clone(), entry.env.clone()));
                 }
             }
         } else {
             // Fallback
-            for entry_opt in unsafe { &*shard.events.get() } {
+            for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                 if let Some(entry) = entry_opt {
                     if entry.room.as_deref() == Some(room) {
                         out.push((entry.ts, entry.id.clone(), entry.env.clone()));
@@ -1879,10 +1901,14 @@ fn insert_new(shard: &Shard, env: &Envelope) {
         event_type: InternedStr::from(inner.d.t.clone()),
         channel: channel_of(&inner.d),
     });
-    // SAFETY: Caller holds shard.write_mutex, giving exclusive access to shard.events
-    let events = unsafe { &mut *shard.events.get() };
-    let idx = events.len();
-    events.push(Some(entry.clone()));
+    // Scope the events write lock: never hold it while taking an index lock
+    // (readers take index locks first, then the events lock).
+    let idx = {
+        let mut events = shard.events.write().expect("events lock poisoned");
+        let idx = events.len();
+        events.push(Some(entry.clone()));
+        idx
+    };
     shard.by_id.insert(id, idx);
 
     // Update secondary indexes
@@ -1906,27 +1932,48 @@ fn insert_new(shard: &Shard, env: &Envelope) {
 
 fn remove_id(shard: &Shard, id: &str) {
     if let Some((_, idx)) = shard.by_id.remove(id) {
-        // SAFETY: Caller holds shard.write_mutex, giving exclusive access to shard.events
-        let events = unsafe { &mut *shard.events.get() };
-        events[idx] = None;
-        // Note: Secondary indexes are not cleaned up here for performance.
+        let mut events = shard.events.write().expect("events lock poisoned");
+        let matches = events
+            .get(idx)
+            .and_then(|slot| slot.as_ref())
+            .is_some_and(|entry| entry.id == id);
+        if matches {
+            events[idx] = None;
+        }
+        // Secondary indexes are not cleaned up here for performance.
         // They are rebuilt on compact() and prune_retention().
         // Stale index entries are filtered out at query time by checking events[idx].is_some().
     }
 }
 
 /// Rebuild all secondary indexes from the current events vector.
+///
+/// Caller must hold the shard's `write_mutex`. The events lock is released
+/// before the index locks are taken to preserve the readers' lock order
+/// (index read → events read).
 fn rebuild_indexes(shard: &Shard) {
-    shard.by_room_channel.clear();
-    shard.by_room_tc.write().expect("by_room_tc lock poisoned").clear();
-    shard.by_author_room_tc.write().expect("by_author_room_tc lock poisoned").clear();
+    let snapshot: Vec<Option<Arc<PoolEntry>>> = shard
+        .events
+        .read()
+        .expect("events lock poisoned")
+        .clone();
 
-    for (idx, entry_opt) in unsafe { &*shard.events.get() }.iter().enumerate() {
+    shard.by_room_channel.clear();
+    let mut by_room_tc = shard.by_room_tc.write().expect("by_room_tc lock poisoned");
+    let mut by_author_room_tc = shard
+        .by_author_room_tc
+        .write()
+        .expect("by_author_room_tc lock poisoned");
+    by_room_tc.clear();
+    by_author_room_tc.clear();
+
+    for (idx, entry_opt) in snapshot.iter().enumerate() {
         if let Some(entry) = entry_opt {
             if let Some(room) = &entry.room {
                 if let Some(ch) = entry.channel {
                     // by_room_channel uses String for fast &str lookup
-                    shard.by_room_channel
+                    shard
+                        .by_room_channel
                         .entry((room.as_ref().to_string(), ch))
                         .or_default()
                         .push(idx);
@@ -1935,8 +1982,8 @@ fn rebuild_indexes(shard: &Shard) {
             if let Some(tc) = entry.tc {
                 if let Some(room) = &entry.room {
                     // by_room_tc and by_author_room_tc use InternedStr for shared allocation
-                    shard.by_room_tc.write().expect("by_room_tc lock poisoned").insert((room.clone(), tc), idx);
-                    shard.by_author_room_tc.write().expect("by_author_room_tc lock poisoned").insert((entry.n.clone(), room.clone(), tc), idx);
+                    by_room_tc.insert((room.clone(), tc), idx);
+                    by_author_room_tc.insert((entry.n.clone(), room.clone(), tc), idx);
                 }
             }
         }
