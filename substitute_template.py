@@ -93,7 +93,14 @@ def compute_proto_vars(data):
             ref_ns = refs.get(ref_name, 0)
             if ref_ns > 0:
                 vars[f'PROTO_{prefix}_{ref_name}_PCT'] = f"{log_pct(ref_ns):.1f}%"
-                vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = f"{round(ref_ns / toloo_ns):,}" if toloo_ns > 0 else "N/A"
+                if toloo_ns > 0:
+                    ratio_val = ref_ns / toloo_ns
+                    vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = (
+                        f"{ratio_val:.1f}" if ratio_val < 10
+                        else f"{round(ratio_val):,}"
+                    )
+                else:
+                    vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = "N/A"
             else:
                 vars[f'PROTO_{prefix}_{ref_name}_PCT'] = "0%"
                 vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = "N/A"
