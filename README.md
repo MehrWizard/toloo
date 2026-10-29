@@ -257,6 +257,35 @@ targets in parallel and creates a GitHub Release:
 Android APKs are only produced when signing secrets are configured: `KEYSTORE_BASE64`,
 `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. Unsigned APKs are never published.
 
+### CI / Benchmarks
+
+`.github/workflows/benchmark.yml` runs microbenchmarks across 5 platforms
+(linux-x86, linux-arm, windows, macos-x86, macos-arm) and publishes results
+to [`MehrWizard/toloo-benchmarks`](https://github.com/MehrWizard/toloo-benchmarks)
+with a live static HTML dashboard. Full details in [`THROUGHPUT_AUDIT.md`](./THROUGHPUT_AUDIT.md).
+
+```sh
+# Run benchmarks locally (5 minutes, 20 iterations)
+cd toloo-lib && cargo bench --bench canonical_bench
+```
+
+---
+
+### Throughput vs IRC/XMPP/Matrix
+
+Measured on CI (commit 90c1d20, all optimizations, linux-x86):
+
+| Category | Toloo (ns) | IRC (ns) | Ratio |
+|----------|-----------|----------|-------|
+| ed25519 verify (single-sig) | 24,389 | 45,000 | 1.85x slower |
+| ed25519 verify (batch-10, per-sig) | 12,071 | 45,000 | **3.73x faster** ✅ |
+| Envelope verify (depth-1) | 26,027 | 50,000 | 1.92x slower |
+| Canonical encode (medium) | 1,605 | 150,000 | 93x faster ✅ |
+
+**2x is achievable with batch verification** on linux-x86 (3.73x), windows (3.07x),
+and linux-arm (2.09x). Single-signature verification does not reach 2x on any Linux/Windows
+platform; macOS runners beat IRC (Rosetta overhead aside) due to slower reference estimates.
+
 ---
 
 ## Execution model
