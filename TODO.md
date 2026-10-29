@@ -25,6 +25,17 @@ git. Current remaining work, in priority order:
 - [ ] `toloo-js` `selfTest()` against the regenerated Appendix E vectors
       (the JS client still has zero tests)
 
+## CI & Benchmarking (Complete)
+
+- [x] GitHub Actions benchmark workflow (`.github/workflows/benchmark.yml`)
+      — 5 platforms (linux-x86, linux-arm, windows, macos-x86, macos-arm)
+      with `continue-on-error: true` and `if: always()` resilience
+- [x] Aggregation into `results/latest.json` with per-platform `mean_ns`, `median_ns`, `std_dev_ns`
+- [x] Static HTML benchmark visualization (`index.html.template` + `substitute_template.py`)
+      — log-scale bars, parity detection, CSS hover tooltips, equal-width columns
+- [x] Cross-repo push to `MehrWizard/toloo-benchmarks` with per-commit results
+- [x] Baseline comparison with 10%/20% regression thresholds (non-blocking)
+
 ## Design gap: app relay identity is not persistent
 
 The app generates a fresh relay keypair and a fresh self-signed TLS cert
