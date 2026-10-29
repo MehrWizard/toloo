@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use crate::memzero::Zeroize;
@@ -10,6 +11,8 @@ use crate::memzero::Zeroize;
 pub struct Envelope {
     pub d: DatumBody,
     pub p: String,
+    #[serde(skip)]
+    pub cached_sig: OnceLock<Signature>,
 }
 
 impl Default for DatumBody {

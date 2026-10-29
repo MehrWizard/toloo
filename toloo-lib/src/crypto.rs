@@ -87,6 +87,14 @@ pub fn ed25519_verify(message: &[u8], sig: &[u8], pub_key_b64: &str) -> Result<(
         .context("Ed25519 signature verification failed")
 }
 
+/// Verify Ed25519 signature with pre-parsed Signature and VerifyingKey.
+/// Use when both are already cached to avoid redundant decoding/lookup overhead.
+pub fn ed25519_verify_fast(message: &[u8], signature: &Signature, verifying: &VerifyingKey) -> Result<()> {
+    verifying
+        .verify(message, signature)
+        .context("Ed25519 signature verification failed")
+}
+
 /// Verify Ed25519 signature with raw public key bytes (no cache).
 /// Use when public key is not in base64url format.
 pub fn ed25519_verify_raw(message: &[u8], sig: &[u8], pub_key: &[u8]) -> Result<()> {

@@ -1,12 +1,14 @@
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
+use ed25519_dalek::Signature;
 use serde_json::Value;
 use simd_json;
 
 use crate::base64url;
 use crate::canonical::{canonical, canonical_bytes, canonical_datum_bytes};
-use crate::crypto::{ed25519_sign, ed25519_verify};
+use crate::crypto::{ed25519_sign, ed25519_verify_fast, get_verifying_key};
 use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
 const VERSION: &str = "0.2";
@@ -38,7 +40,7 @@ pub fn signable_bytes(d: &DatumBody) -> Vec<u8> {
 }
 
 /// Signable payload bytes for verification: utf8(canonical(d)).
-/// Always recomputes to detect tampering (untrusted path).
+/// Always recomputes canonical bytes to detect tampering (untrusted path).
 pub fn signable_bytes_verify(d: &DatumBody) -> Vec<u8> {
     canonical(d).expect("DatumBody canonical serialization should not fail").into_bytes()
 }
@@ -58,7 +60,7 @@ pub fn sign_envelope(d: DatumBody, signer_seed: &str) -> Result<Envelope> {
         bail!("signature must be {P_SIGNATURE_LEN_B64} base64url chars");
     }
 
-    Ok(Envelope { d, p })
+    Ok(Envelope { d, p, cached_sig: OnceLock::new() })
 }
 
 /// Construct and sign a depth-1 envelope from event content.
@@ -160,22 +162,42 @@ pub fn depth(env: &Envelope) -> u8 {
 /// Verify one envelope layer signature only.
 pub fn verify_single(env: &Envelope) -> Result<()> {
     let payload = signable_bytes_verify(&env.d);
-    let sig = base64url::decode(&env.p).context("invalid envelope signature encoding")?;
-    if sig.len() != SIGNATURE_BYTES {
-        bail!("signature must decode to {SIGNATURE_BYTES} bytes");
-    }
+
+    // Cached signature parse: decode base64url once, reuse on subsequent calls.
+    let signature: &Signature = if let Some(cached) = env.cached_sig.get() {
+        cached
+    } else {
+        let sig_bytes = base64url::decode(&env.p).context("invalid envelope signature encoding")?;
+        if sig_bytes.len() != SIGNATURE_BYTES {
+            bail!("signature must decode to {SIGNATURE_BYTES} bytes");
+        }
+        let sig_arr: [u8; 64] = sig_bytes
+            .try_into()
+            .map_err(|_| anyhow!("signature must be {SIGNATURE_BYTES} bytes"))?;
+        let sig = Signature::from_bytes(&sig_arr);
+        // Best-effort cache; if another thread already set it, that's fine.
+        let _ = env.cached_sig.set(sig);
+        env.cached_sig.get().unwrap()
+    };
 
     // env.d.n is already base64url-encoded; pass directly to use cache.
     if env.d.n.len() != N_PUBKEY_LEN_B64 {
         bail!("signer pubkey must be {N_PUBKEY_LEN_B64} chars");
     }
 
-    ed25519_verify(&payload, &sig, &env.d.n).context("signature verification failed")
+    let verifying = get_verifying_key(&env.d.n)?;
+    ed25519_verify_fast(&payload, signature, &verifying)
+        .context("signature verification failed")
 }
 
 /// Verify all signatures and signer alternation across depth.
 /// Uses cached verification for commit/ack layers when available.
 pub fn verify_chain(env: &Envelope) -> Result<()> {
+    // Fast path: depth-1 envelope (no nesting) — skip Vec allocation.
+    if env.d.env.is_none() {
+        return verify_single(env);
+    }
+
     let chain = chain_outer_to_inner(env);
     if chain.len() > MAX_DEPTH as usize {
         bail!("envelope depth exceeds maximum ({MAX_DEPTH})");

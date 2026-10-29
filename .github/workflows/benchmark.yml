@@ -64,6 +64,8 @@ jobs:
 
       - name: Run benchmarks
         working-directory: toloo-lib
+        env:
+          RUSTFLAGS: '--cfg curve25519_dalek_backend="simd"'
         run: |
           set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
@@ -125,6 +127,8 @@ jobs:
 
       - name: Run benchmarks
         working-directory: toloo-lib
+        env:
+          RUSTFLAGS: '--cfg curve25519_dalek_backend="simd"'
         run: |
           set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
@@ -183,6 +187,8 @@ jobs:
       - name: Run benchmarks
         working-directory: toloo-lib
         shell: pwsh
+        env:
+          RUSTFLAGS: '--cfg curve25519_dalek_backend="simd"'
         run: |
           cargo bench --bench canonical_bench 2>&1 | Tee-Object -FilePath ../bench-results.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -239,6 +245,8 @@ jobs:
 
       - name: Run benchmarks
         working-directory: toloo-lib
+        env:
+          RUSTFLAGS: '--cfg curve25519_dalek_backend="simd"'
         run: |
           set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
@@ -297,6 +305,8 @@ jobs:
 
       - name: Run benchmarks
         working-directory: toloo-lib
+        env:
+          RUSTFLAGS: '--cfg curve25519_dalek_backend="simd"'
         run: |
           set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
