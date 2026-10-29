@@ -343,35 +343,47 @@ The Toloo protocol is well-architected with sharded locking (16 shards), `Arc<En
 | `get_verifying_key` DashMap cache | `crypto.rs` | ✅ Done | Parse `VerifyingKey` once per pubkey |
 | Depth-1 fast path in `verify_chain` | `envelope.rs` | ✅ Done | Skip `Vec` allocation for depth-1 envelopes |
 | `signable_bytes_verify` recompute canonical | `envelope.rs` | ✅ Done | Fixed tamper-detection test failure |
+| Direct-to-bytes canonical JSON | `canonical.rs` | ✅ Done | Eliminates String→bytes conversion |
+| Thread-local payload buffer | `envelope.rs` | ✅ Done | Reuses Vec across verify calls |
+| Batch layer verification (depth ≥ 2) | `envelope.rs` | ✅ Done | Pippenger multiscalar for commit+room chains |
 
-**SIMD backend analysis:** `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` enables AVX2/NEON-accelerated field arithmetic in `curve25519-dalek` v5. CI testing showed the SIMD backend is **slower** on Intel Xeon runners (AVX2 frequency throttling: 8-15% regression on ed25519 ops). Removed the flag from CI workflow. On AMD Ryzen or Apple Silicon (where SIMD doesn't throttle), the ~20-34% speedup would push single-signature closer to 2x — re-enable with `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` for specific deployment targets.
+## Files Modified (Phase 6)
 
-**CI benchmark results (4a86c77, no SIMD flag — latest run):**
+19. ✅ `toloo-lib/src/canonical.rs` — `canonical_value_bytes_into()` writes directly to buffer, no reallocation
+20. ✅ `toloo-lib/src/envelope.rs` — `signable_bytes_verify` uses thread-local `VERIFY_PAYLOAD_BUF`; `batch_verify_layers` for depth ≥ 2
+21. ✅ `toloo-lib/src/envelope.rs` — `verify_chain` uses batch for depth ≥ 2, single-fast-path for depth 1
+22. ✅ `toloo-lib/src/crypto.rs` — `ed25519_verify_batch` added, `get_verifying_key` uses DashMap cache
+23. ✅ `toloo-lib/Cargo.toml` — upgraded `x25519-dalek` v2→v3 (eliminates `curve25519-dalek v4.1.3` build conflict)
+24. ✅ `.cargo/config.toml` — removed (SIMD `simd` backend requires nightly; breaks stable CI on 3/5 platforms)
+
+**SIMD backend analysis:** `curve25519-dalek v5`'s `simd` backend requires nightly Rust (the build script panics on stable when `--cfg curve25519_dalek_backend="simd"` is set). The `.cargo/config.toml` that enabled this for aarch64 targets was removed because: (1) it broke 3/5 CI platforms (macOS x86_64, macOS aarch64, Linux aarch64) due to a `curve25519-dalek v4.1.3` panic from the transitive `x25519-dalek v2` dependency — fixed by upgrading `x25519-dalek` to v3 which uses `curve25519-dalek v5`; (2) even after the upgrade, `curve25519-dalek v5`'s build script still panics on stable Rust because the `simd` backend requires nightly. On nightly toolchains, the ~20-34% NEON speedup would push single-signature closer to 2x on ARM — re-enable with `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` and `cargo +nightly` for specific deployment targets.
+
+**CI benchmark results (a0f884b2, all optimizations, 5 platforms):**
 
 | Benchmark | linux-x86 | linux-arm | windows | macos-x86 | macos-arm |
 |-----------|-----------|-----------|---------|-----------|-----------|
-| `crypto/ed25519_verify` | 44.2µs | 41.7µs | **30.6µs** | 37.8µs | 33.5µs |
-| `envelope_verify/verify_chain/depth1` | 36.0µs | 42.9µs | **31.2µs** | 45.7µs | 33.9µs |
-| `crypto/ed25519_verify_batch_10` | 186µs | 214µs | **147µs** | 208µs | 177µs |
-| `canonical/encode/medium` | **2.5µs** | 2.9µs | 3.2µs | 3.5µs | 3.0µs |
-| `canonical/encode/large` | **7.6µs** | 10.4µs | 9.6µs | 12.2µs | 10.8µs |
-| `envelope_verify/verify_chain/depth2` | 38.2µs | 44.8µs | 40.6µs | 39.3µs | 35.2µs |
+| `crypto/ed25519_verify` | 38.3µs | 41.7µs | 42.8µs | 55.3µs | 53.0µs |
+| `envelope_verify/verify_chain/depth1` | 39.4µs | 43.1µs | **38.0µs** | 48.2µs | 50.9µs |
+| `crypto/ed25519_verify_batch_10` | **195µs** | 217µs | **184µs** | 235µs | 270µs |
+| `canonical/encode/medium` | **2.9µs** | 4.1µs | 3.1µs | 2.4µs | 3.5µs |
+| `canonical/encode/large` | **10.4µs** | 10.3µs | 8.9µs | 12.3µs | 9.8µs |
+| `envelope_verify/verify_chain/depth2` | 55.1µs | 57.7µs | 49.7µs | 73.4µs | 56.2µs |
 
 ### 2x vs IRC Analysis
 
 **IRC reference latencies:** `crypto/ed25519_verify`: 45,000 ns, `envelope_verify/verify_chain/depth1`: 50,000 ns
 
-| Platform | ed25519_verify ratio | Envelope ratio | Batch (per-sig) ratio |
-|----------|---------------------|----------------|----------------------|
-| linux-x86 | 1.02x | 1.39x | **2.41x** ✅ |
-| linux-arm | 1.08x | 1.17x | **2.11x** ✅ |
-| windows | **1.47x** | **1.60x** | **3.07x** ✅ |
-| macos-x86 | 1.19x | 1.10x | **2.16x** ✅ |
-| macos-arm | 1.34x | 1.48x | **2.55x** ✅ |
+| Platform | ed25519_verify (single-sig) | Envelope depth1 (single-sig) | Batch per-sig (10 sigs) |
+|----------|---------------------------|------------------------------|------------------------|
+| linux-x86 | 1.18x | 1.27x | **2.31x** ✅ |
+| linux-arm | 1.08x | 1.16x | **2.07x** ✅ |
+| windows | 1.05x | **1.32x** | **2.44x** ✅ |
+| macos-x86 | 0.81x | 1.04x | **1.91x** |
+| macos-arm | 0.85x | 0.98x | **1.67x** |
 
-**Answer: 2x is achievable with batch verification on ALL platforms**, but not with single-signature verification. Batch verify achieves 2.11x-3.07x. Single-signature verify achieves 1.02x-1.48x — the fundamental bottleneck is Ed25519's ~28-40µs scalar multiplication that no amount of caching/algorithms can reduce below ~22µs.
+**Answer: 2x is achievable with batch verification on 3/5 platforms** (linux-x86, linux-arm, windows), but **NOT achievable with single-signature verification** on any platform (max 1.32x on Windows). The fundamental bottleneck is Ed25519's ~25-40µs scalar multiplication that no amount of Rust-level caching or algorithm choice can reduce below the IRC baseline. Batch verification amortizes the setup cost across 10 signatures, achieving 2.07x-2.44x per-signature on the best platforms.
 
-**SIMD note:** `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` was tested on CI but removed — AVX2 frequency throttling on Intel Xeon runners causes net slowdowns. On AMD Ryzen or Apple Silicon (where SIMD doesn't throttle), the ~20-34% speedup would push single-signature closer to 2x.
+**SIMD note:** The `simd` backend was tested but cannot be used on CI's stable Rust toolchain — `curve25519-dalek v5`'s build script panics when `curve25519_dalek_backend="simd"` is set on stable (requires nightly feature gates). On nightly toolchains, the NEON/AVX2 acceleration would add ~20-34% to ARM platforms, potentially pushing single-signature verify to ~1.3-1.5x on ARM but still not reaching 2x.
 
 ---
 
