@@ -96,6 +96,7 @@ def compute_proto_vars(data):
                 vars[f'PROTO_{prefix}_{ref_name}_PCT'] = f"{log_pct(ref_ns):.1f}%"
                 if toloo_ns > 0:
                     ratio_val = ref_ns / toloo_ns
+                    vars[f'PROTO_{prefix}_{ref_name}_PARITY_CLASS'] = ' proto-parity' if ratio_val < 1.1 else ''
                     if ratio_val < 1.5:
                         vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = f"{ratio_val:.1f}"
                         vars[f'PROTO_{prefix}_{ref_name}_COLOR'] = 'var(--green)'
@@ -113,11 +114,13 @@ def compute_proto_vars(data):
                     vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = "N/A"
                     vars[f'PROTO_{prefix}_{ref_name}_COLOR'] = 'var(--text)'
                     vars[f'PROTO_{prefix}_{ref_name}_LABEL'] = "N/A"
+                    vars[f'PROTO_{prefix}_{ref_name}_PARITY_CLASS'] = ''
             else:
                 vars[f'PROTO_{prefix}_{ref_name}_NS'] = "N/A"
                 vars[f'PROTO_{prefix}_{ref_name}_PCT'] = "0%"
                 vars[f'PROTO_{prefix}_{ref_name}_COLOR'] = 'var(--text)'
                 vars[f'PROTO_{prefix}_{ref_name}_LABEL'] = "N/A"
+                vars[f'PROTO_{prefix}_{ref_name}_PARITY_CLASS'] = ''
 
     return vars
 
