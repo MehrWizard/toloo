@@ -20,7 +20,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 
 use crate::envelope::{
-    depth, envelope_to_json_bytes, innermost, make_envelope, parse_envelope,
+    depth, envelope_to_json_bytes, innermost, make_envelope, parse_envelope_ref,
     verify_chain, verify_chains_batch, wrap_commit,
 };
 use crate::ids::{datum_id, eid};
@@ -34,6 +34,7 @@ const DEFAULT_LIMIT: usize = 200;
 const MAX_LIMIT: usize = 1000;
 const MAX_SUMMARY_ROOMS: usize = 50;
 const MAX_FETCH_IDS: usize = 100;
+const MAX_OFFERS: usize = 256;
 
 // ---- Public entry point ----
 
@@ -179,11 +180,17 @@ fn handle_pool_exchange(
     let mut datum_id_offers: Vec<String> = Vec::new();
 
     if let Some(offer_arr) = c.get("offer").and_then(Value::as_array) {
+        if offer_arr.len() > MAX_OFFERS {
+            return Ok(vec![error_bytes(
+                "invalid_request",
+                &format!("offer array exceeds {MAX_OFFERS} entries"),
+            )]);
+        }
         for item in offer_arr {
             if let Some(obj) = item.as_object() {
                 if obj.contains_key("d") && obj.contains_key("p") {
                     // Full envelope submission — parse and collect for batch verification.
-                    if let Ok(env) = parse_envelope(item.clone()) {
+                    if let Ok(env) = parse_envelope_ref(item) {
                         offer_envelopes.push(env);
                     }
                 } else if let Some(id) = obj.get("datum_id").and_then(Value::as_str) {
@@ -566,15 +573,7 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
             .unwrap_or_default()
             .as_millis() as u64;
         let one_hour_ago = now.saturating_sub(3_600_000);
-        let count = pool
-            .select(|e| {
-                let author_key = author.as_str();
-                e.room.as_deref() == Some(room_pub)
-                    && e.n.as_ref() == author_key
-                    && e.channel.is_some_and(|c| c >= 1)
-                    && e.tc.is_some_and(|tc| tc >= one_hour_ago)
-            })?
-            .len() as u32;
+        let count = pool.count_author_events_since(room_pub, author, one_hour_ago, 1) as u32;
         if !ruleset.check_rate_limit(author, count) {
             anyhow::bail!("rate limit exceeded: {} events in window", count);
         }

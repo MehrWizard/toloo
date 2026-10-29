@@ -3,11 +3,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use ed25519_dalek::{Signature, VerifyingKey};
+use serde::Deserialize;
 use serde_json::Value;
 use simd_json;
 
 use crate::base64url;
-use crate::canonical::{canonical_bytes, canonical_datum_bytes, canonical_value_bytes_into};
+use crate::canonical::{
+    canonical_datum_bytes, canonical_datum_bytes_direct, canonical_envelope_bytes_direct,
+};
 use crate::crypto::{ed25519_sign, ed25519_verify_batch, ed25519_verify_fast, get_verifying_key};
 use crate::types::{DatumBody, Envelope, LocalNode, LocalRoom};
 
@@ -41,20 +44,9 @@ pub fn signable_bytes(d: &DatumBody) -> Vec<u8> {
 
 /// Signable payload bytes for verification: utf8(canonical(d)).
 /// Always recomputes canonical bytes to detect tampering (untrusted path).
-/// Uses thread-local buffer to avoid allocation in the hot path.
+/// Writes directly to bytes — no `Value` tree, no intermediate `String`.
 pub fn signable_bytes_verify(d: &DatumBody) -> Vec<u8> {
-    let json_value = serde_json::to_value(d).expect("DatumBody should serialize to Value");
-    VERIFY_PAYLOAD_BUF.with(|buf| {
-        let mut buf = buf.borrow_mut();
-        canonical_value_bytes_into(&json_value, &mut buf).expect("canonical bytes should not fail");
-        buf.clone()
-    })
-}
-
-thread_local! {
-    /// Reusable buffer for canonical payload bytes — avoids per-call allocation.
-    static VERIFY_PAYLOAD_BUF: std::cell::RefCell<Vec<u8>> =
-        std::cell::RefCell::new(Vec::with_capacity(4096));
+    canonical_datum_bytes_direct(d).expect("DatumBody canonical serialization should not fail")
 }
 
 /// Sign a datum and produce an envelope.
@@ -273,16 +265,29 @@ fn check_signer_alternation(chain: &[&Envelope]) -> Result<()> {
 }
 
 /// Cache successful verification on the commit/ack layers of a chain.
+/// Depth-1 envelopes are not cached — they are always re-verified.
 fn mark_chain_verified(chain: &[&Envelope]) {
     if chain.len() >= 2 {
         let _ = chain[chain.len() - 2].d.verified_layer.set(true);
+        let _ = chain[0].d.verified_layer.set(true);
     }
-    let _ = chain[0].d.verified_layer.set(true);
 }
 
 /// Verify all signatures and signer alternation across depth.
 /// Uses batch verification for depth >= 2.
 pub fn verify_chain(env: &Envelope) -> Result<()> {
+    verify_chain_impl(env, true)
+}
+
+/// Verify every layer, ignoring verification caches.
+///
+/// For benchmarks and tests that need a stable measurement instead of a
+/// cache hit on a previously verified envelope object.
+pub fn verify_chain_uncached(env: &Envelope) -> Result<()> {
+    verify_chain_impl(env, false)
+}
+
+fn verify_chain_impl(env: &Envelope, use_cache: bool) -> Result<()> {
     let chain = chain_outer_to_inner(env);
     if chain.len() > MAX_DEPTH as usize {
         bail!("envelope depth exceeds maximum ({MAX_DEPTH})");
@@ -291,21 +296,24 @@ pub fn verify_chain(env: &Envelope) -> Result<()> {
 
     if chain.len() == 1 {
         // Fast path: depth-1 envelope — single verify avoids batch setup.
-        if chain[0].d.verified_layer.get().is_none() {
-            verify_single(chain[0])?;
-        }
+        // Always verify: `verified_layer` is only a cache for commit/ack
+        // layers inside a chain, and a depth-1 envelope may be re-parsed
+        // and re-checked concurrently.
+        verify_single(chain[0])?;
     } else {
         let pending: Vec<&Envelope> = chain
             .iter()
             .copied()
-            .filter(|layer| layer.d.verified_layer.get().is_none())
+            .filter(|layer| !use_cache || layer.d.verified_layer.get().is_none())
             .collect();
         if !pending.is_empty() {
             batch_verify_layers(&pending)?;
         }
     }
 
-    mark_chain_verified(&chain);
+    if use_cache {
+        mark_chain_verified(&chain);
+    }
     Ok(())
 }
 
@@ -382,6 +390,14 @@ pub fn parse_envelope(value: serde_json::Value) -> Result<Envelope> {
     Ok(env)
 }
 
+/// Parse and validate an envelope from a borrowed JSON value (no deep clone).
+pub fn parse_envelope_ref(value: &Value) -> Result<Envelope> {
+    validate_envelope_shape_recursive(value)?;
+    let env = Envelope::deserialize(value).context("envelope deserialization failed")?;
+    validate_structure_inner(&env, 1)?;
+    Ok(env)
+}
+
 /// Zero-copy parse and validate an envelope from JSON bytes.
 ///
 /// Uses simd-json for parsing without intermediate string allocation.
@@ -407,7 +423,7 @@ fn validate_structure_inner(env: &Envelope, level: u8) -> Result<()> {
     if canonical_datum_bytes(&env.d)?.len() > MAX_D_BYTES {
         bail!("datum exceeds {MAX_D_BYTES} bytes");
     }
-    if canonical_bytes(env)?.len() > MAX_ENV_BYTES {
+    if canonical_envelope_bytes_direct(env)?.len() > MAX_ENV_BYTES {
         bail!("envelope exceeds {MAX_ENV_BYTES} bytes");
     }
 

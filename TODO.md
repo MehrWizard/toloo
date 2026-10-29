@@ -75,56 +75,52 @@ security) before touching performance.
 
 ### P1 — Hot-path performance
 
-- [ ] **One canonicalization per envelope.** Currently ~5–7 per stored
-      message: parse validation (envelope.rs:338, 341), verify
-      (envelope.rs:45-53), `datum_id` (ids.rs:50), and `Pool::put`
-      (pool.rs:782-783, 1870). Compute canonical bytes once and thread them
-      through verify → id → put.
-- [ ] **Canonical serializer without `serde_json::Value`.** Implement a
-      `Serializer` that writes canonical JSON bytes directly from `DatumBody`
-      (including `#[serde(flatten)] extra`), eliminating the `to_value`
-      tree allocation in `signable_bytes_verify`.
-- [ ] **`signable_bytes_verify` clones its thread-local buffer**
-      (envelope.rs:48) — the allocation it was meant to avoid. Pass an
-      `&mut Vec` through the call chain or return the buffer to a pool.
-- [ ] **Persistence: one open/write/close per envelope.** `append_event`
-      reopens the log for every event (pool.rs:637-650), and `put_batch`
-      calls it per envelope (pool.rs:939-941). Keep a mutex-guarded
-      `BufWriter<File>`, write a whole batch in one call, add optional
-      group fsync.
-- [ ] **Spill check on every `put`.** O(n) count + global `spill_lock` per
-      insert (pool.rs:484-505). Track a live-count atomic and only spill
-      when it crosses the threshold; move the rewrite to a blocking task.
-- [ ] **Blocking disk I/O on the LocalSet.** `append_event`, `persist_meta`,
-      blob reads/writes use `std::fs` on the executor thread (pool.rs:637,
-      :400, :1397). Move persistence to a writer thread with a channel.
-- [ ] **`build_membership` replayed per request** — clones every channel -2
-      entry (pool.rs:1064, called from handlers.rs:463, 570). Cache keyed by
-      `(room, latest_tc)` or maintain incrementally.
-- [ ] **Rate-limit check is O(n) per message** — full-pool `select()` per
-      auto-commit with rules (handlers.rs:621-637) → O(n²). Maintain
-      per-(room, author) hourly counters.
-- [ ] **`system.fetch` full scan** instead of `by_id` lookups
-      (pool.rs:1276-1284). `latest_tc` traverses the whole BTreeMap; use
-      `range((room, 0)..=(room, u64::MAX)).next_back()` (pool.rs:986).
-- [ ] **`get_wanted` allocates an `InternedStr` per room per call**
-      (pool.rs:1168); the all-rooms branch has no per-room upper bound and
-      `take(limit*2)` can silently drop results (pool.rs:1149).
+- [x] **One canonicalization per envelope.** `canonical_datum_bytes_direct`
+      and `canonical_envelope_bytes_direct` write canonical JSON without a
+      `Value` tree; parse caches the datum bytes, verify recomputes them
+      (tamper detection), and `put` reuses them for both the datum_id and the
+      log line. Per-envelope serializations dropped from ~6-7 to 2.
+- [x] **Canonical serializer without `serde_json::Value`.** Direct writers
+      handle flattened `extra` fields, nested envelopes, UTF-16 key order,
+      and string escaping; byte-for-byte tested against the Value path.
+- [x] **`signable_bytes_verify` no longer clones a thread-local buffer.**
+      The thread-local buffer was removed; verification writes directly into
+      one right-sized Vec.
+- [x] **Persistence opens the log once per batch.** `append_events` writes
+      all lines from a single `put_batch` call under one file handle.
+- [x] **Spill check is O(shards), not O(events).** Each shard tracks a `live`
+      atomic; the global `spill_lock` is only taken when the threshold is
+      crossed.
+- [ ] **Blocking disk I/O on the LocalSet.** `append_events`, `persist_meta`,
+      blob reads/writes still use `std::fs` on the executor thread. Batch
+      appends reduced the number of stalls; a dedicated writer thread remains
+      the full fix.
+- [x] **`build_membership` is cached** by the latest committed channel -2
+      tc; returns `Arc<MembershipState>` and invalidates on new membership
+      commits (tested).
+- [x] **Rate-limit check is index-backed** — `count_author_events_since`
+      ranges over `by_author_room_tc` instead of scanning the whole pool.
+- [x] **`system.fetch` uses `by_id` lookups** instead of a full scan.
+      `latest_tc` uses a BTreeMap range (O(log n)).
+- [ ] **`get_wanted` allocates an `InternedStr` per room per call**; the
+      all-rooms branch has no per-room upper bound and `take(limit*2)` can
+      silently drop results.
 - [ ] **Deep `PoolEntry` clones per returned row** (`select`,
-      `get_room_channel*`, pool.rs:375, 972, 1158, 1266). Return
-      `Arc<PoolEntry>` or borrowed refs; `id: String` → `InternedStr`.
-- [ ] **HTTP header parse reads one byte per syscall** (server.rs:321-335).
-      Use `read_until(b'\n')`/`BufReader`.
-- [ ] **WS frame copy:** `json_str.as_bytes().to_vec()` in
-      `dispatch_common` (server.rs:430) — take `text.into_bytes()` instead.
-- [ ] **`maybe_commit` deep-clones the envelope** right before consuming it
-      (`wrap_commit(env.clone(), …)`, handlers.rs:534). Same in
-      `parse_envelope(item.clone())` (handlers.rs:186).
-- [ ] **Missing `MAX_OFFERS` cap** in pool.exchange — unbounded verification
-      work per request (DoS). Cap the offer array (e.g. 256) like
-      `MAX_FETCH_IDS`.
-- [ ] **`hkdf_sha256` allocates per block** (crypto.rs:177-204); HMAC-SHA256
-      output is fixed 32 bytes — use stack arrays.
+      `get_room_channel*`). Return `Arc<PoolEntry>` or borrowed refs;
+      `id: String` → `InternedStr`.
+- [x] **HTTP header parse is buffered** (`BufReader` + `read_until`), not one
+      syscall per byte.
+- [ ] **WS frame copy:** tungstenite 0.28 exposes `Message::Text` as
+      immutable `Utf8Bytes`; simd-json needs a mutable slice, so one copy
+      remains. Only HTTP can pass its body buffer directly.
+- [x] **`parse_envelope_ref` avoids deep-cloning offer values** in
+      pool.exchange. The `maybe_commit` `env.clone()` remains (needed for
+      the wrap-failure fallback).
+- [x] **`MAX_OFFERS` (256) caps pool.exchange verification work.**
+- [x] **`hkdf_sha256` uses stack buffers** instead of a Vec per block.
+- [x] **Benchmark integrity:** `verify_chain` no longer skips depth-1
+      verification on a cached layer (the depth-1 bench was measuring a
+      no-op); `get_by_id` now benches the protocol's 100-id system.fetch cap.
 
 ### P2 — Infrastructure polish
 

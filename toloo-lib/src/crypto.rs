@@ -186,20 +186,23 @@ pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], length: usize) -> Vec<u
 
     // HKDF-Expand: OKM = T(1) | T(2) | ... where T(i) = HMAC-SHA256(PRK, T(i-1) | info | i)
     let mut okm = Vec::with_capacity(length);
-    let mut t = Vec::new();
+    let mut t = [0u8; 32];
+    let mut t_len = 0usize;
     let mut counter = 1u8;
 
     while okm.len() < length {
         let mut mac = hmac_sha256_key(&prk);
-        mac.update(&t);
+        mac.update(&t[..t_len]);
         mac.update(info);
         mac.update(&[counter]);
-        t = mac.finalize().into_bytes().to_vec();
-        okm.extend_from_slice(&t);
-        counter += 1;
+        let block = mac.finalize().into_bytes();
+        t.copy_from_slice(&block);
+        t_len = block.len();
+        let remaining = length - okm.len();
+        okm.extend_from_slice(&block[..remaining.min(block.len())]);
+        counter = counter.wrapping_add(1);
     }
 
-    okm.truncate(length);
     okm
 }
 

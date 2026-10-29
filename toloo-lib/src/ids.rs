@@ -1,6 +1,5 @@
 use serde_json::Value;
 
-use crate::canonical::canonical_bytes;
 use crate::crypto::sha256;
 use crate::envelope::innermost;
 use crate::types::{DatumBody, Envelope};
@@ -48,8 +47,14 @@ pub fn eid(env: &Envelope) -> String {
 
 /// Hash identity of the full envelope bytes (changes with wrapping depth).
 pub fn datum_id(env: &Envelope) -> String {
-    let bytes = canonical_bytes(env).expect("envelope canonical serialization should not fail");
-    crate::hex::encode(sha256(&bytes))
+    let bytes = crate::canonical::canonical_envelope_bytes_direct(env)
+        .expect("envelope canonical serialization should not fail");
+    datum_id_from_bytes(&bytes)
+}
+
+/// `datum_id` from already-canonicalized envelope bytes.
+pub fn datum_id_from_bytes(canonical_envelope: &[u8]) -> String {
+    crate::hex::encode(sha256(canonical_envelope))
 }
 
 fn channel_from_content(c: Option<&Value>) -> Option<i32> {

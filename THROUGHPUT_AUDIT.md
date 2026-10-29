@@ -521,3 +521,69 @@ A zero-dependency Python script substitutes benchmark data into an HTML template
 16. ✅ `toloo-lib/src/pool.rs` — `by_room_tc` and `by_author_room_tc` use `Arc<str>` keys
 17. ✅ `toloo-lib/src/pool.rs` — `by_room_channel` uses `String` keys for fast lookup
 18. ✅ `toloo-lib/src/requests/handlers.rs` — updated `e.n.as_str()` → `e.n.as_ref()` for `Arc<str>` compatibility
+
+---
+
+## Phase 7: Canonicalization, Pool, and Transport (P1 audit fixes)
+
+**Canonical JSON without `serde_json::Value`.**
+`canonical_datum_bytes_direct()` and `canonical_envelope_bytes_direct()` emit
+canonical JSON straight into bytes: fields (including flattened `extra`) are
+sorted by UTF-16 code units, strings are escaped in place, and nested
+envelopes are written recursively. Output is byte-for-byte equal to the
+Value-based path (tested). The datum cache is reused when assembling an
+envelope, so a parsed envelope is fully serialized once for validation, once
+for verification (tamper detection), and not again for `datum_id`/`put`.
+
+**Verification.**
+`verify_chain` now verifies every pending layer (commit + authored) with one
+batch operation, and `verify_chain_uncached()` provides a cache-free path for
+benchmarks. Depth-1 verification is never served from `verified_layer`
+(previously a benchmark loop could measure a 20 ns cache hit instead of a real
+verification).
+
+**Pool.**
+- `put`/`put_batch` compute the canonical envelope bytes once and derive the
+  `datum_id` from them; `append_events` writes a whole batch under one file
+  handle.
+- Each shard tracks a `live` atomic; the spill fast path is O(shards) and
+  takes the global spill lock only when the resident threshold is crossed.
+- `build_membership` is cached by the latest committed channel -2 `tc` and
+  returns `Arc<MembershipState>`; `count_author_events_since` uses the
+  author index instead of a full-pool scan; `get_by_datum_ids` uses `by_id`
+  lookups; `latest_tc` is an O(log n) BTreeMap range.
+- Cold-history entries are moved into `Arc<Envelope>` instead of being
+  deep-cloned.
+
+**Transport / limits.**
+HTTP headers are parsed with a `BufReader` (`read_until`) instead of one
+syscall per byte; WS response frames are `feed`-buffered and flushed once per
+batch; `pool.exchange` caps offers at 256 and parses each offer by reference
+(`parse_envelope_ref`) instead of deep-cloning its `Value`.
+
+**Crypto.**
+`hkdf_sha256` uses a fixed 32-byte stack block instead of allocating a Vec per
+HKDF block.
+
+### Benchmark methodology changes
+
+- `canonical/encode/*` now measures the production
+  `canonical_datum_bytes_direct` (used by signing and verification) rather
+  than the generic `canonical()` Value/String path.
+- `envelope_verify/*` uses `verify_chain_uncached`, so repeated iterations
+  measure real verification instead of a cache hit. Depth-2 now verifies both
+  commit and authored layers (the previous cache path measured ~1 layer).
+- `pool_query/get_by_id` measures the protocol's 100-id `system.fetch` cap.
+
+### Local results (short criterion run; noisy shared machine)
+
+| Benchmark | Before (Value path) | After (direct) |
+|-----------|--------------------|----------------|
+| `canonical/encode/small` | ~0.9 µs | 288 ns |
+| `canonical/encode/medium` | ~2.6 µs | 1.87 µs |
+| `canonical/encode/large` | ~8.1 µs | 7.49 µs |
+| `parse_envelope/parse_envelope_bytes` | 4.82 µs | 3.70 µs |
+
+CI benchmark numbers will be regenerated via the benchmark workflow; the
+local machine shows high variance for crypto benches, so CI remains the
+authoritative comparison.

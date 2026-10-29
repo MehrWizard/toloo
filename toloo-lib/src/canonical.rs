@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 use serde_json::{Map, Number, Value};
 
-use crate::types::DatumBody;
+use crate::types::{DatumBody, Envelope};
 
 /// Compare two strings by their UTF-16 code units (as required by Toloo spec).
 /// Optimized: encodes both strings to `Vec<u16>` once and compares slices directly,
@@ -40,9 +40,122 @@ pub fn canonical_datum_bytes(d: &DatumBody) -> Result<Vec<u8>> {
     if let Some(cached) = d.cached_canonical.get() {
         return Ok(cached.clone());
     }
-    let bytes = canonical_bytes(d)?;
+    let bytes = canonical_datum_bytes_direct(d)?;
     let _ = d.cached_canonical.set(bytes.clone());
     Ok(bytes)
+}
+
+/// Canonical JSON for a `DatumBody`, written directly to bytes.
+///
+/// Skips the `serde_json::Value` tree entirely: fields are collected, sorted
+/// by UTF-16 code units (including flattened `extra` entries), and emitted.
+/// Byte-for-byte identical to `canonical_bytes(d)`.
+pub fn canonical_datum_bytes_direct(d: &DatumBody) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(256 + d.extra.len() * 32);
+    write_datum_bytes(d, &mut out)?;
+    Ok(out)
+}
+
+/// Canonical JSON for an `Envelope` (`{"d":…,"p":…}`), written directly.
+pub fn canonical_envelope_bytes_direct(env: &Envelope) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(512);
+    write_envelope_bytes(env, &mut out)?;
+    Ok(out)
+}
+
+enum DatumField<'a> {
+    Str(&'a str),
+    U64(u64),
+    Value(&'a Value),
+    Env(&'a Envelope),
+}
+
+fn write_envelope_bytes(env: &Envelope, out: &mut Vec<u8>) -> Result<()> {
+    out.extend_from_slice(b"{\"d\":");
+    if let Some(cached) = env.d.cached_canonical.get() {
+        out.extend_from_slice(cached);
+    } else {
+        let start = out.len();
+        write_datum_bytes(&env.d, out)?;
+        let _ = env.d.cached_canonical.set(out[start..].to_vec());
+    }
+    out.extend_from_slice(b",\"p\":");
+    write_string_bytes(&env.p, out);
+    out.push(b'}');
+    Ok(())
+}
+
+fn write_datum_bytes(d: &DatumBody, out: &mut Vec<u8>) -> Result<()> {
+    let mut entries: Vec<(&str, DatumField<'_>)> = Vec::with_capacity(11 + d.extra.len());
+    entries.push(("n", DatumField::Str(&d.n)));
+    entries.push(("v", DatumField::Str(&d.v)));
+    entries.push(("t", DatumField::Str(&d.t)));
+    entries.push(("ts", DatumField::U64(d.ts)));
+    if let Some(r) = &d.r {
+        entries.push(("r", DatumField::Str(r)));
+    }
+    if let Some(to) = &d.to {
+        entries.push(("to", DatumField::Str(to)));
+    }
+    if let Some(c) = &d.c {
+        entries.push(("c", DatumField::Value(c)));
+    }
+    if let Some(env) = &d.env {
+        entries.push(("env", DatumField::Env(env)));
+    }
+    if let Some(tc) = d.tc {
+        entries.push(("tc", DatumField::U64(tc)));
+    }
+    if let Some(exp) = d.exp {
+        entries.push(("exp", DatumField::U64(exp)));
+    }
+    if let Some(nonce) = d.nonce {
+        entries.push(("nonce", DatumField::U64(nonce)));
+    }
+
+    // Flattened extra fields; a colliding key replaces the known field,
+    // matching what `serde_json::to_value` produces for `#[serde(flatten)]`.
+    if !d.extra.is_empty() {
+        for (key, value) in &d.extra {
+            if let Some(slot) = entries.iter_mut().find(|(k, _)| *k == key.as_str()) {
+                slot.1 = DatumField::Value(value);
+            } else {
+                entries.push((key.as_str(), DatumField::Value(value)));
+            }
+        }
+    }
+
+    entries.sort_by(|(a, _), (b, _)| utf16_cmp(a, b));
+    out.push(b'{');
+    for (idx, (key, value)) in entries.iter().enumerate() {
+        if idx > 0 {
+            out.push(b',');
+        }
+        write_string_bytes(key, out);
+        out.push(b':');
+        match value {
+            DatumField::Str(s) => write_string_bytes(s, out),
+            DatumField::U64(n) => write_u64_bytes(*n, out),
+            DatumField::Value(v) => write_value_bytes(v, out)?,
+            DatumField::Env(env) => write_envelope_bytes(env, out)?,
+        }
+    }
+    out.push(b'}');
+    Ok(())
+}
+
+fn write_u64_bytes(mut n: u64, out: &mut Vec<u8>) {
+    let mut buf = [0u8; 20];
+    let mut idx = buf.len();
+    loop {
+        idx -= 1;
+        buf[idx] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    out.extend_from_slice(&buf[idx..]);
 }
 
 /// Direct-to-bytes canonical JSON — avoids String→Vec<u8> conversion.
@@ -316,5 +429,56 @@ mod tests {
         let bytes = canonical_value_bytes(&v).expect("should succeed");
         let s = canonical(&v).expect("string should succeed");
         assert_eq!(bytes, s.into_bytes());
+    }
+
+    #[test]
+    fn direct_datum_bytes_match_value_path() {
+        use std::collections::HashMap;
+
+        use crate::types::Envelope;
+
+        let mut extra = HashMap::new();
+        extra.insert("aa".to_owned(), json!({"k": [1, true, null]}));
+        extra.insert("\u{E000}".to_owned(), json!(2));
+
+        let inner_d = DatumBody {
+            n: "n1".to_owned(),
+            t: "room.message".to_owned(),
+            ts: 10,
+            r: Some("room".to_owned()),
+            c: Some(json!({"ch": 1, "body": "hi\tthere"})),
+            ..DatumBody::default()
+        };
+        let inner = Envelope {
+            d: inner_d.clone(),
+            p: "c2ln".to_owned(),
+            cached_sig: Default::default(),
+        };
+
+        let outer_d = DatumBody {
+            n: "n2".to_owned(),
+            t: "commit".to_owned(),
+            ts: 11,
+            tc: Some(11),
+            env: Some(Box::new(inner)),
+            extra,
+            nonce: Some(7),
+            ..DatumBody::default()
+        };
+        let outer = Envelope {
+            d: outer_d,
+            p: "c2ln".to_owned(),
+            cached_sig: Default::default(),
+        };
+
+        // Depth-1 datum, with extra/unicode keys and control characters.
+        let direct = super::canonical_datum_bytes_direct(&inner_d).expect("direct");
+        let via_value = super::canonical_bytes(&inner_d).expect("value");
+        assert_eq!(direct, via_value, "datum direct bytes must match Value path");
+
+        // Nested envelope.
+        let direct_env = super::canonical_envelope_bytes_direct(&outer).expect("direct env");
+        let value_env = super::canonical_bytes(&outer).expect("value env");
+        assert_eq!(direct_env, value_env, "envelope direct bytes must match Value path");
     }
 }

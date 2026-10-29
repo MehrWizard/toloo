@@ -254,19 +254,22 @@ async fn do_ws_session(stream: BoxedStream, _peer_addr: SocketAddr, config: Arc<
                     if let Some(m) = &config.metrics {
                         m.bytes_in.fetch_add(text.len() as u64, Ordering::Relaxed);
                     }
-                    let responses = dispatch_common(&text, &config).await;
+                    // simd-json needs a mutable slice; the frame is immutable
+                    // shared storage, so one copy into a Vec is required.
+                    let responses = dispatch_common(text.as_bytes().to_vec(), &config).await;
                     for v in responses {
                         if let Some(m) = &config.metrics {
                             m.bytes_out.fetch_add(v.len() as u64, Ordering::Relaxed);
                         }
-                        ws.send(Message::Binary(v.into()))
+                        ws.feed(Message::Binary(v.into()))
                             .await
                             .context("WS send")?;
                     }
                     // Signal end of response batch so clients can proceed.
-                    ws.send(Message::Binary(r#"{"done":true}"#.as_bytes().to_vec().into()))
+                    ws.feed(Message::Binary(r#"{"done":true}"#.as_bytes().to_vec().into()))
                         .await
                         .context("WS done")?;
+                    ws.flush().await.context("WS flush")?;
                 }
                 Message::Binary(_) => {}
                 Message::Close(_) => break,
@@ -323,21 +326,24 @@ async fn run_http_accept_loop(
 /// Minimal HTTP/1.1 server handling a single POST request, then closing.
 /// Works over any `AsyncRead + AsyncWrite + Unpin` (TcpStream or TlsStream).
 async fn do_http_connection(
-    mut stream: BoxedStream,
+    stream: BoxedStream,
     _peer: SocketAddr,
     config: Arc<RelayConfig>,
     want_path: &str,
 ) -> Result<()>
 {
-    // Read headers byte-by-byte until the blank line (\r\n\r\n).
+    // Buffer reads: parse headers line-by-line instead of one syscall per byte.
+    let mut stream = tokio::io::BufReader::new(stream);
     let mut header_buf: Vec<u8> = Vec::with_capacity(2048);
     loop {
-        let mut byte = [0u8; 1];
-        match stream.read(&mut byte).await {
-            Ok(0) => return Ok(()), // client closed before sending headers
-            Ok(_) => header_buf.push(byte[0]),
-            Err(e) => return Err(e.into()),
+        let mut line = Vec::new();
+        let n = tokio::io::AsyncBufReadExt::read_until(&mut stream, b'\n', &mut line)
+            .await
+            .context("HTTP header read")?;
+        if n == 0 {
+            return Ok(()); // client closed before sending headers
         }
+        header_buf.extend_from_slice(&line);
         if header_buf.ends_with(b"\r\n\r\n") {
             break;
         }
@@ -394,8 +400,7 @@ async fn do_http_connection(
         m.bytes_in.fetch_add(body.len() as u64, Ordering::Relaxed);
     }
 
-    let json_str = std::str::from_utf8(&body).context("request body not UTF-8")?;
-    let responses = dispatch_common(json_str, &config).await;
+    let responses = dispatch_common(body, &config).await;
     // Concatenate response bytes into a JSON array: [env1,env2,...]
     let mut resp_body = Vec::with_capacity(responses.iter().map(|r| r.len()).sum::<usize>() + responses.len() + 2);
     resp_body.push(b'[');
@@ -437,9 +442,8 @@ async fn do_http_connection(
 // Shared dispatch
 // ══════════════════════════════════════════════════════════════════════
 
-async fn dispatch_common(json_str: &str, config: &Arc<RelayConfig>) -> Vec<Vec<u8>> {
+async fn dispatch_common(mut bytes: Vec<u8>, config: &Arc<RelayConfig>) -> Vec<Vec<u8>> {
     // Zero-copy parse with simd-json (mutable slice required)
-    let mut bytes = json_str.as_bytes().to_vec();
     match crate::envelope::parse_envelope_bytes(&mut bytes) {
         Ok(env) => {
             match try_batch_or_direct(

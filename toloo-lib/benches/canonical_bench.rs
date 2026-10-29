@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use toloo_lib::base64url;
-use toloo_lib::canonical::canonical;
+use toloo_lib::canonical::canonical_datum_bytes_direct;
 use toloo_lib::crypto::{chacha20_decrypt, chacha20_encrypt, derive_private_message_key, ed25519_generate, ed25519_sign, ed25519_verify, ed25519_verify_batch, x25519_generate, x25519_shared_secret, get_verifying_key};
-use toloo_lib::envelope::{make_envelope, parse_envelope, parse_envelope_bytes, verify_chain, envelope_to_json_bytes};
+use toloo_lib::envelope::{make_envelope, parse_envelope, parse_envelope_bytes, verify_chain_uncached, envelope_to_json_bytes};
 use toloo_lib::events::{make_node_meta, make_room_create, make_room_message};
 use toloo_lib::types::{Keypair, LocalNode, LocalRoom};
 use serde_json::json;
@@ -56,7 +56,7 @@ fn canonical_bench(c: &mut Criterion) {
         let size = serde_json::to_vec(&env).unwrap().len();
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::new("encode", name), &env, |b, env| {
-            b.iter(|| canonical(black_box(env)))
+            b.iter(|| canonical_datum_bytes_direct(black_box(&env.d)))
         });
     }
     group.finish();
@@ -84,7 +84,7 @@ fn envelope_verify_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("envelope_verify");
     for (name, env) in [("depth1", depth1), ("depth2", depth2)] {
         group.bench_with_input(BenchmarkId::new("verify_chain", name), &env, |b, env| {
-            b.iter(|| verify_chain(black_box(env)))
+            b.iter(|| verify_chain_uncached(black_box(env)))
         });
     }
     group.finish();
@@ -196,7 +196,8 @@ fn pool_query_bench(c: &mut Criterion) {
 
     group.bench_function("get_by_id", |b| {
         let events = pool.get_room_channel(&room_pub, 1).unwrap();
-        let ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
+        // system.fetch caps requests at 100 ids (MAX_FETCH_IDS).
+        let ids: Vec<String> = events.iter().take(100).map(|e| e.id.clone()).collect();
         b.iter(|| pool.get_by_datum_ids(black_box(&ids.iter().map(|s| s.as_str()).collect::<Vec<_>>())))
     });
 

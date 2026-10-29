@@ -24,6 +24,7 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use std::hash::Hasher;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use dashmap::DashMap;
@@ -34,9 +35,9 @@ type InternedStr = Arc<str>;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::canonical::canonical;
+use crate::canonical::{canonical, canonical_envelope_bytes_direct};
 use crate::envelope::{depth, innermost};
-use crate::ids::{channel_of, datum_id};
+use crate::ids::{channel_of, datum_id, datum_id_from_bytes};
 use crate::rules::RuleSet;
 use crate::types::Envelope;
 
@@ -122,6 +123,8 @@ struct Shard {
     /// Live events in insertion order; `None` marks a removed slot.
     /// Live events in insertion order; `None` marks a removed/spilled slot.
     events: RwLock<Vec<Option<Arc<PoolEntry>>>>,
+    /// Number of `Some` slots in `events` (avoids O(n) counting on spill checks).
+    live: AtomicUsize,
     /// id -> index in events vec (lock-free reads)
     by_id: DashMap<String, usize>,
     /// (room, channel) -> list of event indices (for get_room_channel) (lock-free reads)
@@ -145,6 +148,7 @@ impl Default for Shard {
     fn default() -> Self {
         Self {
             events: RwLock::new(Vec::new()),
+            live: AtomicUsize::new(0),
             by_id: DashMap::new(),
             by_room_channel: DashMap::new(),
             by_room_tc: RwLock::new(BTreeMap::new()),
@@ -268,6 +272,8 @@ pub struct Pool {
     shards: [Shard; NUM_SHARDS],
     persist: Option<Persist>,
     config: PoolConfig,
+    /// Membership replay cache: room → (latest membership tc, state).
+    membership_cache: DashMap<String, (u64, Arc<MembershipState>)>,
 }
 
 impl Pool {
@@ -306,6 +312,7 @@ impl Pool {
             shards,
             persist: Some(persist),
             config,
+            membership_cache: DashMap::new(),
         };
         pool.load_meta()?;
         pool.replay_events()?;
@@ -321,6 +328,7 @@ impl Pool {
             shards,
             persist: None,
             config: PoolConfig::default(),
+            membership_cache: DashMap::new(),
         })
     }
 
@@ -454,7 +462,8 @@ impl Pool {
                     let inner = innermost(&env);
                     let room = inner.d.r.as_deref();
                     let shard_idx = Self::shard_idx(room);
-                    insert_new(&mut self.shards[shard_idx], &env);
+                    let id = datum_id(&env);
+                    insert_new(&mut self.shards[shard_idx], &env, &id);
                     good_offset += n as u64;
                 }
                 Err(_) => {
@@ -489,17 +498,17 @@ impl Pool {
             return Ok(());
         }
 
+        // Fast path: the common case (below the threshold) must not take the
+        // global spill lock or scan every event.
+        let live_fast: usize = self.shards.iter().map(|s| s.live.load(Ordering::Relaxed)).sum();
+        if live_fast <= p.config.max_resident_blocks {
+            return Ok(());
+        }
+
         // Use file lock to prevent concurrent spills (cross-process safety)
         let _lock = p.spill_lock.lock().map_err(lock_err)?;
 
-        let total_live = {
-            let mut count = 0;
-            self.read_all_shards(|shard| {
-                count += shard.events.read().expect("events lock poisoned").iter().filter(|e| e.is_some()).count();
-            });
-            count
-        };
-
+        let total_live: usize = self.shards.iter().map(|s| s.live.load(Ordering::Relaxed)).sum();
         if total_live <= p.config.max_resident_blocks {
             return Ok(());
         }
@@ -602,6 +611,7 @@ impl Pool {
                             .is_some_and(|entry| &entry.id == id);
                         if matches {
                             events[idx] = None;
+                            shard.live.fetch_sub(1, Ordering::Relaxed);
                         }
                     }
                 }
@@ -643,10 +653,14 @@ impl Pool {
         Ok(events)
     }
 
-    fn append_event(&self, json: &str) -> Result<()> {
+    /// Append one or more canonical envelope lines with a single file open.
+    fn append_events(&self, events: &[&[u8]]) -> Result<()> {
         let Some(p) = &self.persist else {
             return Ok(());
         };
+        if events.is_empty() {
+            return Ok(());
+        }
         // In tiered mode the hot log is rewritten by the spill path; serialize
         // appends with the same lock so a rewrite cannot drop an appended event.
         let _lock = if p.config.max_resident_blocks > 0 {
@@ -659,8 +673,10 @@ impl Pool {
             .append(true)
             .open(&p.events_path)
             .with_context(|| format!("failed to open {}", p.events_path.display()))?;
-        f.write_all(json.as_bytes())?;
-        f.write_all(b"\n")?;
+        for json in events {
+            f.write_all(json)?;
+            f.write_all(b"\n")?;
+        }
         f.flush()?;
         Ok(())
     }
@@ -795,8 +811,9 @@ impl Pool {
     /// Store envelope and return outermost datum_id. Duplicates are ignored.
     /// Uses atomic check-and-insert to avoid TOCTOU.
     pub fn put(&self, env: &Envelope) -> Result<String> {
-        let json = canonical(env)?;
-        let id = datum_id(env);
+        // One canonical serialization serves both the datum_id and the log entry.
+        let json = canonical_envelope_bytes_direct(env)?;
+        let id = datum_id_from_bytes(&json);
         let inner = innermost(env);
         let room = inner.d.r.clone();
 
@@ -854,12 +871,12 @@ impl Pool {
             }
 
             // Insert new entry
-            insert_new(shard, env);
+            insert_new(shard, env, &id);
             superseded
         };
 
         // Persist to log (outside lock to minimize lock hold time)
-        self.append_event(&json)?;
+        self.append_events(&[json.as_slice()])?;
 
         // After adding new event, check if we need to spill to cold storage.
         self.maybe_spill_to_cold()?;
@@ -902,8 +919,8 @@ impl Pool {
             let mut seen_in_batch: HashSet<String> = HashSet::new();
 
             for (input_idx, env) in batch {
-                let json = canonical(env)?;
-                let id = datum_id(env);
+                let json = canonical_envelope_bytes_direct(env)?;
+                let id = datum_id_from_bytes(&json);
                 let inner = innermost(env);
                 let room = inner.d.r.clone();
 
@@ -948,22 +965,26 @@ impl Pool {
                 }
 
                 // Insert new entry
-                insert_new(shard, env);
+                insert_new(shard, env, &id);
                 results[input_idx] = Some(id);
                 all_json.push(json);
             }
         }
 
-        // Persist all to log (outside locks)
-        for json in all_json {
-            self.append_event(&json)?;
-        }
+        // Persist the whole batch with a single open/write/flush (outside locks)
+        let json_refs: Vec<&[u8]> = all_json.iter().map(Vec::as_slice).collect();
+        self.append_events(&json_refs)?;
 
         // Check if we need to spill to cold storage
         self.maybe_spill_to_cold()?;
 
         // Convert results to expected format
         Ok(results.into_iter().flatten().collect())
+    }
+
+    /// Whether an event is resident in hot storage.
+    fn contains_id(&self, id: &str) -> bool {
+        self.shards.iter().any(|shard| shard.by_id.contains_key(id))
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Envelope>> {
@@ -1002,7 +1023,9 @@ impl Pool {
 
         // Use by_room_tc index for O(log n) lookup (need read lock for BTreeMap)
         let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
-        if let Some((_, &idx)) = by_room_tc.iter().rev().find(|((r, _), _)| r.as_ref() == room) {
+        let key = InternedStr::from(room);
+        let range = (key.clone(), 0u64)..=(key, u64::MAX);
+        if let Some((_, &idx)) = by_room_tc.range(range).next_back() {
             if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
                 if let Some(tc) = entry.tc {
                     return Ok(tc);
@@ -1010,6 +1033,36 @@ impl Pool {
             }
         }
         Ok(0)
+    }
+
+    /// Count committed events by `author` in `room` with `tc >= since_tc` on
+    /// channels `>= min_channel`. Uses the author index — O(matches), not O(pool).
+    pub fn count_author_events_since(
+        &self,
+        room: &str,
+        author: &str,
+        since_tc: u64,
+        min_channel: i32,
+    ) -> usize {
+        let shard = self.shard(Some(room));
+        let author_key: InternedStr = InternedStr::from(author);
+        let room_key: InternedStr = InternedStr::from(room);
+        let range = (author_key.clone(), room_key.clone(), since_tc)
+            ..=(author_key, room_key, u64::MAX);
+        let by_author = shard
+            .by_author_room_tc
+            .read()
+            .expect("by_author_room_tc lock poisoned");
+        let events = shard.events.read().expect("events lock poisoned");
+        let mut count = 0;
+        for (_, &idx) in by_author.range(range) {
+            if let Some(Some(entry)) = events.get(idx) {
+                if entry.channel.is_some_and(|c| c >= min_channel) {
+                    count += 1;
+                }
+            }
+        }
+        count
     }
 
     /// Room watermark: the latest commit time across all room-internal
@@ -1080,7 +1133,32 @@ impl Pool {
         Ok(out)
     }
 
-    pub fn build_membership(&self, room: &str) -> Result<MembershipState> {
+    /// Latest committed tc among channel -2 events, used to version the cache.
+    fn membership_version(&self, room: &str) -> u64 {
+        let shard = self.shard(Some(room));
+        let mut version = 0u64;
+        if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -2)) {
+            let events = shard.events.read().expect("events lock poisoned");
+            for &idx in indices.value() {
+                if let Some(Some(entry)) = events.get(idx) {
+                    if let Some(tc) = entry.tc {
+                        version = version.max(tc);
+                    }
+                }
+            }
+        }
+        version
+    }
+
+    /// Replay channel -2 events into membership state, cached by membership tc.
+    pub fn build_membership(&self, room: &str) -> Result<Arc<MembershipState>> {
+        let version = self.membership_version(room);
+        if let Some(cached) = self.membership_cache.get(room) {
+            if cached.0 == version {
+                return Ok(Arc::clone(&cached.1));
+            }
+        }
+
         let events = self.get_room_channel(room, -2)?;
         let mut state = MembershipState::default();
 
@@ -1122,6 +1200,9 @@ impl Pool {
             }
         }
 
+        let state = Arc::new(state);
+        self.membership_cache
+            .insert(room.to_owned(), (version, Arc::clone(&state)));
         Ok(state)
     }
 
@@ -1239,7 +1320,6 @@ impl Pool {
                 let inner = innermost(&env);
                 let entry = PoolEntry {
                     id: datum_id(&env),
-                    env: Arc::new(env.clone()),
                     room: inner.d.r.clone().map(InternedStr::from),
                     n: InternedStr::from(inner.d.n.clone()),
                     to_node: inner.d.to.clone().map(InternedStr::from),
@@ -1247,9 +1327,11 @@ impl Pool {
                     tc: inner.d.tc,
                     event_type: InternedStr::from(inner.d.t.clone()),
                     channel: channel_of(&inner.d),
+                    // Move the envelope in as the final step (no deep clone).
+                    env: Arc::new(env),
                 };
-                // Only add if not already in hot (by id)
-                if !out.iter().any(|e| e.id == entry.id) {
+                // Only add if not already resident in hot storage.
+                if !self.contains_id(&entry.id) {
                     out.push(entry);
                 }
             }
@@ -1294,13 +1376,24 @@ impl Pool {
         Ok(out)
     }
 
-    /// Fetch envelopes by a list of datum IDs.
+    /// Fetch envelopes by a list of datum IDs (index lookup, not a full scan).
     pub fn get_by_datum_ids(&self, ids: &[&str]) -> Result<Vec<PoolEntry>> {
         if ids.is_empty() {
             return Ok(vec![]);
         }
-        let id_set: HashSet<&str> = ids.iter().copied().collect();
-        let mut out = self.select(|e| id_set.contains(e.id.as_str()))?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            for shard in &self.shards {
+                let Some(idx) = shard.by_id.get(*id).map(|e| *e) else {
+                    continue;
+                };
+                let events = shard.events.read().expect("events lock poisoned");
+                if let Some(Some(entry)) = events.get(idx) {
+                    out.push(entry.as_ref().clone());
+                }
+                break;
+            }
+        }
         out.sort_by(cmp_tc);
         Ok(out)
     }
@@ -1886,12 +1979,11 @@ fn lock_err<T>(_: T) -> anyhow::Error {
 }
 
 /// Insert an envelope into the state (no persistence, no dedup check).
-/// Caller must hold the shard's write_mutex.
-fn insert_new(shard: &Shard, env: &Envelope) {
+/// Caller must hold the shard's write_mutex. `id` must be `datum_id(env)`.
+fn insert_new(shard: &Shard, env: &Envelope, id: &str) {
     let inner = innermost(env);
-    let id = datum_id(env);
     let entry = Arc::new(PoolEntry {
-        id: id.clone(),
+        id: id.to_owned(),
         env: Arc::new(env.clone()),
         room: inner.d.r.clone().map(InternedStr::from),
         n: InternedStr::from(inner.d.n.clone()),
@@ -1909,7 +2001,8 @@ fn insert_new(shard: &Shard, env: &Envelope) {
         events.push(Some(entry.clone()));
         idx
     };
-    shard.by_id.insert(id, idx);
+    shard.live.fetch_add(1, Ordering::Relaxed);
+    shard.by_id.insert(id.to_owned(), idx);
 
     // Update secondary indexes
     if let Some(room) = &entry.room {
@@ -1939,6 +2032,7 @@ fn remove_id(shard: &Shard, id: &str) {
             .is_some_and(|entry| entry.id == id);
         if matches {
             events[idx] = None;
+            shard.live.fetch_sub(1, Ordering::Relaxed);
         }
         // Secondary indexes are not cleaned up here for performance.
         // They are rebuilt on compact() and prune_retention().
@@ -2281,6 +2375,18 @@ mod tests {
             .expect("membership");
         assert!(state.members.contains(&arta.sig.pub_key));
         assert!(!state.banned.contains(&arta.sig.pub_key));
+
+        // Cached state must be invalidated when a new membership commit lands.
+        let leave = mk_room_event(&arta, &key_holder, "room.leave", 105, json!({}));
+        let leave = wrap_commit(leave, &key_holder, 1005).expect("commit");
+        pool.put(&leave).expect("put committed leave");
+        let state = pool
+            .build_membership(&key_holder.sig.pub_key)
+            .expect("membership");
+        assert!(
+            !state.members.contains(&arta.sig.pub_key),
+            "membership cache must invalidate on new committed membership events"
+        );
     }
 
     // ---- ruleset_from_pool ----
