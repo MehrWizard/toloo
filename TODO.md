@@ -105,9 +105,9 @@ security) before touching performance.
 - [ ] **`get_wanted` allocates an `InternedStr` per room per call**; the
       all-rooms branch has no per-room upper bound and `take(limit*2)` can
       silently drop results.
-- [ ] **Deep `PoolEntry` clones per returned row** (`select`,
-      `get_room_channel*`). Return `Arc<PoolEntry>` or borrowed refs;
-      `id: String` → `InternedStr`.
+- [x] **`PoolEntry` clones are allocation-free.** `id` is now an interned
+      `Arc<str>`; every field is an `Arc`, so returning owned entries from
+      `select`/`get_room_channel*` costs only refcount bumps.
 - [x] **HTTP header parse is buffered** (`BufReader` + `read_until`), not one
       syscall per byte.
 - [ ] **WS frame copy:** tungstenite 0.28 exposes `Message::Text` as

@@ -197,7 +197,7 @@ fn pool_query_bench(c: &mut Criterion) {
     group.bench_function("get_by_id", |b| {
         let events = pool.get_room_channel(&room_pub, 1).unwrap();
         // system.fetch caps requests at 100 ids (MAX_FETCH_IDS).
-        let ids: Vec<String> = events.iter().take(100).map(|e| e.id.clone()).collect();
+        let ids: Vec<String> = events.iter().take(100).map(|e| e.id.to_string()).collect();
         b.iter(|| pool.get_by_datum_ids(black_box(&ids.iter().map(|s| s.as_str()).collect::<Vec<_>>())))
     });
 

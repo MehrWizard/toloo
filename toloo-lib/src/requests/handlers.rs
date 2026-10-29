@@ -261,7 +261,7 @@ fn handle_pool_exchange(
 
         for entry in entries {
             // Exclude events the peer already has and events from blocked nodes.
-            if !offered_ids.contains(&entry.id)
+            if !offered_ids.contains(entry.id.as_ref())
                 && !pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
             {
                 responses.push(envelope_to_json_bytes(&entry.env));

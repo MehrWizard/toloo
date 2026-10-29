@@ -169,7 +169,7 @@ impl Default for Shard {
 /// and reduce memory allocations when the same strings appear across many entries.
 #[derive(Debug, Clone)]
 pub struct PoolEntry {
-    pub id: String,
+    pub id: InternedStr,
     pub env: Arc<Envelope>,
     pub room: Option<InternedStr>,
     pub n: InternedStr,
@@ -522,7 +522,7 @@ impl Pool {
             for (shard_idx, shard) in self.shards.iter().enumerate() {
                 for (event_idx, entry_opt) in shard.events.read().expect("events lock poisoned").iter().enumerate() {
                     if let Some(entry) = entry_opt {
-                        all_events.push((entry.ts, entry.id.clone(), shard_idx, event_idx));
+                        all_events.push((entry.ts, entry.id.to_string(), shard_idx, event_idx));
                     }
                 }
             }
@@ -608,7 +608,7 @@ impl Pool {
                         let matches = events
                             .get(idx)
                             .and_then(|slot| slot.as_ref())
-                            .is_some_and(|entry| &entry.id == id);
+                            .is_some_and(|entry| entry.id.as_ref() == id);
                         if matches {
                             events[idx] = None;
                             shard.live.fetch_sub(1, Ordering::Relaxed);
@@ -766,7 +766,7 @@ impl Pool {
             self.read_all_shards(|shard| {
                 for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                     if let Some(entry) = entry_opt {
-                        ids.insert(entry.id.clone());
+                        ids.insert(entry.id.to_string());
                     }
                 }
             });
@@ -853,7 +853,7 @@ impl Pool {
                                 };
                                 matches_key && replaced
                             })
-                            .map(|e| e.id.clone())
+                            .map(|e| e.id.to_string())
                             .collect()
                     } else {
                         Vec::new()
@@ -950,7 +950,7 @@ impl Pool {
                                 };
                                 matches_key && replaced
                             })
-                            .map(|e| e.id.clone())
+                            .map(|e| e.id.to_string())
                             .collect()
                     } else {
                         Vec::new()
@@ -1105,7 +1105,7 @@ impl Pool {
         if let Some(indices) = indices {
             for &idx in indices.value() {
                 if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
-                    out.push(entry.id.clone());
+                    out.push(entry.id.to_string());
                 }
             }
         } else {
@@ -1113,7 +1113,7 @@ impl Pool {
             for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                 if let Some(entry) = entry_opt {
                     if entry.room.as_deref() == Some(room) {
-                        out.push(entry.id.clone());
+                        out.push(entry.id.to_string());
                     }
                 }
             }
@@ -1319,7 +1319,7 @@ impl Pool {
             for env in cold_events {
                 let inner = innermost(&env);
                 let entry = PoolEntry {
-                    id: datum_id(&env),
+                    id: InternedStr::from(datum_id(&env)),
                     room: inner.d.r.clone().map(InternedStr::from),
                     n: InternedStr::from(inner.d.n.clone()),
                     to_node: inner.d.to.clone().map(InternedStr::from),
@@ -1846,7 +1846,7 @@ impl Pool {
                     let is_system = e.channel.is_some_and(|c| c < 0);
                     e.room.as_deref() == Some(room) && !is_system && e.ts < threshold
                 })
-                .map(|e| e.id.clone())
+                .map(|e| e.id.to_string())
                 .collect();
             for id in &ids {
                 remove_id(shard, id);
@@ -1910,7 +1910,7 @@ impl Pool {
                 .iter()
                 .filter_map(|s| s.as_ref())
                 .filter(|e| e.room.as_deref() == Some(room) && e.tc.is_none() && e.ts < threshold)
-                .map(|e| e.id.clone())
+                .map(|e| e.id.to_string())
                 .collect();
             for id in &ids {
                 remove_id(shard, id);
@@ -1939,7 +1939,7 @@ impl Pool {
         if let Some(indices) = indices {
             for &idx in indices.value() {
                 if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
-                    out.push((entry.ts, entry.id.clone(), entry.env.clone()));
+                    out.push((entry.ts, entry.id.to_string(), entry.env.clone()));
                 }
             }
         } else {
@@ -1947,7 +1947,7 @@ impl Pool {
             for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                 if let Some(entry) = entry_opt {
                     if entry.room.as_deref() == Some(room) {
-                        out.push((entry.ts, entry.id.clone(), entry.env.clone()));
+                        out.push((entry.ts, entry.id.to_string(), entry.env.clone()));
                     }
                 }
             }
@@ -1983,7 +1983,7 @@ fn lock_err<T>(_: T) -> anyhow::Error {
 fn insert_new(shard: &Shard, env: &Envelope, id: &str) {
     let inner = innermost(env);
     let entry = Arc::new(PoolEntry {
-        id: id.to_owned(),
+        id: InternedStr::from(id),
         env: Arc::new(env.clone()),
         room: inner.d.r.clone().map(InternedStr::from),
         n: InternedStr::from(inner.d.n.clone()),
@@ -2029,7 +2029,7 @@ fn remove_id(shard: &Shard, id: &str) {
         let matches = events
             .get(idx)
             .and_then(|slot| slot.as_ref())
-            .is_some_and(|entry| entry.id == id);
+            .is_some_and(|entry| entry.id.as_ref() == id);
         if matches {
             events[idx] = None;
             shard.live.fetch_sub(1, Ordering::Relaxed);
