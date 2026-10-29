@@ -101,7 +101,7 @@ fn envelope_parse_bench(c: &mut Criterion) {
     let json_val = serde_json::to_value(&env).unwrap();
     let json_bytes = serde_json::to_vec(&env).unwrap();
 
-    let mut group = c.benchmark_group("envelope_parse");
+    let mut group = c.benchmark_group("parse_envelope");
 
     // Old serde_json-based parsing (from Value)
     group.bench_function("parse_envelope_from_value", |b| {
