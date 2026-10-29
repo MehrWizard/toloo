@@ -344,18 +344,18 @@ The Toloo protocol is well-architected with sharded locking (16 shards), `Arc<En
 | Depth-1 fast path in `verify_chain` | `envelope.rs` | ✅ Done | Skip `Vec` allocation for depth-1 envelopes |
 | `signable_bytes_verify` recompute canonical | `envelope.rs` | ✅ Done | Fixed tamper-detection test failure |
 
-**SIMD backend analysis:** `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` enables AVX2/NEON-accelerated field arithmetic in `curve25519-dalek` v5. However, CI testing on GitHub runners showed the SIMD backend is **slower** on Intel Xeon (AVX2 frequency throttling: 8-15% regression on ed25519 ops). On AMD Ryzen (user's local machine), SIMD provides ~20-34% improvement without frequency throttling.
+**SIMD backend analysis:** `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` enables AVX2/NEON-accelerated field arithmetic in `curve25519-dalek` v5. CI testing showed the SIMD backend is **slower** on Intel Xeon runners (AVX2 frequency throttling: 8-15% regression on ed25519 ops). Removed the flag from CI workflow. On AMD Ryzen or Apple Silicon (where SIMD doesn't throttle), the ~20-34% speedup would push single-signature closer to 2x — re-enable with `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` for specific deployment targets.
 
-**CI benchmark results (a19a591, no SIMD flag):**
+**CI benchmark results (4a86c77, no SIMD flag — latest run):**
 
 | Benchmark | linux-x86 | linux-arm | windows | macos-x86 | macos-arm |
 |-----------|-----------|-----------|---------|-----------|-----------|
-| `crypto/ed25519_verify` | 42.7µs | 41.5µs | 43.8µs | **29.4µs** | 34.3µs |
-| `envelope_verify/verify_chain/depth1` | 36.4µs | 43.4µs | 40.4µs | **32.0µs** | 33.7µs |
-| `crypto/ed25519_verify_batch_10` | 186µs | 216µs | 194µs | **158µs** | 185µs |
-| `canonical/encode/medium` | **2.5µs** | 2.9µs | 3.2µs | 3.0µs | 3.0µs |
-| `canonical/encode/large` | **7.7µs** | 10.4µs | 9.6µs | 11.1µs | 10.8µs |
-| `envelope_verify/verify_chain/depth2` | 38.5µs | 44.8µs | 42.5µs | **33.1µs** | 35.2µs |
+| `crypto/ed25519_verify` | 44.2µs | 41.7µs | **30.6µs** | 37.8µs | 33.5µs |
+| `envelope_verify/verify_chain/depth1` | 36.0µs | 42.9µs | **31.2µs** | 45.7µs | 33.9µs |
+| `crypto/ed25519_verify_batch_10` | 186µs | 214µs | **147µs** | 208µs | 177µs |
+| `canonical/encode/medium` | **2.5µs** | 2.9µs | 3.2µs | 3.5µs | 3.0µs |
+| `canonical/encode/large` | **7.6µs** | 10.4µs | 9.6µs | 12.2µs | 10.8µs |
+| `envelope_verify/verify_chain/depth2` | 38.2µs | 44.8µs | 40.6µs | 39.3µs | 35.2µs |
 
 ### 2x vs IRC Analysis
 
@@ -363,13 +363,15 @@ The Toloo protocol is well-architected with sharded locking (16 shards), `Arc<En
 
 | Platform | ed25519_verify ratio | Envelope ratio | Batch (per-sig) ratio |
 |----------|---------------------|----------------|----------------------|
-| linux-x86 | 1.05x | 1.38x | **2.41x** ✅ |
-| linux-arm | 1.08x | 1.15x | **2.08x** ✅ |
-| windows | 1.03x | 1.24x | **2.32x** ✅ |
-| macos-x86 | **1.53x** | **1.56x** | **2.84x** ✅ |
-| macos-arm | 1.31x | 1.48x | **2.43x** ✅ |
+| linux-x86 | 1.02x | 1.39x | **2.41x** ✅ |
+| linux-arm | 1.08x | 1.17x | **2.11x** ✅ |
+| windows | **1.47x** | **1.60x** | **3.07x** ✅ |
+| macos-x86 | 1.19x | 1.10x | **2.16x** ✅ |
+| macos-arm | 1.34x | 1.48x | **2.55x** ✅ |
 
-**Answer: 2x is achievable with batch verification on ALL platforms**, but not with single-signature verification. Batch verify achieves 2.08x-2.84x. Single-signature verify achieves 1.03x-1.56x — the fundamental bottleneck is Ed25519's ~28-40µs scalar multiplication that no amount of caching/algorithms can reduce below ~22µs without SIMD.
+**Answer: 2x is achievable with batch verification on ALL platforms**, but not with single-signature verification. Batch verify achieves 2.11x-3.07x. Single-signature verify achieves 1.02x-1.48x — the fundamental bottleneck is Ed25519's ~28-40µs scalar multiplication that no amount of caching/algorithms can reduce below ~22µs.
+
+**SIMD note:** `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` was tested on CI but removed — AVX2 frequency throttling on Intel Xeon runners causes net slowdowns. On AMD Ryzen or Apple Silicon (where SIMD doesn't throttle), the ~20-34% speedup would push single-signature closer to 2x.
 
 ---
 
