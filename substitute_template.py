@@ -92,18 +92,32 @@ def compute_proto_vars(data):
         for ref_name in ['IRC', 'XMPP', 'MATRIX']:
             ref_ns = refs.get(ref_name, 0)
             if ref_ns > 0:
+                vars[f'PROTO_{prefix}_{ref_name}_NS'] = f"{ref_ns:,.0f}"
                 vars[f'PROTO_{prefix}_{ref_name}_PCT'] = f"{log_pct(ref_ns):.1f}%"
                 if toloo_ns > 0:
                     ratio_val = ref_ns / toloo_ns
-                    vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = (
-                        f"{ratio_val:.1f}" if ratio_val < 10
-                        else f"{round(ratio_val):,}"
-                    )
+                    if ratio_val < 1.5:
+                        vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = f"{ratio_val:.1f}"
+                        vars[f'PROTO_{prefix}_{ref_name}_COLOR'] = 'var(--green)'
+                        vars[f'PROTO_{prefix}_{ref_name}_LABEL'] = "parity" if ratio_val < 1.1 else f"{ratio_val:.1f}x slower"
+                    else:
+                        vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = (
+                            f"{ratio_val:.1f}" if ratio_val < 10
+                            else f"{round(ratio_val):,}"
+                        )
+                        vars[f'PROTO_{prefix}_{ref_name}_COLOR'] = (
+                            'var(--amber)' if ref_name == 'IRC' else 'var(--red)'
+                        )
+                        vars[f'PROTO_{prefix}_{ref_name}_LABEL'] = f"{vars[f'PROTO_{prefix}_{ref_name}_RATIO']}x slower"
                 else:
                     vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = "N/A"
+                    vars[f'PROTO_{prefix}_{ref_name}_COLOR'] = 'var(--text)'
+                    vars[f'PROTO_{prefix}_{ref_name}_LABEL'] = "N/A"
             else:
+                vars[f'PROTO_{prefix}_{ref_name}_NS'] = "N/A"
                 vars[f'PROTO_{prefix}_{ref_name}_PCT'] = "0%"
-                vars[f'PROTO_{prefix}_{ref_name}_RATIO'] = "N/A"
+                vars[f'PROTO_{prefix}_{ref_name}_COLOR'] = 'var(--text)'
+                vars[f'PROTO_{prefix}_{ref_name}_LABEL'] = "N/A"
 
     return vars
 

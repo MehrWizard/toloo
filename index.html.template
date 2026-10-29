@@ -16,6 +16,7 @@
     --amber:#e0a020;
     --red:#e05050;
     --blue:#4a9cf0;
+    --text-muted:#a0a0b0;
     --mono:'JetBrains Mono', ui-monospace, monospace;
     --sans:system-ui, -apple-system, Segoe UI, sans-serif;
     --r:10px;
@@ -88,6 +89,9 @@
   .proto-val{
     width:90px;font-family:var(--mono);font-size:.7rem;color:var(--text);
     text-align:right;flex-shrink:0;
+  }
+  .proto-sub{
+    font-size:.55rem;color:var(--text-muted);
   }
 
   /* Simulation cards */
@@ -167,23 +171,23 @@
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">IRC</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CANONICAL_IRC_PCT}%;background:var(--amber)"></div>
+              <div class="proto-fill" style="width:%{PROTO_CANONICAL_IRC_PCT}%;background:%{PROTO_CANONICAL_IRC_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_CANONICAL_IRC_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_CANONICAL_IRC_NS}% ns <span class="proto-sub">%{PROTO_CANONICAL_IRC_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">XMPP</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CANONICAL_XMPP_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_CANONICAL_XMPP_PCT}%;background:%{PROTO_CANONICAL_XMPP_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_CANONICAL_XMPP_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_CANONICAL_XMPP_NS}% ns <span class="proto-sub">%{PROTO_CANONICAL_XMPP_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">Matrix</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CANONICAL_MATRIX_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_CANONICAL_MATRIX_PCT}%;background:%{PROTO_CANONICAL_MATRIX_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_CANONICAL_MATRIX_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_CANONICAL_MATRIX_NS}% ns <span class="proto-sub">%{PROTO_CANONICAL_MATRIX_LABEL}%</span></span>
           </div>
         </div>
       </div>
@@ -201,23 +205,23 @@
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">IRC</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_VERIFY_IRC_PCT}%;background:var(--amber)"></div>
+              <div class="proto-fill" style="width:%{PROTO_VERIFY_IRC_PCT}%;background:%{PROTO_VERIFY_IRC_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_VERIFY_IRC_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_VERIFY_IRC_NS}% ns <span class="proto-sub">%{PROTO_VERIFY_IRC_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">XMPP</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_VERIFY_XMPP_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_VERIFY_XMPP_PCT}%;background:%{PROTO_VERIFY_XMPP_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_VERIFY_XMPP_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_VERIFY_XMPP_NS}% ns <span class="proto-sub">%{PROTO_VERIFY_XMPP_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">Matrix</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_VERIFY_MATRIX_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_VERIFY_MATRIX_PCT}%;background:%{PROTO_VERIFY_MATRIX_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_VERIFY_MATRIX_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_VERIFY_MATRIX_NS}% ns <span class="proto-sub">%{PROTO_VERIFY_MATRIX_LABEL}%</span></span>
           </div>
         </div>
       </div>
@@ -235,23 +239,23 @@
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">IRC</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_PARSE_IRC_PCT}%;background:var(--amber)"></div>
+              <div class="proto-fill" style="width:%{PROTO_PARSE_IRC_PCT}%;background:%{PROTO_PARSE_IRC_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_PARSE_IRC_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_PARSE_IRC_NS}% ns <span class="proto-sub">%{PROTO_PARSE_IRC_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">XMPP</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_PARSE_XMPP_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_PARSE_XMPP_PCT}%;background:%{PROTO_PARSE_XMPP_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_PARSE_XMPP_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_PARSE_XMPP_NS}% ns <span class="proto-sub">%{PROTO_PARSE_XMPP_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">Matrix</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_PARSE_MATRIX_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_PARSE_MATRIX_PCT}%;background:%{PROTO_PARSE_MATRIX_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_PARSE_MATRIX_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_PARSE_MATRIX_NS}% ns <span class="proto-sub">%{PROTO_PARSE_MATRIX_LABEL}%</span></span>
           </div>
         </div>
       </div>
@@ -269,23 +273,23 @@
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">IRC</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_BUILD_IRC_PCT}%;background:var(--amber)"></div>
+              <div class="proto-fill" style="width:%{PROTO_BUILD_IRC_PCT}%;background:%{PROTO_BUILD_IRC_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_BUILD_IRC_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_BUILD_IRC_NS}% ns <span class="proto-sub">%{PROTO_BUILD_IRC_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">XMPP</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_BUILD_XMPP_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_BUILD_XMPP_PCT}%;background:%{PROTO_BUILD_XMPP_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_BUILD_XMPP_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_BUILD_XMPP_NS}% ns <span class="proto-sub">%{PROTO_BUILD_XMPP_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">Matrix</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_BUILD_MATRIX_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_BUILD_MATRIX_PCT}%;background:%{PROTO_BUILD_MATRIX_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_BUILD_MATRIX_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_BUILD_MATRIX_NS}% ns <span class="proto-sub">%{PROTO_BUILD_MATRIX_LABEL}%</span></span>
           </div>
         </div>
       </div>
@@ -303,23 +307,23 @@
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">IRC</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_POOL_IRC_PCT}%;background:var(--amber)"></div>
+              <div class="proto-fill" style="width:%{PROTO_POOL_IRC_PCT}%;background:%{PROTO_POOL_IRC_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_POOL_IRC_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_POOL_IRC_NS}% ns <span class="proto-sub">%{PROTO_POOL_IRC_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">XMPP</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_POOL_XMPP_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_POOL_XMPP_PCT}%;background:%{PROTO_POOL_XMPP_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_POOL_XMPP_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_POOL_XMPP_NS}% ns <span class="proto-sub">%{PROTO_POOL_XMPP_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">Matrix</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_POOL_MATRIX_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_POOL_MATRIX_PCT}%;background:%{PROTO_POOL_MATRIX_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_POOL_MATRIX_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_POOL_MATRIX_NS}% ns <span class="proto-sub">%{PROTO_POOL_MATRIX_LABEL}%</span></span>
           </div>
         </div>
       </div>
@@ -337,23 +341,23 @@
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">IRC</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CRYPTO_IRC_PCT}%;background:var(--amber)"></div>
+              <div class="proto-fill" style="width:%{PROTO_CRYPTO_IRC_PCT}%;background:%{PROTO_CRYPTO_IRC_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_CRYPTO_IRC_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_CRYPTO_IRC_NS}% ns <span class="proto-sub">%{PROTO_CRYPTO_IRC_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">XMPP</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CRYPTO_XMPP_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_CRYPTO_XMPP_PCT}%;background:%{PROTO_CRYPTO_XMPP_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_CRYPTO_XMPP_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_CRYPTO_XMPP_NS}% ns <span class="proto-sub">%{PROTO_CRYPTO_XMPP_LABEL}%</span></span>
           </div>
           <div class="proto-row" style="opacity:.82">
             <span class="proto-label">Matrix</span>
             <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CRYPTO_MATRIX_PCT}%;background:var(--red)"></div>
+              <div class="proto-fill" style="width:%{PROTO_CRYPTO_MATRIX_PCT}%;background:%{PROTO_CRYPTO_MATRIX_COLOR}%"></div>
             </div>
-            <span class="proto-val">%{PROTO_CRYPTO_MATRIX_RATIO}%x slower</span>
+            <span class="proto-val">%{PROTO_CRYPTO_MATRIX_NS}% ns <span class="proto-sub">%{PROTO_CRYPTO_MATRIX_LABEL}%</span></span>
           </div>
         </div>
       </div>
