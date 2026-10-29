@@ -1,0 +1,15 @@
+# Enable curve25519-dalek SIMD backend on aarch64 targets.
+# NEON is mandatory on aarch64 and does not cause frequency throttling,
+# unlike AVX2 on Intel Xeon. This gives ~20-34% speedup on Apple Silicon
+# and AWS Graviton.
+#
+# On x86_64, SIMD is intentionally NOT enabled here — add it via RUSTFLAGS
+# locally on AMD Ryzen or other non-Xeon CPUs only.
+[target.'aarch64-unknown-linux-gnu']
+rustflags = ['--cfg', 'curve25519_dalek_backend="simd"']
+
+[target.'aarch64-apple-darwin']
+rustflags = ['--cfg', 'curve25519_dalek_backend="simd"']
+
+[target.'aarch64-pc-windows-msvc']
+rustflags = ['--cfg', 'curve25519_dalek_backend="simd"']

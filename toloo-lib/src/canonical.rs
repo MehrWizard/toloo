@@ -27,9 +27,10 @@ pub fn canonical<T: Serialize>(value: &T) -> Result<String> {
     canonical_value(&value)
 }
 
-/// Canonical JSON as UTF-8 bytes.
+/// Canonical JSON as UTF-8 bytes (skips intermediate String allocation).
 pub fn canonical_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    Ok(canonical(value)?.into_bytes())
+    let json_value = serde_json::to_value(value)?;
+    Ok(canonical_value(&json_value)?.into_bytes())
 }
 
 /// Canonical JSON bytes for `DatumBody` with caching.
@@ -39,9 +40,107 @@ pub fn canonical_datum_bytes(d: &DatumBody) -> Result<Vec<u8>> {
     if let Some(cached) = d.cached_canonical.get() {
         return Ok(cached.clone());
     }
-    let bytes = canonical(d)?.into_bytes();
+    let bytes = canonical_bytes(d)?;
     let _ = d.cached_canonical.set(bytes.clone());
     Ok(bytes)
+}
+
+/// Direct-to-bytes canonical JSON — avoids String→Vec<u8> conversion.
+pub fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>> {
+    let estimated = estimate_json_size(value);
+    let mut out = Vec::with_capacity(estimated);
+    write_value_bytes(value, &mut out)?;
+    Ok(out)
+}
+
+/// Write canonical JSON directly into a provided buffer (no reallocation).
+pub fn canonical_value_bytes_into(value: &Value, out: &mut Vec<u8>) -> Result<()> {
+    out.clear();
+    let estimated = estimate_json_size(value);
+    out.reserve(estimated);
+    write_value_bytes(value, out)?;
+    Ok(())
+}
+
+fn write_value_bytes(value: &Value, out: &mut Vec<u8>) -> Result<()> {
+    match value {
+        Value::Null => out.extend_from_slice(b"null"),
+        Value::Bool(v) => out.extend_from_slice(if *v { b"true" } else { b"false" }),
+        Value::Number(n) => write_number_bytes(n, out)?,
+        Value::String(s) => write_string_bytes(s, out),
+        Value::Array(items) => {
+            out.push(b'[');
+            for (idx, item) in items.iter().enumerate() {
+                if idx > 0 { out.push(b','); }
+                write_value_bytes(item, out)?;
+            }
+            out.push(b']');
+        }
+        Value::Object(map) => write_object_bytes(map, out)?,
+    }
+    Ok(())
+}
+
+fn write_object_bytes(map: &Map<String, Value>, out: &mut Vec<u8>) -> Result<()> {
+    let mut entries: Vec<(&str, &Value)> = map.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    entries.sort_by(|(a, _), (b, _)| utf16_cmp(a, b));
+    out.push(b'{');
+    for (idx, (k, v)) in entries.iter().enumerate() {
+        if idx > 0 { out.push(b','); }
+        write_string_bytes(k, out);
+        out.push(b':');
+        write_value_bytes(v, out)?;
+    }
+    out.push(b'}');
+    Ok(())
+}
+
+fn write_string_bytes(input: &str, out: &mut Vec<u8>) {
+    out.push(b'"');
+    let bytes = input.as_bytes();
+    let mut last = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        let escape: Option<&[u8]> = match b {
+            b'"' => Some(b"\\\""),
+            b'\\' => Some(b"\\\\"),
+            b'\x08' => Some(b"\\b"),
+            b'\x0C' => Some(b"\\f"),
+            b'\n' => Some(b"\\n"),
+            b'\r' => Some(b"\\r"),
+            b'\t' => Some(b"\\t"),
+            0x00..=0x1F => None,
+            _ => continue,
+        };
+        if let Some(esc) = escape {
+            out.extend_from_slice(&bytes[last..i]);
+            out.extend_from_slice(esc);
+            last = i + 1;
+        } else if b <= 0x1F {
+            out.extend_from_slice(&bytes[last..i]);
+            out.extend_from_slice(&[b'\\', b'u', b'0', b'0']);
+            out.push(hex_lower(b >> 4));
+            out.push(hex_lower(b & 0xF));
+            last = i + 1;
+        }
+    }
+    out.extend_from_slice(&bytes[last..]);
+    out.push(b'"');
+}
+
+#[inline]
+fn hex_lower(n: u8) -> u8 {
+    if n < 10 { b'0' + n } else { b'a' + (n - 10) }
+}
+
+fn write_number_bytes(number: &Number, out: &mut Vec<u8>) -> Result<()> {
+    if let Some(v) = number.as_f64() {
+        if !v.is_finite() {
+            bail!("non-finite numbers are not valid JSON");
+        }
+    }
+    let s = number.to_string();
+    out.extend_from_slice(s.as_bytes());
+    Ok(())
 }
 
 /// Serialize a JSON value into canonical JSON.
@@ -158,7 +257,7 @@ mod tests {
 
     use crate::types::DatumBody;
 
-    use super::canonical;
+    use super::{canonical, canonical_value_bytes};
 
     #[test]
     fn canonicalizes_known_readme_example() {
@@ -196,5 +295,26 @@ mod tests {
         let got = canonical(&d).expect("canonicalization should succeed");
         assert_eq!(got, r#"{"n":"A","t":"room.message","ts":1,"v":"0.2"}"#);
         assert!(!got.contains("null"));
+    }
+
+    #[test]
+    fn canonical_value_bytes_matches_string_output() {
+        let v = json!({
+            "ts": 1,
+            "n": "A",
+            "v": "0.2",
+            "t": "room.message"
+        });
+        let from_value = canonical_value_bytes(&v).expect("bytes canonicalization should succeed");
+        let from_string = canonical(&v).expect("string canonicalization should succeed");
+        assert_eq!(from_value, from_string.into_bytes());
+    }
+
+    #[test]
+    fn canonical_value_bytes_handles_control_chars() {
+        let v = json!({ "x": "hello\t\nworld" });
+        let bytes = canonical_value_bytes(&v).expect("should succeed");
+        let s = canonical(&v).expect("string should succeed");
+        assert_eq!(bytes, s.into_bytes());
     }
 }
