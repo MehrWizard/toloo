@@ -91,7 +91,7 @@
     text-align:right;flex-shrink:0;position:relative;cursor:help;
   }
   .proto-sub{
-    font-size:.55rem;color:var(--text-muted);
+    font-size:.7rem;color:var(--text);
   }
   .proto-inline-ns{display:none}
   .proto-parity .proto-inline-ns{display:inline}
