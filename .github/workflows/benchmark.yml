@@ -50,6 +50,7 @@ jobs:
     name: Benchmark Linux x86_64 (1 vCPU - ubuntu-slim)
     needs: prepare-repo
     runs-on: ubuntu-24.04
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,6 +110,7 @@ jobs:
     name: Benchmark Linux aarch64
     needs: prepare-repo
     runs-on: ubuntu-24.04-arm
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -175,6 +177,7 @@ jobs:
     name: Benchmark Windows x86_64
     needs: prepare-repo
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -232,6 +235,7 @@ jobs:
     name: Benchmark macOS x86_64
     needs: prepare-repo
     runs-on: macos-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -286,6 +290,7 @@ jobs:
     name: Benchmark macOS aarch64
     needs: prepare-repo
     runs-on: macos-14
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -350,9 +355,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download all available artifacts
+        if: always()
+        uses: actions/download-artifact@v4
         with:
           path: artifacts/
+
+      - name: Report platform status
+        if: always()
+        run: |
+          echo "=== Available platform artifacts ==="
+          for d in artifacts/*/ ; do
+            if [ -d "$d" ] && [ -d "$d/bench-json" ]; then
+              plat=$(basename "$d")
+              count=$(ls "$d/bench-json/"*.json 2>/dev/null | wc -l)
+              echo "  ✓ $plat: $count benchmarks"
+            fi
+          done
+          echo "=== Done ==="
 
       - name: Install Python for aggregation
         run: sudo apt-get update && sudo apt-get install -y python3 python3-pip
@@ -397,7 +417,22 @@ jobs:
 
           output = Path("benchmark-report.json")
           output.write_text(json.dumps(results, indent=2))
-          print(f"Written {output}")
+
+          print(f"\n=== Platforms included ===")
+          for plat in sorted(results["platforms"]):
+              count = len(results["platforms"][plat])
+              print(f"  ✓ {plat}: {count} benchmarks")
+
+          expected = ['linux-x86', 'linux-arm', 'windows', 'macos-x86', 'macos-arm']
+          missing = [p for p in expected if p not in results["platforms"]]
+          if missing:
+              print(f"\n=== Missing platforms (job failed or runner unavailable) ===")
+              for p in missing:
+                  print(f"  ✗ {p}")
+          else:
+              print(f"\n=== All 5 platforms present ===")
+
+          print(f"\nWritten {output}")
           PYEOF
           python3 aggregate.py
 
