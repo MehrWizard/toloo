@@ -164,7 +164,7 @@ def compute_simulation(data):
     # Single-thread critical path
     encode_ns = p.get('canonical/encode/medium', {}).get('mean_ns', 0)
     verify_ns = p.get('envelope_verify/verify_chain/depth1', {}).get('mean_ns', 0)
-    parse_ns = p.get('envelope_parse/parse_envelope_bytes', {}).get('mean_ns', 0)
+    parse_ns = p.get('parse_envelope/parse_envelope_bytes', {}).get('mean_ns', 0)
     build_ns = p.get('event_build/make_room_message', {}).get('mean_ns', 0)
     pool_ns = p.get('pool_query/get_room_channel_1k', {}).get('mean_ns', 0)
     crypto_ns = p.get('crypto/ed25519_verify', {}).get('mean_ns', 0)
