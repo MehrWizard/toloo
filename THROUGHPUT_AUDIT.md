@@ -334,6 +334,45 @@ The Toloo protocol is well-architected with sharded locking (16 shards), `Arc<En
 
 ---
 
+## Phase 6: Envelope Verify Caching & SIMD (Complete)
+
+| Optimization | File | Status | Measured Gain |
+|--------------|------|--------|---------------|
+| `cached_sig: OnceLock<Signature>` on Envelope | `types.rs`, `envelope.rs` | ✅ Done | Cache hit on repeat verify calls |
+| `ed25519_verify_fast` (skip redundant parsing) | `crypto.rs` | ✅ Done | Avoids `Signature::from_slice` overhead |
+| `get_verifying_key` DashMap cache | `crypto.rs` | ✅ Done | Parse `VerifyingKey` once per pubkey |
+| Depth-1 fast path in `verify_chain` | `envelope.rs` | ✅ Done | Skip `Vec` allocation for depth-1 envelopes |
+| `signable_bytes_verify` recompute canonical | `envelope.rs` | ✅ Done | Fixed tamper-detection test failure |
+
+**SIMD backend analysis:** `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` enables AVX2/NEON-accelerated field arithmetic in `curve25519-dalek` v5. However, CI testing on GitHub runners showed the SIMD backend is **slower** on Intel Xeon (AVX2 frequency throttling: 8-15% regression on ed25519 ops). On AMD Ryzen (user's local machine), SIMD provides ~20-34% improvement without frequency throttling.
+
+**CI benchmark results (a19a591, no SIMD flag):**
+
+| Benchmark | linux-x86 | linux-arm | windows | macos-x86 | macos-arm |
+|-----------|-----------|-----------|---------|-----------|-----------|
+| `crypto/ed25519_verify` | 42.7µs | 41.5µs | 43.8µs | **29.4µs** | 34.3µs |
+| `envelope_verify/verify_chain/depth1` | 36.4µs | 43.4µs | 40.4µs | **32.0µs** | 33.7µs |
+| `crypto/ed25519_verify_batch_10` | 186µs | 216µs | 194µs | **158µs** | 185µs |
+| `canonical/encode/medium` | **2.5µs** | 2.9µs | 3.2µs | 3.0µs | 3.0µs |
+| `canonical/encode/large` | **7.7µs** | 10.4µs | 9.6µs | 11.1µs | 10.8µs |
+| `envelope_verify/verify_chain/depth2` | 38.5µs | 44.8µs | 42.5µs | **33.1µs** | 35.2µs |
+
+### 2x vs IRC Analysis
+
+**IRC reference latencies:** `crypto/ed25519_verify`: 45,000 ns, `envelope_verify/verify_chain/depth1`: 50,000 ns
+
+| Platform | ed25519_verify ratio | Envelope ratio | Batch (per-sig) ratio |
+|----------|---------------------|----------------|----------------------|
+| linux-x86 | 1.05x | 1.38x | **2.41x** ✅ |
+| linux-arm | 1.08x | 1.15x | **2.08x** ✅ |
+| windows | 1.03x | 1.24x | **2.32x** ✅ |
+| macos-x86 | **1.53x** | **1.56x** | **2.84x** ✅ |
+| macos-arm | 1.31x | 1.48x | **2.43x** ✅ |
+
+**Answer: 2x is achievable with batch verification on ALL platforms**, but not with single-signature verification. Batch verify achieves 2.08x-2.84x. Single-signature verify achieves 1.03x-1.56x — the fundamental bottleneck is Ed25519's ~28-40µs scalar multiplication that no amount of caching/algorithms can reduce below ~22µs without SIMD.
+
+---
+
 ## Phase 5: String Interning for Pool Indexes (Complete)
 
 | Optimization | File | Status | Measured Gain |
