@@ -130,9 +130,9 @@ struct Shard {
     /// (room, channel) -> list of event indices (for get_room_channel) (lock-free reads)
     /// Uses `String` for room key to allow fast `&str` lookup without Arc overhead.
     by_room_channel: DashMap<(String, i32), Vec<usize>>,
-    /// (room, tc) -> event index (for get_wanted / latest_tc) (ordered, needs RwLock for writes)
-    /// Uses `InternedStr` (Arc<str>) for room key to share allocation across index entries.
-    by_room_tc: RwLock<BTreeMap<(InternedStr, u64), usize>>,
+    /// room -> (tc -> event index) for get_wanted / latest_tc. The outer map
+    /// allows borrowed `&str` room lookups (no per-query key allocation).
+    by_room_tc: DashMap<InternedStr, BTreeMap<u64, usize>>,
     /// (author, room, tc) -> event index (for author-specific queries) (ordered, needs RwLock for writes)
     /// Uses `InternedStr` for author and room keys to share allocation.
     by_author_room_tc: RwLock<BTreeMap<(InternedStr, InternedStr, u64), usize>>,
@@ -151,7 +151,7 @@ impl Default for Shard {
             live: AtomicUsize::new(0),
             by_id: DashMap::new(),
             by_room_channel: DashMap::new(),
-            by_room_tc: RwLock::new(BTreeMap::new()),
+            by_room_tc: DashMap::new(),
             by_author_room_tc: RwLock::new(BTreeMap::new()),
             meta: RwLock::new(MetaState::default()),
             write_mutex: Mutex::new(()),
@@ -1143,14 +1143,14 @@ impl Pool {
     pub fn latest_tc(&self, room: &str) -> Result<u64> {
         let shard = self.shard(Some(room));
 
-        // Use by_room_tc index for O(log n) lookup (need read lock for BTreeMap)
-        let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
-        let key = InternedStr::from(room);
-        let range = (key.clone(), 0u64)..=(key, u64::MAX);
-        if let Some((_, &idx)) = by_room_tc.range(range).next_back() {
-            if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
-                if let Some(tc) = entry.tc {
-                    return Ok(tc);
+        // O(log n) per-room lookup; the DashMap allows a borrowed `&str` lookup
+        // so no room key is allocated per call.
+        if let Some(room_map) = shard.by_room_tc.get(room) {
+            if let Some((_, &idx)) = room_map.iter().next_back() {
+                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
+                    if let Some(tc) = entry.tc {
+                        return Ok(tc);
+                    }
                 }
             }
         }
@@ -1366,43 +1366,39 @@ impl Pool {
         if rooms.is_empty() {
             // Scan all shards; collect every match so type filters cannot cause
             // the limit to silently drop valid events.
-            let empty_room: InternedStr = InternedStr::from("");
             for shard in &self.shards {
-                let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
                 let events = shard.events.read().expect("events lock poisoned");
-                let range = by_room_tc.range((empty_room.clone(), after_tc + 1)..);
-                for (_, &idx) in range {
-                    if let Some(entry) = &events[idx] {
-                        if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
-                            continue;
+                for room_map in shard.by_room_tc.iter() {
+                    for (_, &idx) in room_map.range((after_tc + 1)..) {
+                        if let Some(entry) = &events[idx] {
+                            if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
+                                continue;
+                            }
+                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
+                                continue;
+                            }
+                            out.push(entry.as_ref().clone());
                         }
-                        if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
-                            continue;
-                        }
-                        out.push(entry.as_ref().clone());
                     }
                 }
             }
         } else {
-            // Filter by specific rooms. The range must be bounded by the room:
-            // an open-ended range would spill into lexicographically later rooms.
+            // Per-room ranges only — no allocation of a room key per call.
             for room in rooms {
                 let shard_idx = Self::shard_idx(Some(room));
                 let shard = &self.shards[shard_idx];
-                let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
                 let events = shard.events.read().expect("events lock poisoned");
-                let room_key: InternedStr = InternedStr::from(*room);
-                let range = by_room_tc
-                    .range((room_key.clone(), after_tc + 1)..=(room_key, u64::MAX));
-                for (_, &idx) in range {
-                    if let Some(entry) = &events[idx] {
-                        if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
-                            continue;
+                if let Some(room_map) = shard.by_room_tc.get(*room) {
+                    for (_, &idx) in room_map.range((after_tc + 1)..) {
+                        if let Some(entry) = &events[idx] {
+                            if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
+                                continue;
+                            }
+                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
+                                continue;
+                            }
+                            out.push(entry.as_ref().clone());
                         }
-                        if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
-                            continue;
-                        }
-                        out.push(entry.as_ref().clone());
                     }
                 }
             }
@@ -1502,10 +1498,20 @@ impl Pool {
         Ok(out)
     }
 
-    /// Fetch envelopes by a list of datum IDs (index lookup, not a full scan).
+    /// Fetch envelopes by a list of datum IDs.
+    ///
+    /// Uses `by_id` lookups for large pools; for small pools a single scan is
+    /// cheaper than hashing every id against every shard.
     pub fn get_by_datum_ids(&self, ids: &[&str]) -> Result<Vec<PoolEntry>> {
         if ids.is_empty() {
             return Ok(vec![]);
+        }
+        let live: usize = self.shards.iter().map(|s| s.live.load(Ordering::Relaxed)).sum();
+        if live <= ids.len().saturating_mul(NUM_SHARDS * 2) {
+            let id_set: HashSet<&str> = ids.iter().copied().collect();
+            let mut out = self.select(|e| id_set.contains(e.id.as_ref()))?;
+            out.sort_by(cmp_tc);
+            return Ok(out);
         }
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
@@ -2142,8 +2148,8 @@ fn insert_new(shard: &Shard, env: &Envelope, id: &str) {
     }
     if let Some(tc) = entry.tc {
         if let Some(room) = &entry.room {
-            // by_room_tc and by_author_room_tc use InternedStr for shared allocation (need write lock)
-            shard.by_room_tc.write().expect("by_room_tc lock poisoned").insert((room.clone(), tc), idx);
+            // by_room_tc and by_author_room_tc use InternedStr for shared allocation
+            shard.by_room_tc.entry(room.clone()).or_default().insert(tc, idx);
             shard.by_author_room_tc.write().expect("by_author_room_tc lock poisoned").insert((entry.n.clone(), room.clone(), tc), idx);
         }
     }
@@ -2179,12 +2185,11 @@ fn rebuild_indexes(shard: &Shard) {
         .clone();
 
     shard.by_room_channel.clear();
-    let mut by_room_tc = shard.by_room_tc.write().expect("by_room_tc lock poisoned");
+    shard.by_room_tc.clear();
     let mut by_author_room_tc = shard
         .by_author_room_tc
         .write()
         .expect("by_author_room_tc lock poisoned");
-    by_room_tc.clear();
     by_author_room_tc.clear();
 
     for (idx, entry_opt) in snapshot.iter().enumerate() {
@@ -2202,7 +2207,11 @@ fn rebuild_indexes(shard: &Shard) {
             if let Some(tc) = entry.tc {
                 if let Some(room) = &entry.room {
                     // by_room_tc and by_author_room_tc use InternedStr for shared allocation
-                    by_room_tc.insert((room.clone(), tc), idx);
+                    shard
+                        .by_room_tc
+                        .entry(room.clone())
+                        .or_default()
+                        .insert(tc, idx);
                     by_author_room_tc.insert((entry.n.clone(), room.clone(), tc), idx);
                 }
             }

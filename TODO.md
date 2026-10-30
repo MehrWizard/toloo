@@ -108,11 +108,14 @@ security) before touching performance.
 - [x] **`system.fetch` uses `by_id` lookups** instead of a full scan.
       `latest_tc` uses a BTreeMap range (O(log n)).
 - [x] **`get_wanted` range/filter correctness.** Specific-room queries now
-      use a bounded `(room, …)` range — previously the open-ended range
-      leaked events from lexicographically later rooms. The all-rooms branch
-      and the type filter no longer use `take(limit*2)`, so filters cannot
-      silently drop valid events (regression test added). One small
-      `InternedStr` allocation per queried room remains.
+      use a per-room index (`DashMap<Arc<str>, BTreeMap<tc, idx>>`) with a
+      borrowed `&str` lookup — no room-key allocation per call — and a
+      range bounded by the room. The previous open-ended range leaked events
+      from lexicographically later rooms. The all-rooms branch and type
+      filter no longer use `take(limit*2)`, so filtered results cannot be
+      silently dropped (regression test added). `get_by_datum_ids` falls back
+      to a single scan for small pools, where 16 shard hashes per id cost
+      more than one pass.
 - [x] **`PoolEntry` clones are allocation-free.** `id` is now an interned
       `Arc<str>`; every field is an `Arc`, so returning owned entries from
       `select`/`get_room_channel*` costs only refcount bumps.

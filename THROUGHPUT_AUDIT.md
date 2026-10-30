@@ -565,11 +565,15 @@ verification).
   `max_resident_blocks`, the pool drains to `max - max/4` rather than one
   event, so the O(n) hot-log rewrite runs every ~`max/4` inserts instead of
   on every insert at capacity.
-- **`get_wanted` range correctness.** Room-scoped queries use a bounded
-  `(room, …)` range; previously the open-ended range could leak events from
-  lexicographically later rooms. The all-rooms branch and type filters no
-  longer use `take(limit*2)`, so filtered results cannot be silently
-  truncated. Regression test: `get_wanted_room_filter_does_not_leak_other_rooms`.
+- **`get_wanted` range correctness.** The room index is now
+  `DashMap<Arc<str>, BTreeMap<tc, idx>>`, so room lookups borrow `&str`
+  instead of allocating a key, and ranges are bounded per room; previously
+  the open-ended range could leak events from lexicographically later rooms.
+  The all-rooms branch and type filters no longer use `take(limit*2)`, so
+  filtered results cannot be silently truncated. `get_by_datum_ids` uses
+  `by_id` for large pools but a single scan for small ones, where hashing
+  each id against 16 shards costs more than one pass. Regression test:
+  `get_wanted_room_filter_does_not_leak_other_rooms`.
 
 **Transport / limits.**
 HTTP headers are parsed with a `BufReader` (`read_until`) instead of one
