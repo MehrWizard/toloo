@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
 
 use crate::envelope::{
@@ -60,7 +60,7 @@ pub async fn handle_request(
         "node.peers" => handle_node_peers(d.c.as_ref(), pool),
         "node.rooms" => handle_node_rooms(d.c.as_ref(), pool),
         "system.fetch" => handle_system_fetch(d.c.as_ref(), pool),
-        "blob.fetch" => handle_blob_fetch(d.c.as_ref(), pool),
+        "blob.fetch" => handle_blob_fetch(d.c.as_ref(), Arc::clone(pool)).await,
         "room.summary" => handle_room_summary(d.c.as_ref(), pool, config),
         _ => Ok(vec![error_bytes(
             "invalid_request",
@@ -352,26 +352,36 @@ fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
 
 // ---- §10.8.5 blob.fetch ----
 
-fn handle_blob_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
+async fn handle_blob_fetch(c: Option<&Value>, pool: Arc<Pool>) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "blob.fetch")?;
-    let blob_id = require_string(c, "blob_id", "blob.fetch")?;
+    let blob_id = require_string(c, "blob_id", "blob.fetch")?.to_owned();
+    let blob_id_for_task = blob_id.clone();
     let piece_index = c.get("piece_index").and_then(Value::as_u64);
 
-    match piece_index {
-        Some(idx) => {
-            // Fetch a single piece.
-            match pool.get_blob_piece(blob_id, idx as u32)? {
-                Some(data) => {
-                    let encoded = crate::base64url::encode(&data);
-                    let json = format!("{{\"blob_id\":\"{}\",\"piece_index\":{},\"data\":\"{}\"}}", blob_id, idx, encoded);
-                    Ok(vec![json.into_bytes()])
-                }
-                None => Ok(vec![error_bytes("not_found", "blob piece not found")]),
-            }
+    // Blob storage is on disk; keep it off the single-threaded executor.
+    let (data, count) = tokio::task::spawn_blocking(move || -> Result<(Option<Vec<u8>>, u32)> {
+        match piece_index {
+            Some(idx) => Ok((pool.get_blob_piece(&blob_id_for_task, idx as u32)?, 0)),
+            None => Ok((None, pool.blob_piece_count(&blob_id_for_task)?)),
         }
+    })
+    .await
+    .context("blob fetch task")??;
+
+    match piece_index {
+        Some(idx) => match data {
+            Some(data) => {
+                let encoded = crate::base64url::encode(&data);
+                let json = format!(
+                    "{{\"blob_id\":\"{}\",\"piece_index\":{},\"data\":\"{}\"}}",
+                    blob_id, idx, encoded
+                );
+                Ok(vec![json.into_bytes()])
+            }
+            None => Ok(vec![error_bytes("not_found", "blob piece not found")]),
+        },
         None => {
             // Return piece count (metadata query).
-            let count = pool.blob_piece_count(blob_id)?;
             if count == 0 {
                 Ok(vec![error_bytes("not_found", "blob not found")])
             } else {

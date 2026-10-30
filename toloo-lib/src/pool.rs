@@ -22,7 +22,7 @@
 
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::hash::Hasher;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -256,6 +256,21 @@ struct MetaState {
     room_meta: HashMap<String, RoomMeta>,
 }
 
+/// Commands handled by the persistence writer thread.
+enum PersistCmd {
+    /// Append canonical envelope lines to the hot log.
+    Append(Vec<Vec<u8>>),
+    /// Write `cold_lines` to cold storage and rewrite the hot log without
+    /// `spill_ids`.
+    Spill {
+        cold_lines: Vec<Vec<u8>>,
+        spill_ids: HashSet<String>,
+        reply: std::sync::mpsc::Sender<Result<()>>,
+    },
+    /// Flush buffered writes and close the handle (reopened on next append).
+    Flush(std::sync::mpsc::Sender<Result<()>>),
+}
+
 /// Where this pool persists, derived from the base path given to [`Pool::open`].
 struct Persist {
     events_path: PathBuf,
@@ -265,6 +280,137 @@ struct Persist {
     config: PoolConfig,
     /// File lock for cold storage spill operations (prevents concurrent spills)
     spill_lock: Mutex<()>,
+    /// Channel to the writer thread that owns the hot-log file handle.
+    writer_tx: std::sync::mpsc::Sender<PersistCmd>,
+}
+
+impl Drop for Persist {
+    fn drop(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        if self.writer_tx.send(PersistCmd::Flush(tx)).is_ok() {
+            // Best effort: give the writer a bounded window to flush.
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+        }
+    }
+}
+
+/// Persistence writer thread: the only place the hot log is opened/written.
+fn run_persist_worker(rx: std::sync::mpsc::Receiver<PersistCmd>, events_path: PathBuf, cold_path: PathBuf) {
+    let mut writer: Option<BufWriter<std::fs::File>> = None;
+
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            PersistCmd::Append(lines) => {
+                let result = (|| -> Result<()> {
+                    ensure_log_writer(&mut writer, &events_path)?;
+                    let w = writer.as_mut().expect("writer opened");
+                    for line in &lines {
+                        w.write_all(line)?;
+                        w.write_all(b"\n")?;
+                    }
+                    // Flush to the OS per append: durability matches the old
+                    // synchronous path (no fsync either way), and the executor
+                    // still never waits on the disk.
+                    w.flush()?;
+                    Ok(())
+                })();
+                if let Err(e) = result {
+                    eprintln!("[toloo] persist append failed: {e:#}");
+                }
+            }
+            PersistCmd::Flush(reply) => {
+                let res = flush_log_writer(&mut writer);
+                let _ = reply.send(res);
+            }
+            PersistCmd::Spill { cold_lines, spill_ids, reply } => {
+                let res = (|| -> Result<()> {
+                    // Make prior appends visible to the rewrite, then close the
+                    // handle — the rewrite replaces the file.
+                    flush_log_writer(&mut writer)?;
+                    spill_rewrite(&events_path, &cold_path, &cold_lines, &spill_ids)
+                })();
+                let _ = reply.send(res);
+            }
+        }
+    }
+    let _ = flush_log_writer(&mut writer);
+}
+
+fn ensure_log_writer(writer: &mut Option<BufWriter<std::fs::File>>, events_path: &Path) -> Result<()> {
+    if writer.is_none() {
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(events_path)
+            .with_context(|| format!("failed to open {}", events_path.display()))?;
+        *writer = Some(BufWriter::new(f));
+    }
+    Ok(())
+}
+
+fn flush_log_writer(writer: &mut Option<BufWriter<std::fs::File>>) -> Result<()> {
+    if let Some(w) = writer.as_mut() {
+        w.flush()?;
+    }
+    *writer = None;
+    Ok(())
+}
+
+/// Write spilled lines to cold storage and rewrite the hot log without them.
+fn spill_rewrite(
+    events_path: &Path,
+    cold_path: &Path,
+    cold_lines: &[Vec<u8>],
+    spill_ids: &HashSet<String>,
+) -> Result<()> {
+    let mut cold_writer = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cold_path)
+        .with_context(|| format!("open cold log {}", cold_path.display()))?;
+    for line in cold_lines {
+        cold_writer.write_all(line)?;
+        cold_writer.write_all(b"\n")?;
+    }
+    cold_writer.flush()?;
+
+    let mut hot_reader = BufReader::new(
+        std::fs::File::open(events_path)
+            .with_context(|| format!("open hot log {}", events_path.display()))?,
+    );
+    let mut kept: Vec<u8> = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = hot_reader.read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            kept.extend_from_slice(line.as_bytes());
+            continue;
+        }
+        match serde_json::from_str::<Envelope>(trimmed) {
+            Ok(env) if spill_ids.contains(&datum_id(&env)) => {}
+            _ => kept.extend_from_slice(line.as_bytes()),
+        }
+    }
+
+    let tmp = events_path.with_extension("jsonl.tmp");
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .with_context(|| format!("open tmp hot {}", tmp.display()))?;
+        f.write_all(&kept)?;
+        f.flush()?;
+    }
+    std::fs::rename(&tmp, events_path)
+        .with_context(|| format!("replace hot log {}", events_path.display()))?;
+    Ok(())
 }
 
 pub struct Pool {
@@ -283,18 +429,32 @@ impl Pool {
     /// for tiered storage.
     pub fn open(path: &str, config: PoolConfig) -> Result<Self> {
         let base = Path::new(path);
+        let events_path = base.with_extension("jsonl");
         let cold_path = config
             .cold_storage_path
             .clone()
             .unwrap_or_else(|| base.with_extension("cold.jsonl"));
 
+        // The writer thread owns the hot-log file handle, so appends never
+        // block the (single-threaded) relay executor on disk I/O.
+        let (writer_tx, writer_rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("toloo-persist".to_owned())
+            .spawn({
+                let events_path = events_path.clone();
+                let cold_path = cold_path.clone();
+                move || run_persist_worker(writer_rx, events_path, cold_path)
+            })
+            .context("failed to spawn persistence writer")?;
+
         let persist = Persist {
-            events_path: base.with_extension("jsonl"),
+            events_path,
             meta_path: base.with_extension("meta.json"),
             blobs_dir: base.with_extension("blobs"),
             cold_path,
             config: config.clone(),
             spill_lock: Mutex::new(()),
+            writer_tx,
         };
         std::fs::create_dir_all(&persist.blobs_dir).with_context(|| {
             format!("failed to create blob dir {}", persist.blobs_dir.display())
@@ -513,86 +673,54 @@ impl Pool {
             return Ok(());
         }
 
-        // We need to spill (total_live - max_resident_blocks) oldest events.
-        let to_spill = total_live - p.config.max_resident_blocks;
+        // Spill down to `max - spill_batch` rather than exactly `max`, so the
+        // full-log rewrite is amortized over several puts instead of running
+        // on every insert once the pool is at capacity.
+        let spill_batch = (p.config.max_resident_blocks / 4).max(1);
+        let to_spill = total_live - p.config.max_resident_blocks + spill_batch;
 
-        // Collect the oldest event IDs to spill across all shards.
-        let spill_ids: Vec<String> = {
-            let mut all_events: Vec<(u64, String, usize, usize)> = Vec::new(); // (ts, id, shard_idx, event_idx)
-            for (shard_idx, shard) in self.shards.iter().enumerate() {
-                for (event_idx, entry_opt) in shard.events.read().expect("events lock poisoned").iter().enumerate() {
+        // Collect the oldest entries across all shards.
+        let spilled: Vec<Arc<PoolEntry>> = {
+            let mut all_events: Vec<(u64, Arc<PoolEntry>)> = Vec::new();
+            for shard in &self.shards {
+                for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                     if let Some(entry) = entry_opt {
-                        all_events.push((entry.ts, entry.id.to_string(), shard_idx, event_idx));
+                        all_events.push((entry.ts, Arc::clone(entry)));
                     }
                 }
             }
-            all_events.sort_by_key(|(ts, _, _, _)| *ts);
-            all_events.into_iter().take(to_spill).map(|(_, id, _, _)| id).collect()
+            all_events.sort_by_key(|(ts, _)| *ts);
+            all_events
+                .into_iter()
+                .take(to_spill)
+                .map(|(_, entry)| entry)
+                .collect()
         };
 
-        if spill_ids.is_empty() {
+        if spilled.is_empty() {
             return Ok(());
         }
 
-        // Read the hot log, write spilled events to cold, rewrite hot without them.
-        let hot_path = &p.events_path;
-        let cold_path = &p.cold_path;
-
-        let mut hot_reader = BufReader::new(
-            std::fs::File::open(hot_path).with_context(|| format!("open hot log {}", hot_path.display()))?,
-        );
-        let mut cold_writer = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(cold_path)
-            .with_context(|| format!("open cold log {}", cold_path.display()))?;
-
-        let spill_set: HashSet<_> = spill_ids.into_iter().collect();
-        let mut new_hot_lines = Vec::new();
-        let mut line = String::new();
-
-        loop {
-            line.clear();
-            let n = hot_reader.read_line(&mut line)?;
-            if n == 0 {
-                break;
-            }
-            let trimmed = line.trim_end();
-            if trimmed.is_empty() {
-                new_hot_lines.push(line.clone());
-                continue;
-            }
-            if let Ok(env) = serde_json::from_str::<Envelope>(trimmed) {
-                let id = datum_id(&env);
-                if spill_set.contains(&id) {
-                    // Write to cold storage
-                    cold_writer.write_all(line.as_bytes())?;
-                } else {
-                    new_hot_lines.push(line.clone());
-                }
-            } else {
-                // Keep malformed lines in hot (shouldn't happen after replay)
-                new_hot_lines.push(line.clone());
-            }
+        let spill_set: HashSet<String> = spilled.iter().map(|e| e.id.to_string()).collect();
+        let mut cold_lines: Vec<Vec<u8>> = Vec::with_capacity(spilled.len());
+        for entry in &spilled {
+            cold_lines.push(canonical_envelope_bytes_direct(&entry.env)?);
         }
-        cold_writer.flush()?;
+        drop(spilled);
 
-        // Rewrite hot log
-        let tmp = hot_path.with_extension("jsonl.tmp");
-        {
-            let mut f = std::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&tmp)
-                .with_context(|| format!("open tmp hot {}", tmp.display()))?;
-            for l in new_hot_lines {
-                f.write_all(l.as_bytes())?;
-            }
-            f.flush()?;
-        }
-        std::fs::rename(&tmp, hot_path)
-            .with_context(|| format!("replace hot log {}", hot_path.display()))?;
+        // The writer thread flushes prior appends, writes cold storage, and
+        // rewrites the hot log. Memory is only updated after it succeeds.
+        let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+        p.writer_tx
+            .send(PersistCmd::Spill {
+                cold_lines,
+                spill_ids: spill_set.clone(),
+                reply: reply_tx,
+            })
+            .map_err(|_| anyhow!("persistence writer stopped"))?;
+        reply_rx
+            .recv()
+            .map_err(|_| anyhow!("persistence writer stopped"))??;
 
         // Remove spilled events from memory across all shards. Slots are set to
         // `None` so the envelope data is dropped (bounding resident memory);
@@ -653,31 +781,17 @@ impl Pool {
         Ok(events)
     }
 
-    /// Append one or more canonical envelope lines with a single file open.
-    fn append_events(&self, events: &[&[u8]]) -> Result<()> {
+    /// Hand canonical envelope lines to the persistence writer thread.
+    fn append_events(&self, events: Vec<Vec<u8>>) -> Result<()> {
         let Some(p) = &self.persist else {
             return Ok(());
         };
         if events.is_empty() {
             return Ok(());
         }
-        // In tiered mode the hot log is rewritten by the spill path; serialize
-        // appends with the same lock so a rewrite cannot drop an appended event.
-        let _lock = if p.config.max_resident_blocks > 0 {
-            Some(p.spill_lock.lock().map_err(lock_err)?)
-        } else {
-            None
-        };
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&p.events_path)
-            .with_context(|| format!("failed to open {}", p.events_path.display()))?;
-        for json in events {
-            f.write_all(json)?;
-            f.write_all(b"\n")?;
-        }
-        f.flush()?;
+        p.writer_tx
+            .send(PersistCmd::Append(events))
+            .map_err(|_| anyhow!("persistence writer stopped"))?;
         Ok(())
     }
 
@@ -695,6 +809,15 @@ impl Pool {
         let Some(p) = &self.persist else {
             return Ok(());
         };
+        // Flush and close the writer's handle before replacing the file; a
+        // stale handle would keep writing to the unlinked inode.
+        let (flush_tx, flush_rx) = std::sync::mpsc::channel();
+        p.writer_tx
+            .send(PersistCmd::Flush(flush_tx))
+            .map_err(|_| anyhow!("persistence writer stopped"))?;
+        flush_rx
+            .recv()
+            .map_err(|_| anyhow!("persistence writer stopped"))??;
         let events_path = p.events_path.clone();
         let tmp = events_path.with_extension("jsonl.tmp");
         let max_resident_blocks = p.config.max_resident_blocks;
@@ -876,7 +999,7 @@ impl Pool {
         };
 
         // Persist to log (outside lock to minimize lock hold time)
-        self.append_events(&[json.as_slice()])?;
+        self.append_events(vec![json])?;
 
         // After adding new event, check if we need to spill to cold storage.
         self.maybe_spill_to_cold()?;
@@ -971,9 +1094,8 @@ impl Pool {
             }
         }
 
-        // Persist the whole batch with a single open/write/flush (outside locks)
-        let json_refs: Vec<&[u8]> = all_json.iter().map(Vec::as_slice).collect();
-        self.append_events(&json_refs)?;
+        // Persist the whole batch with a single writer command (outside locks)
+        self.append_events(all_json)?;
 
         // Check if we need to spill to cold storage
         self.maybe_spill_to_cold()?;
@@ -1242,13 +1364,14 @@ impl Pool {
         let mut out = Vec::new();
 
         if rooms.is_empty() {
-            // Scan all shards, use by_room_tc index
+            // Scan all shards; collect every match so type filters cannot cause
+            // the limit to silently drop valid events.
+            let empty_room: InternedStr = InternedStr::from("");
             for shard in &self.shards {
-                // by_room_tc uses InternedStr (Arc<str>) for room key (need read lock for BTreeMap)
                 let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
                 let events = shard.events.read().expect("events lock poisoned");
-                let range = by_room_tc.range((InternedStr::from(""), after_tc + 1)..);
-                for (_, &idx) in range.take(limit * 2) { // take extra for filtering
+                let range = by_room_tc.range((empty_room.clone(), after_tc + 1)..);
+                for (_, &idx) in range {
                     if let Some(entry) = &events[idx] {
                         if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
                             continue;
@@ -1261,14 +1384,17 @@ impl Pool {
                 }
             }
         } else {
-            // Filter by specific rooms
+            // Filter by specific rooms. The range must be bounded by the room:
+            // an open-ended range would spill into lexicographically later rooms.
             for room in rooms {
                 let shard_idx = Self::shard_idx(Some(room));
                 let shard = &self.shards[shard_idx];
                 let by_room_tc = shard.by_room_tc.read().expect("by_room_tc lock poisoned");
                 let events = shard.events.read().expect("events lock poisoned");
-                let range = by_room_tc.range((InternedStr::from(room.as_ref()), after_tc + 1)..);
-                for (_, &idx) in range.take(limit * 2) {
+                let room_key: InternedStr = InternedStr::from(*room);
+                let range = by_room_tc
+                    .range((room_key.clone(), after_tc + 1)..=(room_key, u64::MAX));
+                for (_, &idx) in range {
                     if let Some(entry) = &events[idx] {
                         if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
                             continue;
@@ -2879,13 +3005,15 @@ mod tests {
 
             let cold_content = std::fs::read_to_string(&cold_path).unwrap();
             let cold_lines: Vec<_> = cold_content.lines().collect();
-            assert_eq!(cold_lines.len(), 5, "5 events should be in cold storage");
+            // Spilling amortizes rewrites by draining to max - max/4, so the
+            // oldest 6 events are cold and the newest 4 stay resident.
+            assert_eq!(cold_lines.len(), 6, "6 oldest events should be in cold storage");
         }
 
         // Reopen and verify hot storage has only 5 most recent
         let pool = Pool::open_default(&path).expect("reopen");
         let hot_events = pool.get_room_channel(&room_key, 1).unwrap();
-        assert_eq!(hot_events.len(), 5, "hot storage should have 5 most recent events");
+        assert_eq!(hot_events.len(), 4, "hot storage should keep the 4 most recent events");
 
         // Verify they are the most recent (msg5 through msg9)
         for (i, event) in hot_events.iter().enumerate() {
@@ -2894,7 +3022,7 @@ mod tests {
                 .and_then(|c| c.get("body"))
                 .and_then(|v| v.as_str())
                 .unwrap();
-            assert_eq!(body, format!("msg{}", 5 + i));
+            assert_eq!(body, format!("msg{}", 6 + i));
         }
 
         std::fs::remove_dir_all(&base).ok();
@@ -3079,5 +3207,34 @@ mod tests {
 
         let final_count = pool.get_room_channel(&room_pub, 1).unwrap().len();
         assert_eq!(final_count, 1000);
+    }
+
+    #[test]
+    fn get_wanted_room_filter_does_not_leak_other_rooms() {
+        let pool = Pool::memory().expect("pool");
+        let node = mk_node();
+        let room_a = mk_room();
+        let room_b = mk_room();
+        let pub_a = room_a.sig.pub_key.clone();
+        let pub_b = room_b.sig.pub_key.clone();
+
+        for (room, body) in [(&room_a, "a"), (&room_b, "b")] {
+            let msg = mk_room_event(
+                &node,
+                room,
+                "room.message",
+                1000,
+                json!({"ch": 1, "body": body}),
+            );
+            let commit = wrap_commit(msg, room, 2000).expect("commit");
+            pool.put(&commit).expect("put");
+        }
+
+        let wanted = pool.get_wanted(&[&pub_a], &[], 0, 100).unwrap();
+        assert_eq!(wanted.len(), 1, "only room A's event may be returned");
+        assert_eq!(wanted[0].room.as_deref(), Some(pub_a.as_str()));
+
+        let both = pool.get_wanted(&[&pub_a, &pub_b], &[], 0, 100).unwrap();
+        assert_eq!(both.len(), 2);
     }
 }

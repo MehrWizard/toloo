@@ -91,10 +91,15 @@ security) before touching performance.
 - [x] **Spill check is O(shards), not O(events).** Each shard tracks a `live`
       atomic; the global `spill_lock` is only taken when the threshold is
       crossed.
-- [ ] **Blocking disk I/O on the LocalSet.** `append_events`, `persist_meta`,
-      blob reads/writes still use `std::fs` on the executor thread. Batch
-      appends reduced the number of stalls; a dedicated writer thread remains
-      the full fix.
+- [x] **Event-log I/O runs on a writer thread.** `Pool::open` spawns a
+      persistence thread that owns a buffered hot-log handle; `put`/
+      `put_batch` enqueue appends, and spill/compact are serialized through
+      the same channel (spill now drains to `max - max/4` so the rewrite is
+      amortized instead of running on every insert at capacity). Blob fetches
+      run via `spawn_blocking`. Meta-file rewrites (`persist_meta`) remain
+      synchronous — they are rare moderation operations.
+      Tradeoff: appends are written asynchronously, so a crash may lose the
+      most recent buffer (the log was already not fsync'd).
 - [x] **`build_membership` is cached** by the latest committed channel -2
       tc; returns `Arc<MembershipState>` and invalidates on new membership
       commits (tested).
@@ -102,9 +107,12 @@ security) before touching performance.
       ranges over `by_author_room_tc` instead of scanning the whole pool.
 - [x] **`system.fetch` uses `by_id` lookups** instead of a full scan.
       `latest_tc` uses a BTreeMap range (O(log n)).
-- [ ] **`get_wanted` allocates an `InternedStr` per room per call**; the
-      all-rooms branch has no per-room upper bound and `take(limit*2)` can
-      silently drop results.
+- [x] **`get_wanted` range/filter correctness.** Specific-room queries now
+      use a bounded `(room, …)` range — previously the open-ended range
+      leaked events from lexicographically later rooms. The all-rooms branch
+      and the type filter no longer use `take(limit*2)`, so filters cannot
+      silently drop valid events (regression test added). One small
+      `InternedStr` allocation per queried room remains.
 - [x] **`PoolEntry` clones are allocation-free.** `id` is now an interned
       `Arc<str>`; every field is an `Arc`, so returning owned entries from
       `select`/`get_room_channel*` costs only refcount bumps.

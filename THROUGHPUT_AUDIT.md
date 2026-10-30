@@ -544,8 +544,7 @@ verification).
 
 **Pool.**
 - `put`/`put_batch` compute the canonical envelope bytes once and derive the
-  `datum_id` from them; `append_events` writes a whole batch under one file
-  handle.
+  `datum_id` from them.
 - Each shard tracks a `live` atomic; the spill fast path is O(shards) and
   takes the global spill lock only when the resident threshold is crossed.
 - `build_membership` is cached by the latest committed channel -2 `tc` and
@@ -554,6 +553,23 @@ verification).
   lookups; `latest_tc` is an O(log n) BTreeMap range.
 - Cold-history entries are moved into `Arc<Envelope>` instead of being
   deep-cloned.
+- **Persistence runs on a dedicated writer thread.** `Pool::open` spawns a
+  `toloo-persist` thread that owns a buffered hot-log handle; `put` and
+  `put_batch` enqueue canonical lines over a channel. Spill and compaction
+  are serialized through the same channel so they always see flushed data,
+  and compaction closes the handle before replacing the file. Blob fetches
+  are dispatched with `spawn_blocking`. Meta-file rewrites remain
+  synchronous (rare moderation operations). Appends are asynchronous now, so
+  a crash can lose the recent buffer — the log was never fsync'd.
+- **Spill cost is amortized.** When resident events exceed
+  `max_resident_blocks`, the pool drains to `max - max/4` rather than one
+  event, so the O(n) hot-log rewrite runs every ~`max/4` inserts instead of
+  on every insert at capacity.
+- **`get_wanted` range correctness.** Room-scoped queries use a bounded
+  `(room, …)` range; previously the open-ended range could leak events from
+  lexicographically later rooms. The all-rooms branch and type filters no
+  longer use `take(limit*2)`, so filtered results cannot be silently
+  truncated. Regression test: `get_wanted_room_filter_does_not_leak_other_rooms`.
 
 **Transport / limits.**
 HTTP headers are parsed with a `BufReader` (`read_until`) instead of one
