@@ -20,7 +20,7 @@
 //!
 //! [`Pool::memory`] runs the same engine with no persistence at all.
 
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hasher;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -32,6 +32,11 @@ use dashmap::DashMap;
 /// String interning for pool keys to reduce allocations and enable zero-copy cloning.
 /// Uses `Arc<str>` for shared ownership of string data.
 type InternedStr = Arc<str>;
+
+/// Sort key for a room-channel index: (rank, primary, ts, id).
+/// `rank` 0 = committed (primary = tc), 1 = uncommitted (primary = ts), so
+/// iteration order matches `cmp_committed_first` exactly.
+type ChannelKey = (u8, u64, u64, InternedStr, usize);
 
 use anyhow::{anyhow, Context, Result};
 
@@ -126,13 +131,13 @@ struct Shard {
     /// Number of `Some` slots in `events` (avoids O(n) counting on spill checks).
     live: AtomicUsize,
     /// id -> index in events vec (lock-free reads)
-    by_id: DashMap<String, usize>,
+    by_id: DashMap<InternedStr, usize>,
     /// (room, channel) -> list of event indices (for get_room_channel) (lock-free reads)
     /// Uses `String` for room key to allow fast `&str` lookup without Arc overhead.
-    by_room_channel: DashMap<(String, i32), Vec<usize>>,
+    by_room_channel: DashMap<(String, i32), BTreeSet<ChannelKey>>,
     /// room -> (tc -> event index) for get_wanted / latest_tc. The outer map
     /// allows borrowed `&str` room lookups (no per-query key allocation).
-    by_room_tc: DashMap<InternedStr, BTreeMap<u64, usize>>,
+    by_room_tc: DashMap<InternedStr, BTreeMap<(u64, u64, InternedStr), usize>>,
     /// (author, room, tc) -> event index (for author-specific queries) (ordered, needs RwLock for writes)
     /// Uses `InternedStr` for author and room keys to share allocation.
     by_author_room_tc: RwLock<BTreeMap<(InternedStr, InternedStr, u64), usize>>,
@@ -534,13 +539,13 @@ impl Pool {
     }
 
     /// Collect clones of all live entries matching `pred` across all shards (lock-free reads).
-    pub(crate) fn select<F: Fn(&PoolEntry) -> bool + Sync>(&self, pred: F) -> Result<Vec<PoolEntry>> {
+    pub(crate) fn select<F: Fn(&PoolEntry) -> bool + Sync>(&self, pred: F) -> Result<Vec<Arc<PoolEntry>>> {
         let mut out = Vec::new();
         self.read_all_shards(|shard| {
             for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                 if let Some(entry) = entry_opt {
                     if pred(entry.as_ref()) {
-                        out.push(entry.as_ref().clone());
+                        out.push(Arc::clone(entry));
                     }
                 }
             }
@@ -732,7 +737,7 @@ impl Pool {
                 // access to `events`.
                 let mut events = shard.events.write().expect("events lock poisoned");
                 for id in &spill_set {
-                    if let Some((_, idx)) = shard.by_id.remove(id) {
+                    if let Some((_, idx)) = shard.by_id.remove(id.as_str()) {
                         let matches = events
                             .get(idx)
                             .and_then(|slot| slot.as_ref())
@@ -949,7 +954,7 @@ impl Pool {
             let shard = &self.shards[shard_idx];
 
             // Check if already exists (lock-free read)
-            if shard.by_id.contains_key(&id) {
+            if shard.by_id.contains_key(id.as_str()) {
                 return Ok(id);
             }
 
@@ -959,10 +964,10 @@ impl Pool {
             let superseded: Vec<String> = if let Some(room_ref) = &key_room {
                 if let Some(channel) = channel_opt {
                     // Use secondary index for O(1) lookup
-                    if let Some(indices) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
+                    if let Some(index) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
                         let events = shard.events.read().expect("events lock poisoned");
-                        indices.iter()
-                            .filter_map(|&idx| events[idx].as_ref())
+                        index.iter()
+                            .filter_map(|key| events.get(key.4).and_then(|slot| slot.as_ref()))
                             .filter(|e| {
                                 // eid match: same room + signer + ts + channel
                                 let matches_key = e.room.as_deref() == Some(room_ref.as_str())
@@ -1048,7 +1053,7 @@ impl Pool {
                 let room = inner.d.r.clone();
 
                 // Check if already exists in pool OR in this batch (lock-free read)
-                if shard.by_id.contains_key(&id) || seen_in_batch.contains(&id) {
+                if shard.by_id.contains_key(id.as_str()) || seen_in_batch.contains(&id) {
                     results[input_idx] = Some(id);
                     continue;
                 }
@@ -1057,10 +1062,10 @@ impl Pool {
                 // Find superseded events
                 let channel_opt = channel_of(&inner.d);
                 let superseded: Vec<String> = if let (Some(room_ref), Some(channel)) = (room.as_ref(), channel_opt) {
-                    if let Some(indices) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
+                    if let Some(index) = shard.by_room_channel.get(&(room_ref.clone(), channel)) {
                         let events = shard.events.read().expect("events lock poisoned");
-                        indices.iter()
-                            .filter_map(|&idx| events[idx].as_ref())
+                        index.iter()
+                            .filter_map(|key| events.get(key.4).and_then(|slot| slot.as_ref()))
                             .filter(|e| {
                                 let matches_key = e.room.as_deref() == Some(room_ref.as_str())
                                     && e.n.as_ref() == inner.d.n.as_str()
@@ -1122,35 +1127,34 @@ impl Pool {
         Ok(None)
     }
 
-    pub fn get_room_channel(&self, room: &str, channel: i32) -> Result<Vec<PoolEntry>> {
+    pub fn get_room_channel(&self, room: &str, channel: i32) -> Result<Vec<Arc<PoolEntry>>> {
         let shard = self.shard(Some(room));
 
-        let indices = shard.by_room_channel.get(&(room.to_string(), channel));
-        let mut out = Vec::new();
-        if let Some(indices) = indices {
-            let events = shard.events.read().expect("events lock poisoned");
-            for &idx in indices.value() {
-                if let Some(entry) = &events[idx] {
-                    out.push(entry.as_ref().clone());
-                }
+        let Some(index) = shard.by_room_channel.get(&(room.to_string(), channel)) else {
+            return Ok(Vec::new());
+        };
+        let events = shard.events.read().expect("events lock poisoned");
+        let mut out = Vec::with_capacity(index.len());
+        // The index is ordered by cmp_committed_first; no sort needed.
+        for key in index.iter() {
+            if let Some(Some(entry)) = events.get(key.4) {
+                out.push(Arc::clone(entry));
             }
         }
-        out.sort_by(cmp_committed_first);
         Ok(out)
     }
 
     /// Returns the latest commit timestamp (tc) for committed events in a room.
     pub fn latest_tc(&self, room: &str) -> Result<u64> {
         let shard = self.shard(Some(room));
+        let events = shard.events.read().expect("events lock poisoned");
 
         // O(log n) per-room lookup; the DashMap allows a borrowed `&str` lookup
         // so no room key is allocated per call.
         if let Some(room_map) = shard.by_room_tc.get(room) {
-            if let Some((_, &idx)) = room_map.iter().next_back() {
-                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
-                    if let Some(tc) = entry.tc {
-                        return Ok(tc);
-                    }
+            for ((tc, _, _), &idx) in room_map.iter().rev() {
+                if let Some(Some(_entry)) = events.get(idx) {
+                    return Ok(*tc);
                 }
             }
         }
@@ -1191,22 +1195,22 @@ impl Pool {
     /// channels (`ch < 0` — metadata, membership, …).
     pub fn room_watermark(&self, room: &str) -> Result<u64> {
         let shard = self.shard(Some(room));
+        let events = shard.events.read().expect("events lock poisoned");
 
         let mut max_tc = 0u64;
-        if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -1)) {
-            for &idx in indices.value() {
-                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
-                    if let Some(tc) = entry.tc {
-                        max_tc = max_tc.max(tc);
-                    }
+        for channel in [-1i32, -2] {
+            let Some(index) = shard.by_room_channel.get(&(room.to_string(), channel)) else {
+                continue;
+            };
+            // Committed keys are ordered by tc; walk back to the newest live one.
+            for key in index.iter().rev() {
+                if key.0 != 0 {
+                    continue;
                 }
-            }
-        }
-        if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -2)) {
-            for &idx in indices.value() {
-                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
+                if let Some(Some(entry)) = events.get(key.4) {
                     if let Some(tc) = entry.tc {
                         max_tc = max_tc.max(tc);
+                        break;
                     }
                 }
             }
@@ -1225,8 +1229,9 @@ impl Pool {
         // If no specific channel index, scan all (fallback)
         let mut out = Vec::new();
         if let Some(indices) = indices {
-            for &idx in indices.value() {
-                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
+            let events = shard.events.read().expect("events lock poisoned");
+            for key in indices.iter() {
+                if let Some(Some(entry)) = events.get(key.4) {
                     out.push(entry.id.to_string());
                 }
             }
@@ -1240,36 +1245,38 @@ impl Pool {
                 }
             }
         }
-        out.sort_by(|a, b| a.cmp(b));
+        out.sort();
         Ok(out)
     }
 
-    pub fn get_private(&self, node_pub: &str) -> Result<Vec<PoolEntry>> {
+    pub fn get_private(&self, node_pub: &str) -> Result<Vec<Arc<PoolEntry>>> {
         let mut out = self.select(|e| {
             matches!(
                 e.event_type.as_ref(),
                 "private.message" | "private.read" | "private.blob"
             ) && (e.n.as_ref() == node_pub || e.to_node.as_deref() == Some(node_pub))
         })?;
-        out.sort_by(cmp_committed_first);
+        out.sort_by(|a, b| cmp_committed_first(a, b));
         Ok(out)
     }
 
     /// Latest committed tc among channel -2 events, used to version the cache.
     fn membership_version(&self, room: &str) -> u64 {
         let shard = self.shard(Some(room));
-        let mut version = 0u64;
-        if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), -2)) {
-            let events = shard.events.read().expect("events lock poisoned");
-            for &idx in indices.value() {
-                if let Some(Some(entry)) = events.get(idx) {
+        let events = shard.events.read().expect("events lock poisoned");
+        if let Some(index) = shard.by_room_channel.get(&(room.to_string(), -2)) {
+            for key in index.iter().rev() {
+                if key.0 != 0 {
+                    continue;
+                }
+                if let Some(Some(entry)) = events.get(key.4) {
                     if let Some(tc) = entry.tc {
-                        version = version.max(tc);
+                        return tc;
                     }
                 }
             }
         }
-        version
+        0
     }
 
     /// Replay channel -2 events into membership state, cached by membership tc.
@@ -1328,9 +1335,9 @@ impl Pool {
         Ok(state)
     }
 
-    pub fn get_uncommitted(&self, room: &str) -> Result<Vec<PoolEntry>> {
+    pub fn get_uncommitted(&self, room: &str) -> Result<Vec<Arc<PoolEntry>>> {
         let mut out = self.select(|e| e.room.as_deref() == Some(room) && e.tc.is_none())?;
-        out.sort_by(cmp_ts_id);
+        out.sort_by(|a, b| cmp_ts_id(a, b));
         Ok(out)
     }
 
@@ -1352,7 +1359,7 @@ impl Pool {
         types: &[&str],
         after_tc: u64,
         limit: usize,
-    ) -> Result<Vec<PoolEntry>> {
+    ) -> Result<Vec<Arc<PoolEntry>>> {
         let tail_only = after_tc == 0 && self.config.max_resident_blocks > 0;
         let tail_limit = if tail_only {
             self.config.tail_blocks_to_keep.min(limit)
@@ -1360,51 +1367,38 @@ impl Pool {
             limit
         };
 
-        // Use by_room_tc index for efficient range queries
+        // Per-room indexes are ordered by (tc, ts, id). Take only `tail_limit`
+        // candidates per room: the global first/last N must lie within the
+        // first/last N of their own room.
         let mut out = Vec::new();
 
         if rooms.is_empty() {
-            // Scan all shards; collect every match so type filters cannot cause
-            // the limit to silently drop valid events.
             for shard in &self.shards {
                 let events = shard.events.read().expect("events lock poisoned");
                 for room_map in shard.by_room_tc.iter() {
-                    for (_, &idx) in room_map.range((after_tc + 1)..) {
-                        if let Some(entry) = &events[idx] {
-                            if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
-                                continue;
-                            }
-                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
-                                continue;
-                            }
-                            out.push(entry.as_ref().clone());
-                        }
-                    }
+                    push_room_candidates(
+                        &events, &room_map, types, after_tc, tail_limit, tail_only, &mut out,
+                    );
                 }
             }
         } else {
-            // Per-room ranges only — no allocation of a room key per call.
             for room in rooms {
                 let shard_idx = Self::shard_idx(Some(room));
                 let shard = &self.shards[shard_idx];
                 let events = shard.events.read().expect("events lock poisoned");
                 if let Some(room_map) = shard.by_room_tc.get(*room) {
-                    for (_, &idx) in room_map.range((after_tc + 1)..) {
-                        if let Some(entry) = &events[idx] {
-                            if entry.tc.is_none() || entry.tc.unwrap_or(0) <= after_tc {
-                                continue;
-                            }
-                            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
-                                continue;
-                            }
-                            out.push(entry.as_ref().clone());
-                        }
-                    }
+                    push_room_candidates(
+                        &events, &room_map, types, after_tc, tail_limit, tail_only, &mut out,
+                    );
                 }
             }
         }
 
-        out.sort_by(cmp_tc);
+        // A single-room forward query is already ordered; only merges and the
+        // newest-first tail scan need sorting.
+        if tail_only || rooms.len() > 1 {
+            out.sort_by(|a, b| cmp_tc(a, b));
+        }
         if tail_only && out.len() > tail_limit {
             let skip = out.len() - tail_limit;
             out.drain(0..skip);
@@ -1421,7 +1415,7 @@ impl Pool {
         types: &[&str],
         after_tc: u64,
         limit: usize,
-    ) -> Result<Vec<PoolEntry>> {
+    ) -> Result<Vec<Arc<PoolEntry>>> {
         // Get ALL events from hot storage (bypass tail-only logic)
         let mut out = self.select(|e| {
             if e.tc.is_none() || e.tc.unwrap_or(0) <= after_tc {
@@ -1454,12 +1448,12 @@ impl Pool {
                 };
                 // Only add if not already resident in hot storage.
                 if !self.contains_id(&entry.id) {
-                    out.push(entry);
+                    out.push(Arc::new(entry));
                 }
             }
         }
 
-        out.sort_by(cmp_tc);
+        out.sort_by(|a, b| cmp_tc(a, b));
         out.truncate(limit);
         Ok(out)
     }
@@ -1472,29 +1466,36 @@ impl Pool {
         start_tc: u64,
         end_tc: Option<u64>,
         limit: usize,
-    ) -> Result<Vec<PoolEntry>> {
+    ) -> Result<Vec<Arc<PoolEntry>>> {
         let shard = self.shard(Some(room));
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
 
+        let Some(index) = shard.by_room_channel.get(&(room.to_string(), channel)) else {
+            return Ok(Vec::new());
+        };
+        let events = shard.events.read().expect("events lock poisoned");
+        let start = (0u8, start_tc, 0u64, InternedStr::from(""), 0usize);
         let mut out = Vec::new();
-        if let Some(indices) = shard.by_room_channel.get(&(room.to_string(), channel)) {
-            let events = shard.events.read().expect("events lock poisoned");
-            for &idx in indices.value() {
-                if let Some(entry) = &events[idx] {
-                    let tc = match entry.tc {
-                        Some(tc) if tc >= start_tc => tc,
-                        _ => continue,
-                    };
-                    if let Some(end) = end_tc {
-                        if tc > end {
-                            continue;
-                        }
-                    }
-                    out.push(entry.as_ref().clone());
+        // Committed keys are ordered by (tc, ts, id); stop as soon as the
+        // range is exhausted or `limit` live entries are collected.
+        for key in index.range(start..) {
+            if key.0 != 0 {
+                break;
+            }
+            if let Some(end) = end_tc {
+                if key.1 > end {
+                    break;
+                }
+            }
+            if let Some(Some(entry)) = events.get(key.4) {
+                out.push(Arc::clone(entry));
+                if out.len() >= limit {
+                    break;
                 }
             }
         }
-        out.sort_by(cmp_tc);
-        out.truncate(limit);
         Ok(out)
     }
 
@@ -1502,7 +1503,7 @@ impl Pool {
     ///
     /// Uses `by_id` lookups for large pools; for small pools a single scan is
     /// cheaper than hashing every id against every shard.
-    pub fn get_by_datum_ids(&self, ids: &[&str]) -> Result<Vec<PoolEntry>> {
+    pub fn get_by_datum_ids(&self, ids: &[&str]) -> Result<Vec<Arc<PoolEntry>>> {
         if ids.is_empty() {
             return Ok(vec![]);
         }
@@ -1510,7 +1511,7 @@ impl Pool {
         if live <= ids.len().saturating_mul(NUM_SHARDS * 2) {
             let id_set: HashSet<&str> = ids.iter().copied().collect();
             let mut out = self.select(|e| id_set.contains(e.id.as_ref()))?;
-            out.sort_by(cmp_tc);
+            out.sort_by(|a, b| cmp_tc(a, b));
             return Ok(out);
         }
         let mut out = Vec::with_capacity(ids.len());
@@ -1521,12 +1522,12 @@ impl Pool {
                 };
                 let events = shard.events.read().expect("events lock poisoned");
                 if let Some(Some(entry)) = events.get(idx) {
-                    out.push(entry.as_ref().clone());
+                    out.push(Arc::clone(entry));
                 }
                 break;
             }
         }
-        out.sort_by(cmp_tc);
+        out.sort_by(|a, b| cmp_tc(a, b));
         Ok(out)
     }
 
@@ -2069,8 +2070,9 @@ impl Pool {
 
         let mut out = Vec::new();
         if let Some(indices) = indices {
-            for &idx in indices.value() {
-                if let Some(entry) = &shard.events.read().expect("events lock poisoned")[idx] {
+            let events = shard.events.read().expect("events lock poisoned");
+            for key in indices.iter() {
+                if let Some(Some(entry)) = events.get(key.4) {
                     out.push((entry.ts, entry.id.to_string(), entry.env.clone()));
                 }
             }
@@ -2134,23 +2136,35 @@ fn insert_new(shard: &Shard, env: &Envelope, id: &str) {
         idx
     };
     shard.live.fetch_add(1, Ordering::Relaxed);
-    shard.by_id.insert(id.to_owned(), idx);
+    shard.by_id.insert(entry.id.clone(), idx);
+    index_entry(shard, &entry, idx);
+}
 
-    // Update secondary indexes
-    if let Some(room) = &entry.room {
-        if let Some(ch) = entry.channel {
-            // by_room_channel uses String for fast &str lookup (lock-free)
-            shard.by_room_channel
-                .entry((room.as_ref().to_string(), ch))
-                .or_default()
-                .push(idx);
-        }
+/// Insert one entry into the secondary indexes (room-channel and room-tc).
+fn index_entry(shard: &Shard, entry: &PoolEntry, idx: usize) {
+    let channel_key = match entry.tc {
+        Some(tc) => (0u8, tc, entry.ts, entry.id.clone(), idx),
+        None => (1u8, entry.ts, 0u64, entry.id.clone(), idx),
+    };
+    if let (Some(room), Some(ch)) = (&entry.room, entry.channel) {
+        shard
+            .by_room_channel
+            .entry((room.as_ref().to_string(), ch))
+            .or_default()
+            .insert(channel_key);
     }
     if let Some(tc) = entry.tc {
         if let Some(room) = &entry.room {
-            // by_room_tc and by_author_room_tc use InternedStr for shared allocation
-            shard.by_room_tc.entry(room.clone()).or_default().insert(tc, idx);
-            shard.by_author_room_tc.write().expect("by_author_room_tc lock poisoned").insert((entry.n.clone(), room.clone(), tc), idx);
+            shard
+                .by_room_tc
+                .entry(room.clone())
+                .or_default()
+                .insert((tc, entry.ts, entry.id.clone()), idx);
+            shard
+                .by_author_room_tc
+                .write()
+                .expect("by_author_room_tc lock poisoned")
+                .insert((entry.n.clone(), room.clone(), tc), idx);
         }
     }
 }
@@ -2186,34 +2200,61 @@ fn rebuild_indexes(shard: &Shard) {
 
     shard.by_room_channel.clear();
     shard.by_room_tc.clear();
-    let mut by_author_room_tc = shard
+    shard
         .by_author_room_tc
         .write()
-        .expect("by_author_room_tc lock poisoned");
-    by_author_room_tc.clear();
+        .expect("by_author_room_tc lock poisoned")
+        .clear();
 
     for (idx, entry_opt) in snapshot.iter().enumerate() {
         if let Some(entry) = entry_opt {
-            if let Some(room) = &entry.room {
-                if let Some(ch) = entry.channel {
-                    // by_room_channel uses String for fast &str lookup
-                    shard
-                        .by_room_channel
-                        .entry((room.as_ref().to_string(), ch))
-                        .or_default()
-                        .push(idx);
-                }
+            index_entry(shard, entry, idx);
+        }
+    }
+}
+
+/// Append up to `take_n` matching committed entries from one room's index.
+/// With `newest`, entries are appended newest-first.
+fn push_room_candidates(
+    events: &[Option<Arc<PoolEntry>>],
+    room_map: &BTreeMap<(u64, u64, InternedStr), usize>,
+    types: &[&str],
+    after_tc: u64,
+    take_n: usize,
+    newest: bool,
+    out: &mut Vec<Arc<PoolEntry>>,
+) {
+    if take_n == 0 {
+        return;
+    }
+    let Some(lower_tc) = after_tc.checked_add(1) else {
+        return;
+    };
+    let lower = (lower_tc, 0u64, InternedStr::from(""));
+    let mut taken = 0usize;
+
+    let take_one = |idx: usize, out: &mut Vec<Arc<PoolEntry>>, taken: &mut usize| -> bool {
+        if let Some(Some(entry)) = events.get(idx) {
+            if !types.is_empty() && !types.contains(&entry.event_type.as_ref()) {
+                return false;
             }
-            if let Some(tc) = entry.tc {
-                if let Some(room) = &entry.room {
-                    // by_room_tc and by_author_room_tc use InternedStr for shared allocation
-                    shard
-                        .by_room_tc
-                        .entry(room.clone())
-                        .or_default()
-                        .insert(tc, idx);
-                    by_author_room_tc.insert((entry.n.clone(), room.clone(), tc), idx);
-                }
+            out.push(Arc::clone(entry));
+            *taken += 1;
+            return *taken >= take_n;
+        }
+        false
+    };
+
+    if newest {
+        for (_, &idx) in room_map.range(lower..).rev() {
+            if take_one(idx, out, &mut taken) {
+                break;
+            }
+        }
+    } else {
+        for (_, &idx) in room_map.range(lower..) {
+            if take_one(idx, out, &mut taken) {
+                break;
             }
         }
     }
@@ -2268,7 +2309,7 @@ mod tests {
     use crate::envelope::{innermost, wrap_commit};
     use crate::events::{make_room_create, make_room_update};
 
-    use super::{ruleset_from_pool, Pool, PoolConfig, RoomClass};
+    use super::{ruleset_from_pool, Pool, PoolConfig, PoolEntry, RoomClass};
     // ---- Persistence helpers ----
 
     fn tmp_base(tag: &str) -> std::path::PathBuf {
@@ -3245,5 +3286,80 @@ mod tests {
 
         let both = pool.get_wanted(&[&pub_a, &pub_b], &[], 0, 100).unwrap();
         assert_eq!(both.len(), 2);
+    }
+
+    fn body_of(entry: &PoolEntry) -> String {
+        let d = innermost(&entry.env);
+        d.d.c
+            .as_ref()
+            .and_then(|c| c.get("body"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned()
+    }
+
+    #[test]
+    fn room_channel_index_preserves_committed_first_order() {
+        let pool = Pool::memory().expect("pool");
+        let node = mk_node();
+        let room = mk_room();
+        let room_pub = room.sig.pub_key.clone();
+
+        // Committed events inserted out of tc order.
+        let a = mk_room_event(&node, &room, "room.message", 100, json!({"ch": 1, "body": "a"}));
+        pool.put(&wrap_commit(a, &room, 300).unwrap()).unwrap();
+        let b = mk_room_event(&node, &room, "room.message", 101, json!({"ch": 1, "body": "b"}));
+        pool.put(&wrap_commit(b, &room, 200).unwrap()).unwrap();
+
+        // Uncommitted events, inserted newest-first.
+        let u1 = mk_room_event(&node, &room, "room.message", 50, json!({"ch": 1, "body": "u1"}));
+        let u2 = mk_room_event(&node, &room, "room.message", 40, json!({"ch": 1, "body": "u2"}));
+        pool.put(&u1).unwrap();
+        pool.put(&u2).unwrap();
+
+        let entries = pool.get_room_channel(&room_pub, 1).unwrap();
+        let bodies: Vec<String> = entries.iter().map(|e| body_of(e)).collect();
+        assert_eq!(
+            bodies,
+            vec!["b", "a", "u2", "u1"],
+            "committed first by tc, then uncommitted by ts"
+        );
+
+        let range = pool
+            .get_room_channel_range(&room_pub, 1, 200, Some(300), 10)
+            .unwrap();
+        let bodies: Vec<String> = range.iter().map(|e| body_of(e)).collect();
+        assert_eq!(bodies, vec!["b", "a"]);
+
+        let first = pool.get_room_channel_range(&room_pub, 1, 0, None, 1).unwrap();
+        assert_eq!(first.len(), 1, "limit must stop the index scan");
+        assert_eq!(body_of(&first[0]), "b");
+    }
+
+    #[test]
+    fn get_wanted_early_termination_respects_type_filter() {
+        let pool = Pool::memory().expect("pool");
+        let node = mk_node();
+        let room = mk_room();
+        let room_pub = room.sig.pub_key.clone();
+
+        for i in 0..10u64 {
+            let t = if i % 2 == 0 { "room.message" } else { "room.react" };
+            let inner = mk_room_event(
+                &node,
+                &room,
+                t,
+                1000 + i,
+                json!({"ch": 1, "body": format!("{i}")}),
+            );
+            let commit = wrap_commit(inner, &room, 2000 + i).unwrap();
+            pool.put(&commit).unwrap();
+        }
+
+        let wanted = pool
+            .get_wanted(&[&room_pub], &["room.react"], 0, 3)
+            .unwrap();
+        let bodies: Vec<String> = wanted.iter().map(|e| body_of(e)).collect();
+        assert_eq!(bodies, vec!["1", "3", "5"]);
     }
 }

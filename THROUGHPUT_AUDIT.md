@@ -566,14 +566,44 @@ verification).
   event, so the O(n) hot-log rewrite runs every ~`max/4` inserts instead of
   on every insert at capacity.
 - **`get_wanted` range correctness.** The room index is now
-  `DashMap<Arc<str>, BTreeMap<tc, idx>>`, so room lookups borrow `&str`
-  instead of allocating a key, and ranges are bounded per room; previously
-  the open-ended range could leak events from lexicographically later rooms.
-  The all-rooms branch and type filters no longer use `take(limit*2)`, so
-  filtered results cannot be silently truncated. `get_by_datum_ids` uses
-  `by_id` for large pools but a single scan for small ones, where hashing
-  each id against 16 shards costs more than one pass. Regression test:
-  `get_wanted_room_filter_does_not_leak_other_rooms`.
+  `DashMap<Arc<str>, BTreeMap<(tc, ts, id), idx>>`, so room lookups borrow
+  `&str` instead of allocating a key, and ranges are bounded per room;
+  previously the open-ended range could leak events from lexicographically
+  later rooms. The all-rooms branch and type filters no longer use
+  `take(limit*2)`, so filtered results cannot be silently truncated.
+  `get_by_datum_ids` uses `by_id` for large pools but a single scan for small
+  ones, where hashing each id against 16 shards costs more than one pass.
+  Regression tests: `get_wanted_room_filter_does_not_leak_other_rooms`,
+  `get_wanted_early_termination_respects_type_filter`.
+
+### Phase 8: Ordered query indexes (2026-10-30)
+
+- **Per-channel ordered index.** `by_room_channel` is now
+  `DashMap<(room, channel), BTreeSet<(rank, primary, ts, id, idx)>>`, where
+  rank 0 = committed (primary = tc) and rank 1 = uncommitted (primary = ts).
+  Iteration order is exactly `cmp_committed_first`, so `get_room_channel`
+  no longer sorts. `get_room_channel_range` seeks directly to `start_tc`,
+  walks only committed keys, and stops after `limit` live entries — O(limit)
+  instead of collect-all + sort + truncate.
+- **`get_wanted` early termination.** Per-room ordered indexes supply the
+  first/last `limit` matching candidates per room (type filters applied
+  during the walk); a merge sort is only needed for multi-room queries.
+  Full-pool scans and per-query sorting are gone; all-rooms queries collect
+  at most `rooms × limit` candidates.
+- **Queries return `Arc<PoolEntry>`.** Cloning a row is now one refcount
+  bump instead of cloning seven `Arc` fields; handlers/CLI deref
+  transparently.
+- `by_id` keys share the `Arc<str>` id allocation instead of duplicating the
+  string.
+
+Local criterion results (same 1k committed pool):
+
+| Benchmark | Before | After |
+|-----------|--------|-------|
+| `pool_query/get_room_channel_1k` | 60.9 µs | **10.8 µs** |
+| `pool_query/get_wanted_after_0` | 65.7 µs | **1.34 µs** |
+| `pool_query/get_wanted_after_tc` | 60.2 µs | **1.44 µs** |
+| `pool_query/get_by_id` (100 ids) | 36.8 µs | 34.2 µs |
 
 **Transport / limits.**
 HTTP headers are parsed with a `BufReader` (`read_until`) instead of one

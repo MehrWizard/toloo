@@ -134,6 +134,12 @@ security) before touching performance.
 - [x] **Benchmark integrity:** `verify_chain` no longer skips depth-1
       verification on a cached layer (the depth-1 bench was measuring a
       no-op); `get_by_id` now benches the protocol's 100-id system.fetch cap.
+- [x] **Ordered per-channel index (Phase 8).** `by_room_channel` is a
+      `BTreeSet` ordered exactly like `cmp_committed_first`; room.sync
+      ranges stop after `limit`, and `get_wanted` takes only the first/last
+      `limit` candidates per room. Queries return `Arc<PoolEntry>` so row
+      clones are refcount bumps. Local: get_room_channel_1k 61→11 µs,
+      get_wanted 66→1.3 µs.
 
 ### P2 — Infrastructure polish
 

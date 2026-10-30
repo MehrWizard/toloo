@@ -595,7 +595,7 @@ fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()
 // ---- Helpers ----
 
 /// Serialize pool entries as the JSON envelope stream a response carries (bytes).
-fn envelopes_json_bytes(entries: Vec<crate::pool::PoolEntry>) -> Vec<Vec<u8>> {
+fn envelopes_json_bytes(entries: Vec<Arc<crate::pool::PoolEntry>>) -> Vec<Vec<u8>> {
     entries
         .into_iter()
         .map(|e| envelope_to_json_bytes(&e.env))
