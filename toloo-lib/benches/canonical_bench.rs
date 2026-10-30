@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use toloo_lib::base64url;
 use toloo_lib::canonical::canonical_datum_bytes_direct;
 use toloo_lib::crypto::{chacha20_decrypt, chacha20_encrypt, derive_private_message_key, ed25519_generate, ed25519_sign, ed25519_verify, ed25519_verify_batch, x25519_generate, x25519_shared_secret, get_verifying_key};
-use toloo_lib::envelope::{make_envelope, parse_envelope, parse_envelope_bytes, verify_chain_uncached, envelope_to_json_bytes};
+use toloo_lib::envelope::{make_envelope, parse_envelope, parse_envelope_bytes, verify_chain_uncached, envelope_to_json_bytes, wrap_commit};
 use toloo_lib::events::{make_node_meta, make_room_create, make_room_message};
 use toloo_lib::types::{Keypair, LocalNode, LocalRoom};
 use serde_json::json;
@@ -173,10 +173,16 @@ fn pool_query_bench(c: &mut Criterion) {
     let room = mk_room();
     let room_pub = room.sig.pub_key.clone();
 
-    // Pre-populate with 1000 events
+    // Pre-populate with 1000 committed events: `by_room_tc` only indexes
+    // events with a commit timestamp, so uncommitted events would make the
+    // get_wanted benchmarks measure an empty index.
+    let mut next_tc = 0u64;
     for i in 0..1000 {
         let env = make_room_message(&node, &room_pub, 1, &format!("message {}", i), vec![]).unwrap();
-        pool.put(&env).unwrap();
+        let tc = (env.d.ts + 1).max(next_tc + 1);
+        next_tc = tc;
+        let commit = wrap_commit(env, &room, tc).unwrap();
+        pool.put(&commit).unwrap();
     }
 
     let mut group = c.benchmark_group("pool_query");

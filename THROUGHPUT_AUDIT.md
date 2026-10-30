@@ -594,6 +594,12 @@ HKDF block.
   measure real verification instead of a cache hit. Depth-2 now verifies both
   commit and authored layers (the previous cache path measured ~1 layer).
 - `pool_query/get_by_id` measures the protocol's 100-id `system.fetch` cap.
+- The pool-query setup now stores **committed** events. Previously it stored
+  uncommitted messages, which (a) made `get_wanted` measure an empty
+  `by_room_tc` index and (b) let same-millisecond events supersede each
+  other, so the "1k" pool was much smaller than 1,000. `get_wanted` and
+  `get_room_channel_1k` therefore report higher, accurate costs from this
+  run onward.
 
 ### Local results (short criterion run; noisy shared machine)
 
