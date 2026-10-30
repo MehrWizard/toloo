@@ -118,9 +118,11 @@ security) before touching performance.
       `select`/`get_room_channel*` costs only refcount bumps.
 - [x] **HTTP header parse is buffered** (`BufReader` + `read_until`), not one
       syscall per byte.
-- [ ] **WS frame copy:** tungstenite 0.28 exposes `Message::Text` as
-      immutable `Utf8Bytes`; simd-json needs a mutable slice, so one copy
-      remains. Only HTTP can pass its body buffer directly.
+- [x] **WS frame copy (accepted limitation).** tungstenite 0.28 exposes
+      `Message::Text` as immutable `Utf8Bytes`; simd-json needs a mutable
+      slice, so one copy remains. HTTP passes its body buffer directly.
+      Revisit if tungstenite exposes mutable text or we switch to binary
+      frames end-to-end.
 - [x] **`parse_envelope_ref` avoids deep-cloning offer values** in
       pool.exchange. The `maybe_commit` `env.clone()` remains (needed for
       the wrap-failure fallback).
