@@ -3,457 +3,794 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Toloo Protocol Benchmarks</title>
+<title>Toloo Benchmarks — Protocol Performance</title>
+<meta name="description" content="Cross-platform microbenchmarks for the Toloo messaging protocol relay, measured against IRC, XMPP, Matrix, Signal and Nostr across Linux, Windows and macOS.">
+<meta name="author" content="Toloo Protocol">
+<meta name="theme-color" content="#0b0809">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://mehrwizard.github.io/toloo-benchmarks/">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20660%20660'%3E%3Cdefs%3E%3ClinearGradient%20id='tolooBrand'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%23f43f5e'/%3E%3Cstop%20offset='1'%20stop-color='%23fbbf24'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='660'%20height='660'%20rx='145'%20fill='%230b0809'/%3E%3Cg%20transform='translate(33%2033)%20scale(0.9)'%3E%3Cg%20transform=%22translate(330,%20350)%22%20fill=%22url(%23tolooBrand)%22%3E%20%20%20%20%3Ccircle%20cx=%220%22%20cy=%220%22%20r=%22127%22%20/%3E%20%20%20%20%3Crect%20x=%22-13.5%22%20y=%22-348%22%20width=%2227%22%20height=%22196%22%20rx=%2213.5%22%20/%3E%20%20%20%20%3Cg%20transform=%22rotate(15.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-305%22%20width=%2227%22%20height=%22153%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(31)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-348%22%20width=%2227%22%20height=%22196%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(46.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-305%22%20width=%2227%22%20height=%22153%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(62)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-315%22%20width=%2227%22%20height=%22163%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(77.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-335%22%20width=%2227%22%20height=%22183%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(93)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-315%22%20width=%2227%22%20height=%22163%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(108.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-318%22%20width=%2227%22%20height=%22166%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(-15.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-305%22%20width=%2227%22%20height=%22153%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(-31)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-348%22%20width=%2227%22%20height=%22196%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(-46.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-305%22%20width=%2227%22%20height=%22153%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(-62)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-315%22%20width=%2227%22%20height=%22163%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(-77.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-335%22%20width=%2227%22%20height=%22183%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(-93)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-315%22%20width=%2227%22%20height=%22163%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%20%20%3Cg%20transform=%22rotate(-108.5)%22%3E%3Crect%20x=%22-13.5%22%20y=%22-318%22%20width=%2227%22%20height=%22166%22%20rx=%2213.5%22%20/%3E%3C/g%3E%20%20%3C/g%3E%20%20%3Cg%20transform=%22translate(192.55%20522.02)%20rotate(35)%20translate(-65.78%2036.92)%20scale(0.115000%20-0.115000)%22%3E%20%20%20%20%3Cpath%20d=%22M625%20546Q627%20571%20629.0%20595.0Q631%20619%20631%20644Q631%20672%20628.5%20701.0Q626%20730%20621%20762Q671%20736%20762.5%20713.5Q854%20691%201006%20678V655Q898%20639%20826.0%20621.5Q754%20604%20707.0%20585.5Q660%20567%20625%20546ZM569%20-120Q460%20-13%20378.0%2062.0Q296%20137%20234.0%20189.5Q172%20242%20122%20282Q168%20324%20236.0%20396.5Q304%20469%20384.0%20562.0Q464%20655%20545%20758L564%20747Q491%20600%20433.0%20491.5Q375%20383%20326%20294Q364%20230%20428.0%20131.5Q492%2033%20586%20-104ZM666%20-107Q656%208%20647.0%2092.5Q638%20177%20629.5%20238.5Q621%20300%20611.0%20347.0Q601%20394%20588.5%20435.0Q576%20476%20559%20520Q612%20511%20665%20511Q715%20511%20775%20520Q759%20474%20746.0%20421.5Q733%20369%20723.0%20298.0Q713%20227%20705.5%20128.5Q698%2030%20692%20-107ZM913%20-107Q903%208%20894.0%2092.5Q885%20177%20876.5%20238.5Q868%20300%20858.0%20347.0Q848%20394%20836.0%20435.0Q824%20476%20807%20520Q860%20511%20912%20511Q962%20511%201022%20520Q1006%20474%20993.0%20421.5Q980%20369%20970.0%20298.0Q960%20227%20952.5%20128.5Q945%2030%20939%20-107Z%22%20fill=%22url(%23tolooBrand)%22%20/%3E%20%20%3C/g%3E%20%20%3Cg%20transform=%22translate(263.41%20595.36)%20scale(0.115000%20-0.115000)%22%3E%20%20%20%20%3Cpath%20d=%22M155%20528Q167%20579%20167%20633Q167%20688%20155%20743Q205%20730%20260.5%20719.0Q316%20708%20384.0%20699.0Q452%20690%20539.5%20683.0Q627%20676%20741.0%20670.5Q855%20665%201003%20660V634Q847%20624%20733.5%20615.0Q620%20606%20537.0%20597.0Q454%20588%20390.0%20578.5Q326%20569%20270.0%20556.5Q214%20544%20155%20528ZM899%20-128Q800%20-46%20721.5%2011.0Q643%2068%20583.0%20108.0Q523%20148%20478%20177Q520%20208%20586.0%20262.0Q652%20316%20728.0%20386.5Q804%20457%20877%20535L895%20520Q830%20412%20776.5%20331.5Q723%20251%20679%20186Q711%20139%20770.5%2066.0Q830%20-7%20917%20-109ZM582%20-128Q482%20-46%20404.0%2011.0Q326%2068%20266.0%20108.0Q206%20148%20162%20177Q204%20208%20269.5%20262.0Q335%20316%20410.5%20386.5Q486%20457%20558%20535L578%20520Q513%20412%20459.5%20331.5Q406%20251%20362%20186Q395%20139%20454.0%2066.0Q513%20-7%20598%20-109Z%22%20fill=%22url(%23tolooBrand)%22%20/%3E%20%20%3C/g%3E%20%20%3Cg%20transform=%22translate(450.45%20522.02)%20rotate(-35)%20translate(-74.87%2036.63)%20scale(0.115000%20-0.115000)%22%3E%20%20%20%20%3Cpath%20d=%22M530%20-120Q431%20-13%20356.0%2061.5Q281%20136%20224.0%20188.5Q167%20241%20122%20281Q164%20324%20226.5%20396.5Q289%20469%20362.5%20561.5Q436%20654%20509%20757L529%20747Q464%20600%20412.0%20491.0Q360%20382%20316%20293Q348%20230%20406.5%20131.5Q465%2033%20551%20-105ZM1162%20-120Q1062%20-13%20986.5%2061.5Q911%20136%20854.5%20188.5Q798%20241%20754%20281Q796%20324%20858.0%20396.5Q920%20469%20993.0%20561.5Q1066%20654%201138%20757L1159%20747Q1094%20600%201042.0%20491.0Q990%20382%20946%20293Q978%20230%201036.5%20131.5Q1095%2033%201180%20-105ZM520%20333Q526%20384%20526%20437Q526%20463%20524.0%20491.0Q522%20519%20516%20548Q551%20525%20618.5%20501.5Q686%20478%20790%20463V444Q715%20427%20663.5%20408.5Q612%20390%20578.0%20371.0Q544%20352%20520%20333ZM520%2024Q526%2077%20526%20128Q526%20155%20524.0%20183.0Q522%20211%20516%20240Q551%20217%20618.5%20193.5Q686%20170%20790%20155V135Q715%20119%20663.5%20100.5Q612%2082%20578.0%2062.5Q544%2043%20520%2024Z%22%20fill=%22url(%23tolooBrand)%22%20/%3E%20%20%3C/g%3E%3C/g%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Toloo Benchmarks">
+<meta property="og:title" content="Toloo Benchmarks — Protocol Performance">
+<meta property="og:description" content="Cross-platform microbenchmarks for the Toloo messaging protocol relay, measured against IRC, XMPP, Matrix, Signal and Nostr.">
+<meta property="og:url" content="https://mehrwizard.github.io/toloo-benchmarks/">
+<meta property="og:image" content="https://mehrwizard.github.io/toloo-benchmarks/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Toloo sun-and-cuneiform mark in a coral-to-gold gradient beside the title Toloo Benchmarks.">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Toloo Benchmarks — Protocol Performance">
+<meta name="twitter:description" content="Cross-platform microbenchmarks for the Toloo messaging protocol relay, measured against IRC, XMPP, Matrix, Signal and Nostr.">
+<meta name="twitter:image" content="https://mehrwizard.github.io/toloo-benchmarks/og.png">
 <style>
   :root{
-    --bg:#18181e;
-    --surface:#23232e;
-    --card:#2a2a3a;
-    --line:#383850;
-    --text:#f5f5f8;
-    --muted:#a0a0b0;
-    --green:#3dba6e;
-    --amber:#e0a020;
-    --red:#e05050;
-    --blue:#4a9cf0;
-    --text-muted:#a0a0b0;
-    --mono:'JetBrains Mono', ui-monospace, monospace;
-    --sans:system-ui, -apple-system, Segoe UI, sans-serif;
-    --r:10px;
+    --bg:#0b0809;
+    --surface:#151012;
+    --surface-2:#1d1619;
+    --border:#34232a;
+    --border-hi:#4a313a;
+    --coral:#f43f5e;
+    --gold:#fbbf24;
+    --brand:linear-gradient(135deg,#f43f5e,#fbbf24);
+    --text:#f6eef0;
+    --text-2:#b7a2aa;
+    --muted:#7d626c;
+    --muted-text:#a78a95;
+    --success:#34d399;
+    --warn:#fbbf24;
+    --danger:#ef4444;
+    --dusk:#a78bfa;
+    --sky:#60a5fa;
+    --green:var(--success);
+    --amber:var(--warn);
+    --red:var(--danger);
+    --line:var(--border);
+    --radius:12px;
+    --radius-sm:7px;
+    --mono:ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+    --plat-linux-x86:var(--coral);
+    --plat-linux-arm:var(--success);
+    --plat-windows:var(--gold);
+    --plat-macos-x86:var(--dusk);
+    --plat-macos-arm:var(--sky);
   }
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
   body{
-    font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.55;
-    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+    min-height:100vh;
+    background-color:var(--bg);
+    background-image:
+      radial-gradient(1000px 560px at 14% -14%, rgba(244,63,94,.10), transparent 62%),
+      radial-gradient(880px 520px at 92% -16%, rgba(251,191,36,.06), transparent 60%);
+    color:var(--text);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
   }
-  .wrap{max-width:1280px;margin:0 auto;padding:2.5rem 1.5rem 5rem;display:grid;grid-template-columns:1fr 1fr;gap:2.5rem;align-items:start}
-  @media(max-width:1050px){.wrap{grid-template-columns:1fr;gap:2rem;padding:1.5rem 1rem 3rem}}
+  ::selection{background:rgba(244,63,94,.3);color:var(--text)}
+  a{color:var(--text-2);text-decoration:none;transition:color .15s ease,border-color .15s ease,background-color .15s ease}
+  a:hover{color:var(--text)}
+  a:focus-visible,button:focus-visible,[tabindex="0"]:focus-visible{outline:2px solid var(--coral);outline-offset:3px;border-radius:3px}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:var(--bg)}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+  .shell{width:100%;max-width:1240px;margin-inline:auto;padding-inline:clamp(1rem,3vw,2rem)}
+  .skip-link{position:absolute;left:1rem;top:-4rem;z-index:100;background:var(--coral);color:#1c070d;padding:.5rem .9rem;border-radius:var(--radius-sm);font-weight:600}
+  .skip-link:focus{top:1rem}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
-  /* Header */
-  header{grid-column:1/-1;margin-bottom:.5rem}
-  h1{font-size:1.65rem;font-weight:700;letter-spacing:-0.03em;line-height:1.15;margin-bottom:.35rem;color:var(--text)}
-  .subtitle{font-size:.85rem;color:var(--muted);letter-spacing:.01em}
+  /* ── Header ───────────────────────────────────────────── */
+  .site-header{position:relative;z-index:5;border-bottom:1px solid var(--border)}
+  .header-inner{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding-block:.82rem}
+  .brand{display:flex;align-items:center;gap:.62rem;min-width:0}
+  .mark{width:36px;height:36px;flex:none;filter:drop-shadow(0 2px 12px rgba(244,63,94,.22))}
+  .brand-word{
+    font-size:1.06rem;font-weight:700;letter-spacing:-.015em;line-height:1;
+    background:var(--brand);-webkit-background-clip:text;background-clip:text;
+    color:transparent;-webkit-text-fill-color:transparent;
+  }
+  .brand-sub{font-size:.82rem;color:var(--text-2);line-height:1;margin-left:.05rem}
+  .gh-link{
+    display:inline-flex;align-items:center;gap:.45rem;flex:none;
+    border:1px solid var(--border);border-radius:999px;padding:.42rem .78rem;
+    color:var(--text-2);font-size:.78rem;font-weight:500;line-height:1;
+    background:rgba(21,16,18,.55);
+  }
+  .gh-link:hover{color:var(--text);border-color:var(--border-hi);background:rgba(29,22,25,.75)}
+  .gh-mark{width:15px;height:15px;flex:none}
 
-  /* Cards */
-  .card{
-    background:var(--card);border:1px solid var(--line);border-radius:var(--r);
-    padding:1.25rem 1.25rem 1rem;box-shadow:0 1px 0 rgba(255,255,255,.03);
+  /* ── Hero ─────────────────────────────────────────────── */
+  .hero{padding-block:clamp(2.4rem,5vw,3.8rem) clamp(2.2rem,4vw,3.2rem)}
+  .meta-line{
+    display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .6rem;
+    font-family:var(--mono);font-size:.68rem;letter-spacing:.015em;color:var(--muted-text);
   }
-  .card h2{
-    font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.1em;
-    color:var(--muted);margin-bottom:.9rem;border-bottom:1px solid var(--line);padding-bottom:.35rem;
+  .meta-line .mono{color:var(--text-2)}
+  .meta-sep{color:var(--border-hi)}
+  h1{
+    margin:1.05rem 0 .75rem;font-size:clamp(2rem,4vw,2.6rem);line-height:1.06;
+    font-weight:700;letter-spacing:-.035em;color:var(--text);text-wrap:balance;
   }
-  .card p.sub{font-size:.72rem;color:var(--muted);margin-bottom:1rem;line-height:1.35}
+  .grad-word{
+    background:var(--brand);-webkit-background-clip:text;background-clip:text;
+    color:transparent;-webkit-text-fill-color:transparent;
+  }
+  .lede{max-width:56ch;color:var(--text-2);font-size:.95rem;line-height:1.6}
+  @media(forced-colors:active){
+    .brand-word,.grad-word{color:CanvasText;-webkit-text-fill-color:CanvasText;background:none}
+  }
 
-  /* Section spacing */
-  .section{margin-bottom:1.5rem}
-  .full{grid-column:1/-1}
+  /* ── Sections & shared type ───────────────────────────── */
+  main{padding-bottom:clamp(3rem,6vw,5rem)}
+  .latency{border-top:1px solid var(--border);padding-top:clamp(2.2rem,4vw,3.2rem)}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:.42rem;
+    font-family:var(--mono);font-size:.64rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--muted-text);
+  }
+  .eyebrow .num{color:var(--coral);font-weight:700;letter-spacing:.06em}
+  .eyebrow .slash{color:var(--border-hi)}
+  .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:1.4rem 2.5rem;flex-wrap:wrap;margin-bottom:1.45rem}
+  .sec-title h2{margin:.5rem 0 .4rem;font-size:clamp(1.35rem,2.2vw,1.65rem);font-weight:650;letter-spacing:-.025em;color:var(--text)}
+  .sec-desc{max-width:64ch;color:var(--text-2);font-size:.85rem;line-height:1.6}
+  .legend{display:flex;align-items:center}
+  .legend-row{display:flex;flex-wrap:wrap;gap:.4rem 1rem;font-family:var(--mono);font-size:.62rem;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2)}
+  .legend-item{display:inline-flex;align-items:center;gap:.4rem;white-space:nowrap}
+  .dot{width:7px;height:7px;border-radius:2px;flex:none}
+  .dot-green{background:var(--success)}
+  .dot-amber{background:var(--warn)}
+  .dot-red{background:var(--danger)}
 
-  /* Protocol comparison - responsive 2-column grid */
-  .proto-grid{
-    display:grid;
-    grid-template-columns:1fr;
-    gap:1.5rem;
+  /* ── Protocol comparison cards ────────────────────────── */
+  .proto-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:1rem}
+  @media(min-width:720px){.proto-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(min-width:1100px){.proto-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+  .bench-card{
+    position:relative;min-width:0;border:1px solid var(--border);border-radius:var(--radius);
+    background:linear-gradient(180deg,var(--surface),#120e0f 94%);
+    padding:.95rem 1.05rem 1rem;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 14px 34px rgba(0,0,0,.24);
+    transition:border-color .2s ease,transform .2s ease,box-shadow .2s ease;
+    animation:rise .55s cubic-bezier(.2,.7,.2,1) backwards;
   }
-  @media(min-width:900px){
-    .proto-grid{
-      grid-template-columns:1fr 1fr;
-    }
-  }
-  .proto-card{
-    background:var(--surface);
-    border:1px solid var(--line);
-    border-radius:var(--r);
-    padding:1rem;
-  }
-  .proto-card h3{
-    font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
-    color:var(--muted);margin-bottom:.75rem;padding-bottom:.35rem;border-bottom:1px solid var(--line);
-  }
-  .proto-rows{display:flex;flex-direction:column;gap:.35rem}
-  .proto-row{
-    display:flex;align-items:center;gap:.6rem;height:24px;
-  }
+  .bench-card:hover{border-color:var(--border-hi);transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 20px 44px rgba(0,0,0,.32)}
+  .bench-card:focus-within{border-color:var(--border-hi)}
+  .bench-card:nth-child(1){animation-delay:.02s}
+  .bench-card:nth-child(2){animation-delay:.06s}
+  .bench-card:nth-child(3){animation-delay:.1s}
+  .bench-card:nth-child(4){animation-delay:.14s}
+  .bench-card:nth-child(5){animation-delay:.18s}
+  .bench-card:nth-child(6){animation-delay:.22s}
+  .bench-card:nth-child(7){animation-delay:.26s}
+  .bench-top{display:flex;align-items:baseline;justify-content:space-between;gap:.75rem;padding-bottom:.55rem;margin-bottom:.65rem;border-bottom:1px solid var(--border)}
+  .bench-top h3{font-size:.94rem;font-weight:650;letter-spacing:.01em;color:var(--text);line-height:1.25}
+  .proto-rows{display:flex;flex-direction:column;gap:.32rem}
+  .proto-row{display:grid;grid-template-columns:54px minmax(0,1fr) 110px;gap:.55rem;align-items:center;min-height:26px}
   .proto-label{
-    width:100px;font-family:var(--mono);font-size:.7rem;color:var(--text);
-    text-align:right;flex-shrink:0;padding-right:.4rem;letter-spacing:.01em;
+    font-family:var(--mono);font-size:.65rem;letter-spacing:.04em;
+    color:var(--text-2);text-align:right;white-space:nowrap;
   }
+  .proto-row.toloo .proto-label{color:var(--text);font-weight:600}
   .proto-bar{
-    flex:1;height:14px;border-radius:4px;overflow:hidden;position:relative;
+    position:relative;height:10px;border-radius:3px;overflow:hidden;
+    background-color:rgba(255,255,255,.03);
+    background-image:linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);
+    background-size:25% 100%;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.025);
   }
   .proto-fill{
-    height:100%;border-radius:3px;display:flex;align-items:center;min-width:4px;
-    font-family:var(--mono);font-size:.55rem;font-weight:600;color:#0d0d12;white-space:nowrap;
+    height:100%;min-width:2px;border-radius:2px;transform-origin:left center;
+    animation:grow .9s cubic-bezier(.2,.7,.2,1) backwards;
   }
+  .proto-row:nth-child(1) .proto-fill{animation-delay:.12s}
+  .proto-row:nth-child(2) .proto-fill{animation-delay:.18s}
+  .proto-row:nth-child(3) .proto-fill{animation-delay:.24s}
+  .proto-row:nth-child(4) .proto-fill{animation-delay:.3s}
+  .proto-fill.toloo{background:var(--brand);box-shadow:0 0 12px rgba(244,63,94,.28)}
+  .proto-row.ref .proto-fill{opacity:.92;box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}
+  .proto-est{
+    display:inline-block;margin-left:.3rem;padding:.04rem .25rem;vertical-align:1px;
+    border:1px solid var(--border-hi);border-radius:3px;
+    font-family:var(--mono);font-size:.5rem;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted-text);
+  }
+  .proto-subhead{
+    font-family:var(--mono);font-size:.55rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted-text);margin:.25rem 0 .05rem;
+  }
+  .proto-subhead:not(:first-child){margin-top:.7rem;padding-top:.55rem;border-top:1px dashed var(--border)}
+  .proto-note{margin:.7rem 0 0;font-size:.6rem;line-height:1.5;color:var(--muted-text)}
+  .bench-card:hover .proto-fill{filter:brightness(1.06)}
   .proto-val{
-    width:90px;font-family:var(--mono);font-size:.7rem;color:var(--text);
-    text-align:right;flex-shrink:0;position:relative;cursor:help;
+    position:relative;min-width:0;font-family:var(--mono);font-size:.62rem;line-height:1.3;
+    color:var(--text-2);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;
   }
-  .proto-sub{
-    font-size:.7rem;color:var(--text);
-  }
-  .proto-inline-ns{display:none}
-  .proto-parity .proto-inline-ns{display:inline}
+  .proto-row.toloo .proto-val{font-size:.67rem;font-weight:600;color:var(--text)}
+  .proto-val[tabindex="0"]{cursor:help}
+  .proto-sub{color:var(--text-2)}
+  .proto-parity .proto-sub{color:var(--success);font-weight:600}
+  .proto-inline-ns{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+  .proto-parity .proto-inline-ns{position:static;width:auto;height:auto;margin:0 .28rem 0 0;overflow:visible;clip:auto;clip-path:none;color:var(--success);font-weight:600}
   .proto-tooltip{
-    display:none;position:absolute;bottom:100%;right:0;
-    background:var(--card);border:1px solid var(--line);border-radius:var(--r);
-    padding:2px 6px;font-size:.55rem;font-family:var(--mono);white-space:nowrap;
-    z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.3);
+    display:none;position:absolute;right:0;bottom:calc(100% + 7px);z-index:20;
+    padding:.34rem .55rem;border:1px solid var(--border-hi);border-radius:var(--radius-sm);
+    background:var(--surface-2);color:var(--text);
+    font-size:.6rem;white-space:nowrap;pointer-events:none;
+    box-shadow:0 10px 24px rgba(0,0,0,.55);
   }
-  .proto-val:hover .proto-tooltip{display:block}
-
-  /* Simulation cards */
-  .sim-card{
-    background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
-    padding:1.1rem 1.1rem 1rem;margin-bottom:1.1rem;box-shadow:0 1px 0 rgba(255,255,255,.02);
+  .proto-tooltip::after{content:"";position:absolute;top:100%;right:14px;border:5px solid transparent;border-top-color:var(--border-hi)}
+  .proto-val:hover .proto-tooltip,.proto-val:focus .proto-tooltip,.proto-val:focus-within .proto-tooltip{display:block}
+  @media(max-width:480px){
+    .proto-row{grid-template-columns:48px minmax(0,1fr) 102px;gap:.45rem}
+    .proto-label{font-size:.62rem}
+    .proto-val{font-size:.6rem}
+    .proto-row.toloo .proto-val{font-size:.65rem}
   }
-  .sim-card h3{
-    font-size:.85rem;font-weight:600;color:var(--text);margin-bottom:.9rem;letter-spacing:-.01em;
+
+  /* ── Dashboard: platforms + capacity ──────────────────── */
+  .dash{display:grid;grid-template-columns:minmax(0,1fr);gap:1.1rem;margin-top:clamp(2.4rem,4.5vw,3.4rem)}
+  @media(min-width:1060px){
+    .dash{grid-template-columns:repeat(12,minmax(0,1fr));gap:1.1rem}
+    .platforms-card{grid-column:span 7}
+    .capacity-card{grid-column:span 5}
   }
-  .sim-grid{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;margin-bottom:.8rem}
-  .sim-grid .item .label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem}
-  .sim-grid .item .num{font-family:var(--mono);font-size:1.2rem;font-weight:700;color:var(--text);line-height:1.2}
-  .sim-grid .item .note{font-size:.7rem;color:var(--muted);margin-top:.2rem;line-height:1.3}
-  .sim-grid .item .big-num{font-family:var(--mono);font-size:1.45rem;font-weight:700;line-height:1.15}
+  .dash-card{
+    display:flex;flex-direction:column;min-width:0;
+    border:1px solid var(--border);border-radius:var(--radius);
+    background:linear-gradient(180deg,var(--surface),#120e0f 94%);
+    padding:1.1rem 1.15rem 1.15rem;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 16px 38px rgba(0,0,0,.26);
+    animation:rise .6s cubic-bezier(.2,.7,.2,1) backwards;
+  }
+  .platforms-card{animation-delay:.04s}
+  .capacity-card{animation-delay:.1s}
+  .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;padding-bottom:.65rem;margin-bottom:.75rem;border-bottom:1px solid var(--border)}
+  .card-head h2{margin-top:.4rem;font-size:1.02rem;font-weight:650;letter-spacing:-.015em;color:var(--text)}
+  .card-note{color:var(--text-2);font-size:.78rem;line-height:1.5;margin-bottom:.9rem}
 
-  /* Tables */
-  .table{width:100%;font-size:.72rem;border-collapse:collapse}
-  .table th{text-align:left;color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.08em;padding:.35rem .5rem;border-bottom:1px solid var(--line);font-weight:600}
-  .table td{padding:.35rem .5rem;border-bottom:1px solid rgba(255,255,255,.04);font-family:var(--mono);text-align:right;color:var(--text);white-space:nowrap}
-  .table td:first-child{text-align:left;color:var(--text);font-family:var(--sans);font-weight:500}
+  /* ── Platform chart ───────────────────────────────────── */
+  .chart-bars{display:grid;grid-template-columns:minmax(0,1fr);gap:1rem;flex:1}
+  @media(min-width:640px){
+    .chart-bars{grid-template-columns:repeat(2,minmax(0,1fr));gap:1.1rem 1.6rem;align-content:start}
+  }
+  @media(min-width:1060px){
+    .chart-bars{align-content:stretch}
+  }
+  .chart-group{display:flex;flex-direction:column;gap:.26rem;min-width:0}
+  @media(min-width:1060px){.chart-group{justify-content:space-between}}
+  .chart-group-label{
+    margin-bottom:.08rem;padding-bottom:.28rem;border-bottom:1px solid rgba(52,35,42,.62);
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-text);
+  }
+  .chart-platform-row{display:grid;grid-template-columns:76px minmax(0,1fr) 70px;align-items:center;gap:.5rem;min-height:22px}
+  .chart-platform-label{font-family:var(--mono);font-size:.66rem;color:var(--text-2);text-align:right;white-space:nowrap}
+  .chart-platform-bar{height:6px;border-radius:2px;background:rgba(255,255,255,.04);overflow:hidden}
+  .chart-platform-fill{
+    height:100%;border-radius:2px;opacity:.9;transform-origin:left center;
+    animation:grow .9s cubic-bezier(.2,.7,.2,1) .15s backwards;
+  }
+  .chart-platform-row:hover .chart-platform-fill{opacity:1}
+  .chart-platform-val{
+    font-family:var(--mono);font-size:.66rem;color:var(--text-2);
+    text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;
+  }
+  .chart-platform-row:hover .chart-platform-val{color:var(--text)}
+  .chart-legend{
+    display:flex;flex-wrap:wrap;gap:.45rem 1rem;margin-top:1rem;padding-top:.8rem;border-top:1px solid var(--border);
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.04em;color:var(--text-2);
+  }
+  .chart-legend-item{display:inline-flex;align-items:center;gap:.4rem}
+  .chart-legend-color{width:8px;height:8px;border-radius:2px;flex:none}
+  @media(max-width:480px){
+    .chart-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem 1rem}
+  }
+  .plat-linux-x86{background:var(--plat-linux-x86)}
+  .plat-linux-arm{background:var(--plat-linux-arm)}
+  .plat-windows{background:var(--plat-windows)}
+  .plat-macos-x86{background:var(--plat-macos-x86)}
+  .plat-macos-arm{background:var(--plat-macos-arm)}
 
-  /* Cross-platform chart - CSS-based static bars */
-  .chart-box{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:1rem}
-  .chart-title{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.75rem}
-  .chart-bars{display:flex;flex-direction:column;gap:.75rem}
-  .chart-group{display:flex;flex-direction:column;gap:.35rem}
-  .chart-group-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-  .chart-platform-row{display:flex;align-items:center;gap:.5rem;height:22px}
-  .chart-platform-label{width:100px;font-family:var(--mono);font-size:.65rem;color:var(--text);text-align:right;flex-shrink:0}
-  .chart-platform-bar{flex:1;height:16px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:4px;overflow:hidden;position:relative}
-  .chart-platform-fill{height:100%;border-radius:3px;transition:width .3s ease}
-  .chart-platform-val{width:80px;font-family:var(--mono);font-size:.65rem;color:var(--text);text-align:right;flex-shrink:0}
-  .chart-legend{display:flex;gap:1rem;margin-top:.75rem;font-size:.65rem}
-  .chart-legend-item{display:flex;align-items:center;gap:.35rem}
-  .chart-legend-color{width:10px;height:10px;border-radius:2px}
+  /* ── Capacity ─────────────────────────────────────────── */
+  .sim-grid{
+    display:grid;grid-template-columns:repeat(2,minmax(0,1fr));overflow:hidden;
+    border:1px solid var(--border);border-radius:var(--radius-sm);
+  }
+  .sim-item{
+    display:flex;flex-direction:column;gap:.15rem;min-width:0;
+    padding:.72rem .8rem;background:rgba(29,22,25,.38);
+    border-right:1px solid var(--border);
+  }
+  .sim-item:last-child{border-right:0}
+  .sim-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted-text)}
+  .sim-num{
+    display:flex;align-items:baseline;gap:.28rem;flex-wrap:wrap;
+    font-family:var(--mono);font-size:1.38rem;font-weight:700;letter-spacing:-.02em;line-height:1.15;
+    color:var(--text);font-variant-numeric:tabular-nums;
+  }
+  .sim-unit{font-size:.6rem;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-text)}
+  .sim-green{color:var(--success)}
+  .sim-red{color:var(--danger)}
+  .sim-headroom{
+    display:flex;flex-direction:column;gap:.7rem;
+    margin-top:.8rem;padding:.75rem .8rem .6rem;
+    border:1px solid var(--border);border-radius:var(--radius-sm);
+    background:rgba(29,22,25,.3);
+  }
+  .sim-head-item{display:flex;flex-direction:column;gap:.3rem}
+  .sim-head-line{display:flex;align-items:baseline;justify-content:space-between;gap:.75rem;flex-wrap:wrap}
+  .sim-head-track{
+    position:relative;height:8px;border-radius:2px;overflow:hidden;
+    background-color:rgba(255,255,255,.035);
+    background-image:linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);
+    background-size:10% 100%;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);
+  }
+  .sim-head-fill{
+    display:block;height:100%;min-width:3px;border-radius:2px;transform-origin:left center;
+    animation:grow .9s cubic-bezier(.2,.7,.2,1) .2s backwards;
+  }
+  .sim-head-fill.is-green{background:linear-gradient(90deg,rgba(52,211,153,.45),var(--success))}
+  .sim-head-fill.is-red{background:linear-gradient(90deg,rgba(239,68,68,.45),var(--danger))}
+  .sim-head-tick{position:absolute;left:2%;top:0;bottom:0;width:1px;background:rgba(246,238,240,.42)}
+  .sim-head-scale{
+    display:flex;justify-content:space-between;gap:1rem;margin-top:.1rem;
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.05em;color:var(--muted-text);font-variant-numeric:tabular-nums;
+  }
 
-  /* Small utilities */
-  .text-green{color:var(--green)}
-  .text-amber{color:var(--amber)}
-  .text-red{color:var(--red)}
-  .meta-bar{grid-column:1/-1;display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.7rem;color:var(--muted)}
-  .meta-item{font-family:var(--mono)}
+  .cap-block{margin-top:.95rem;padding-top:.8rem;border-top:1px solid var(--border)}
+  .block-head{display:flex;align-items:baseline;justify-content:space-between;gap:.75rem;margin-bottom:.2rem}
+  .block-head h3{
+    font-family:var(--mono);font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;
+    font-weight:600;color:var(--muted-text);
+  }
+  .block-tag{font-family:var(--mono);font-size:.6rem;letter-spacing:.05em;color:var(--muted-text);white-space:nowrap}
+
+  .cap-table{width:100%;border-collapse:collapse;font-size:.72rem}
+  .cap-table thead th{
+    padding:.3rem .42rem .45rem;border-bottom:1px solid var(--border);
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;
+    font-weight:500;color:var(--muted-text);text-align:right;white-space:nowrap;
+  }
+  .cap-table thead th:first-child{text-align:left}
+  .cap-table tbody th{padding:.5rem .42rem;border-bottom:1px solid rgba(52,35,42,.6);text-align:left;font-weight:500;font-size:.76rem;color:var(--text);white-space:nowrap}
+  .cap-table tbody td{
+    padding:.5rem .42rem;border-bottom:1px solid rgba(52,35,42,.6);
+    font-family:var(--mono);font-size:.7rem;color:var(--text);text-align:right;white-space:nowrap;
+    font-variant-numeric:tabular-nums;
+  }
+  .cap-table tbody tr:last-child th,.cap-table tbody tr:last-child td{border-bottom:0}
+  .cap-table tbody tr:hover{background:rgba(244,63,94,.035)}
+  .th-sub{display:block;margin-top:.12rem;font-size:.6rem;letter-spacing:.04em;color:var(--muted-text);text-transform:none}
+  @media(max-width:520px){
+    .cap-table thead th,.cap-table tbody td,.cap-table tbody th{padding-inline:.24rem}
+    .cap-table tbody td{font-size:.66rem}
+    .th-sub{display:none}
+    .sim-num{font-size:1.22rem}
+  }
+
+  /* ── Key results ──────────────────────────────────────── */
+  .key-list{display:flex;flex-direction:column;border-top:1px solid rgba(52,35,42,.6)}
+  .key-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.5rem .05rem;border-bottom:1px solid rgba(52,35,42,.6)}
+  .key-row:last-child{border-bottom:0}
+  .key-row:hover{background:rgba(244,63,94,.03)}
+  .key-label{font-size:.78rem;color:var(--text-2)}
+  .key-value{font-family:var(--mono);font-size:.75rem;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .text-green{color:var(--success)}
+  .text-amber{color:var(--warn)}
+  .text-red{color:var(--danger)}
+  .key-scale{
+    display:flex;flex-wrap:wrap;gap:.3rem .85rem;align-items:center;margin-top:.6rem;
+    font-family:var(--mono);font-size:.6rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted-text);
+  }
+  .key-scale span{display:inline-flex;align-items:center;gap:.35rem}
+
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+  @media(prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    *,*::before,*::after{animation-duration:.001ms !important;animation-delay:0ms !important;transition-duration:.001ms !important}
+    .bench-card:hover{transform:none}
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
+<a class="skip-link" href="#main">Skip to content</a>
 
-<header>
-  <h1>Toloo Benchmarks</h1>
-  <p class="subtitle">Cross-platform microbenchmarks · 6 categories · 22 benchmarks</p>
+<header class="site-header">
+  <div class="shell header-inner">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 660 660" aria-hidden="true" focusable="false">
+        <defs>
+        <linearGradient id="tolooBrand" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#f43f5e"/>
+          <stop offset="1" stop-color="#fbbf24"/>
+        </linearGradient>
+      </defs>
+        <g transform="translate(330, 350)" fill="url(#tolooBrand)">
+            <circle cx="0" cy="0" r="127" />
+            <rect x="-13.5" y="-348" width="27" height="196" rx="13.5" />
+            <g transform="rotate(15.5)"><rect x="-13.5" y="-305" width="27" height="153" rx="13.5" /></g>
+            <g transform="rotate(31)"><rect x="-13.5" y="-348" width="27" height="196" rx="13.5" /></g>
+            <g transform="rotate(46.5)"><rect x="-13.5" y="-305" width="27" height="153" rx="13.5" /></g>
+            <g transform="rotate(62)"><rect x="-13.5" y="-315" width="27" height="163" rx="13.5" /></g>
+            <g transform="rotate(77.5)"><rect x="-13.5" y="-335" width="27" height="183" rx="13.5" /></g>
+            <g transform="rotate(93)"><rect x="-13.5" y="-315" width="27" height="163" rx="13.5" /></g>
+            <g transform="rotate(108.5)"><rect x="-13.5" y="-318" width="27" height="166" rx="13.5" /></g>
+            <g transform="rotate(-15.5)"><rect x="-13.5" y="-305" width="27" height="153" rx="13.5" /></g>
+            <g transform="rotate(-31)"><rect x="-13.5" y="-348" width="27" height="196" rx="13.5" /></g>
+            <g transform="rotate(-46.5)"><rect x="-13.5" y="-305" width="27" height="153" rx="13.5" /></g>
+            <g transform="rotate(-62)"><rect x="-13.5" y="-315" width="27" height="163" rx="13.5" /></g>
+            <g transform="rotate(-77.5)"><rect x="-13.5" y="-335" width="27" height="183" rx="13.5" /></g>
+            <g transform="rotate(-93)"><rect x="-13.5" y="-315" width="27" height="163" rx="13.5" /></g>
+            <g transform="rotate(-108.5)"><rect x="-13.5" y="-318" width="27" height="166" rx="13.5" /></g>
+          </g>
+          <g transform="translate(192.55 522.02) rotate(35) translate(-65.78 36.92) scale(0.115000 -0.115000)">
+            <path d="M625 546Q627 571 629.0 595.0Q631 619 631 644Q631 672 628.5 701.0Q626 730 621 762Q671 736 762.5 713.5Q854 691 1006 678V655Q898 639 826.0 621.5Q754 604 707.0 585.5Q660 567 625 546ZM569 -120Q460 -13 378.0 62.0Q296 137 234.0 189.5Q172 242 122 282Q168 324 236.0 396.5Q304 469 384.0 562.0Q464 655 545 758L564 747Q491 600 433.0 491.5Q375 383 326 294Q364 230 428.0 131.5Q492 33 586 -104ZM666 -107Q656 8 647.0 92.5Q638 177 629.5 238.5Q621 300 611.0 347.0Q601 394 588.5 435.0Q576 476 559 520Q612 511 665 511Q715 511 775 520Q759 474 746.0 421.5Q733 369 723.0 298.0Q713 227 705.5 128.5Q698 30 692 -107ZM913 -107Q903 8 894.0 92.5Q885 177 876.5 238.5Q868 300 858.0 347.0Q848 394 836.0 435.0Q824 476 807 520Q860 511 912 511Q962 511 1022 520Q1006 474 993.0 421.5Q980 369 970.0 298.0Q960 227 952.5 128.5Q945 30 939 -107Z" fill="url(#tolooBrand)" />
+          </g>
+          <g transform="translate(263.41 595.36) scale(0.115000 -0.115000)">
+            <path d="M155 528Q167 579 167 633Q167 688 155 743Q205 730 260.5 719.0Q316 708 384.0 699.0Q452 690 539.5 683.0Q627 676 741.0 670.5Q855 665 1003 660V634Q847 624 733.5 615.0Q620 606 537.0 597.0Q454 588 390.0 578.5Q326 569 270.0 556.5Q214 544 155 528ZM899 -128Q800 -46 721.5 11.0Q643 68 583.0 108.0Q523 148 478 177Q520 208 586.0 262.0Q652 316 728.0 386.5Q804 457 877 535L895 520Q830 412 776.5 331.5Q723 251 679 186Q711 139 770.5 66.0Q830 -7 917 -109ZM582 -128Q482 -46 404.0 11.0Q326 68 266.0 108.0Q206 148 162 177Q204 208 269.5 262.0Q335 316 410.5 386.5Q486 457 558 535L578 520Q513 412 459.5 331.5Q406 251 362 186Q395 139 454.0 66.0Q513 -7 598 -109Z" fill="url(#tolooBrand)" />
+          </g>
+          <g transform="translate(450.45 522.02) rotate(-35) translate(-74.87 36.63) scale(0.115000 -0.115000)">
+            <path d="M530 -120Q431 -13 356.0 61.5Q281 136 224.0 188.5Q167 241 122 281Q164 324 226.5 396.5Q289 469 362.5 561.5Q436 654 509 757L529 747Q464 600 412.0 491.0Q360 382 316 293Q348 230 406.5 131.5Q465 33 551 -105ZM1162 -120Q1062 -13 986.5 61.5Q911 136 854.5 188.5Q798 241 754 281Q796 324 858.0 396.5Q920 469 993.0 561.5Q1066 654 1138 757L1159 747Q1094 600 1042.0 491.0Q990 382 946 293Q978 230 1036.5 131.5Q1095 33 1180 -105ZM520 333Q526 384 526 437Q526 463 524.0 491.0Q522 519 516 548Q551 525 618.5 501.5Q686 478 790 463V444Q715 427 663.5 408.5Q612 390 578.0 371.0Q544 352 520 333ZM520 24Q526 77 526 128Q526 155 524.0 183.0Q522 211 516 240Q551 217 618.5 193.5Q686 170 790 155V135Q715 119 663.5 100.5Q612 82 578.0 62.5Q544 43 520 24Z" fill="url(#tolooBrand)" />
+          </g>
+      </svg>
+      <span class="brand-word">Toloo</span>
+      <span class="brand-sub">Benchmarks</span>
+    </div>
+    <a class="gh-link" href="https://github.com/MehrWizard/toloo" aria-label="Toloo repository on GitHub">
+      <svg class="gh-mark" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+      </svg>
+      <span>GitHub</span>
+    </a>
+  </div>
 </header>
 
-<div class="meta-bar">
-  <span class="meta-item">Commit: %{COMMIT_SHORT}%</span>
-  <span class="meta-item">Branch: %{BRANCH}%</span>
-  <span class="meta-item">Date: %{BUILD_DATE}%</span>
-  <span class="meta-item">Runner: %{RUNNER_INFO}%</span>
-</div>
+<main id="main">
+  <div class="shell">
 
-<!-- FULL WIDTH: Protocol comparison - responsive grid, one card per category -->
-<section class="section full">
-  <div class="card">
-    <h2>Toloo vs. Other Protocols</h2>
-    <p class="sub">Per-message latency (lower = better). Measured Toloo vs reference estimates for IRC/XMPP/Matrix. Bar width uses log scale for readability across extreme ratios.</p>
-    <div class="proto-grid">
-      <div class="proto-card">
-        <h3>Canonical Encode</h3>
-        <div class="proto-rows">
-          <div class="proto-row">
-            <span class="proto-label">Toloo</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CANONICAL_TOLOO_PCT}%;background:var(--green)"></div>
-            </div>
-            <span class="proto-val">%{PROTO_CANONICAL_TOLOO_NS}% ns</span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">IRC</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CANONICAL_IRC_PCT}%;background:%{PROTO_CANONICAL_IRC_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_CANONICAL_IRC_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_CANONICAL_IRC_NS}% ns</span><span class="proto-sub">%{PROTO_CANONICAL_IRC_LABEL}%</span><span class="proto-tooltip">%{PROTO_CANONICAL_IRC_NS}% ns · %{PROTO_CANONICAL_IRC_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">XMPP</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CANONICAL_XMPP_PCT}%;background:%{PROTO_CANONICAL_XMPP_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_CANONICAL_XMPP_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_CANONICAL_XMPP_NS}% ns</span><span class="proto-sub">%{PROTO_CANONICAL_XMPP_LABEL}%</span><span class="proto-tooltip">%{PROTO_CANONICAL_XMPP_NS}% ns · %{PROTO_CANONICAL_XMPP_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">Matrix</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CANONICAL_MATRIX_PCT}%;background:%{PROTO_CANONICAL_MATRIX_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_CANONICAL_MATRIX_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_CANONICAL_MATRIX_NS}% ns</span><span class="proto-sub">%{PROTO_CANONICAL_MATRIX_LABEL}%</span><span class="proto-tooltip">%{PROTO_CANONICAL_MATRIX_NS}% ns · %{PROTO_CANONICAL_MATRIX_LABEL}%</span></span>
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="meta-line"><span class="mono">commit %{COMMIT_SHORT}%</span><span class="meta-sep" aria-hidden="true">·</span><span class="mono">%{BUILD_DATE}%</span></p>
+      <h1 id="hero-title">Protocol <span class="grad-word">performance.</span></h1>
+      <p class="lede">Toloo vs IRC, XMPP, Matrix, Signal and Nostr. Lower is better.</p>
+    </section>
+
+    <!-- 01 / Latency -->
+    <section class="latency" aria-labelledby="latency-title">
+      <div class="sec-head">
+        <div class="sec-title">
+          <p class="eyebrow"><span class="num">01</span><span class="slash" aria-hidden="true">/</span>Latency</p>
+          <h2 id="latency-title">Toloo vs. other protocols</h2>
+          <p class="sec-desc">Mean latency on linux-x86. Bars are log-scaled; lower is better. Rows tagged <span class="proto-est">est</span> are reference estimates; untagged rows are measured.</p>
+        </div>
+        <div class="legend" role="group" aria-label="Latency ratio legend">
+          <div class="legend-row">
+            <span class="legend-item"><span class="dot dot-green" aria-hidden="true"></span>close · &lt; 1.5×</span>
+            <span class="legend-item"><span class="dot dot-amber" aria-hidden="true"></span>slower</span>
+            <span class="legend-item"><span class="dot dot-red" aria-hidden="true"></span>much slower</span>
+            <span class="legend-item"><span class="proto-est">est</span>estimate</span>
           </div>
         </div>
       </div>
 
-      <div class="proto-card">
-        <h3>Envelope Verify</h3>
-        <div class="proto-rows">
-          <div class="proto-row">
-            <span class="proto-label">Toloo</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_VERIFY_TOLOO_PCT}%;background:var(--green)"></div>
-            </div>
-            <span class="proto-val">%{PROTO_VERIFY_TOLOO_NS}% ns</span>
+      <div class="proto-grid">
+        <article class="bench-card" aria-labelledby="cat-canonical">
+          <div class="bench-top">
+            <h3 id="cat-canonical">Canonical Encode</h3>
           </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">IRC</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_VERIFY_IRC_PCT}%;background:%{PROTO_VERIFY_IRC_COLOR}%"></div>
+          <div class="proto-rows">
+            <div class="proto-row toloo">
+              <span class="proto-label">Toloo</span>
+              <div class="proto-bar" role="img" aria-label="Canonical Encode, Toloo: %{PROTO_CANONICAL_TOLOO_NS}% ns">
+                <div class="proto-fill toloo" style="width:%{PROTO_CANONICAL_TOLOO_PCT}%"></div>
+              </div>
+              <span class="proto-val">%{PROTO_CANONICAL_TOLOO_NS}% ns</span>
             </div>
-            <span class="proto-val%{PROTO_VERIFY_IRC_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_VERIFY_IRC_NS}% ns</span><span class="proto-sub">%{PROTO_VERIFY_IRC_LABEL}%</span><span class="proto-tooltip">%{PROTO_VERIFY_IRC_NS}% ns · %{PROTO_VERIFY_IRC_LABEL}%</span></span>
+            <div class="proto-row ref">
+              <span class="proto-label">IRC</span>
+              <div class="proto-bar" role="img" aria-label="Canonical Encode, IRC: %{PROTO_CANONICAL_IRC_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_CANONICAL_IRC_PCT}%;background:%{PROTO_CANONICAL_IRC_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_CANONICAL_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_CANONICAL_IRC_NS}% ns, %{PROTO_CANONICAL_IRC_LABEL}%"><span class="proto-inline-ns">%{PROTO_CANONICAL_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_CANONICAL_IRC_LABEL}%</span>%{PROTO_CANONICAL_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CANONICAL_IRC_NS}% ns · %{PROTO_CANONICAL_IRC_LABEL}%</span></span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">XMPP</span>
+              <div class="proto-bar" role="img" aria-label="Canonical Encode, XMPP: %{PROTO_CANONICAL_XMPP_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_CANONICAL_XMPP_PCT}%;background:%{PROTO_CANONICAL_XMPP_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_CANONICAL_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_CANONICAL_XMPP_NS}% ns, %{PROTO_CANONICAL_XMPP_LABEL}%"><span class="proto-inline-ns">%{PROTO_CANONICAL_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_CANONICAL_XMPP_LABEL}%</span>%{PROTO_CANONICAL_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CANONICAL_XMPP_NS}% ns · %{PROTO_CANONICAL_XMPP_LABEL}%</span></span>
+            </div>
+%{PROTO_CANONICAL_MEASURED_ROWS}%
           </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">XMPP</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_VERIFY_XMPP_PCT}%;background:%{PROTO_VERIFY_XMPP_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_VERIFY_XMPP_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_VERIFY_XMPP_NS}% ns</span><span class="proto-sub">%{PROTO_VERIFY_XMPP_LABEL}%</span><span class="proto-tooltip">%{PROTO_VERIFY_XMPP_NS}% ns · %{PROTO_VERIFY_XMPP_LABEL}%</span></span>
+        </article>
+
+        <article class="bench-card" aria-labelledby="cat-verify">
+          <div class="bench-top">
+            <h3 id="cat-verify">Envelope Verify</h3>
           </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">Matrix</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_VERIFY_MATRIX_PCT}%;background:%{PROTO_VERIFY_MATRIX_COLOR}%"></div>
+          <div class="proto-rows">
+            <div class="proto-row toloo">
+              <span class="proto-label">Toloo</span>
+              <div class="proto-bar" role="img" aria-label="Envelope Verify, Toloo: %{PROTO_VERIFY_TOLOO_NS}% ns">
+                <div class="proto-fill toloo" style="width:%{PROTO_VERIFY_TOLOO_PCT}%"></div>
+              </div>
+              <span class="proto-val">%{PROTO_VERIFY_TOLOO_NS}% ns</span>
             </div>
-            <span class="proto-val%{PROTO_VERIFY_MATRIX_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_VERIFY_MATRIX_NS}% ns</span><span class="proto-sub">%{PROTO_VERIFY_MATRIX_LABEL}%</span><span class="proto-tooltip">%{PROTO_VERIFY_MATRIX_NS}% ns · %{PROTO_VERIFY_MATRIX_LABEL}%</span></span>
+            <div class="proto-row ref">
+              <span class="proto-label">IRC</span>
+              <div class="proto-bar" role="img" aria-label="Envelope Verify, IRC: %{PROTO_VERIFY_IRC_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_VERIFY_IRC_PCT}%;background:%{PROTO_VERIFY_IRC_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_VERIFY_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_VERIFY_IRC_NS}% ns, %{PROTO_VERIFY_IRC_LABEL}%"><span class="proto-inline-ns">%{PROTO_VERIFY_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_VERIFY_IRC_LABEL}%</span>%{PROTO_VERIFY_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_VERIFY_IRC_NS}% ns · %{PROTO_VERIFY_IRC_LABEL}%</span></span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">XMPP</span>
+              <div class="proto-bar" role="img" aria-label="Envelope Verify, XMPP: %{PROTO_VERIFY_XMPP_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_VERIFY_XMPP_PCT}%;background:%{PROTO_VERIFY_XMPP_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_VERIFY_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_VERIFY_XMPP_NS}% ns, %{PROTO_VERIFY_XMPP_LABEL}%"><span class="proto-inline-ns">%{PROTO_VERIFY_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_VERIFY_XMPP_LABEL}%</span>%{PROTO_VERIFY_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_VERIFY_XMPP_NS}% ns · %{PROTO_VERIFY_XMPP_LABEL}%</span></span>
+            </div>
+%{PROTO_VERIFY_MEASURED_ROWS}%
+          </div>
+          <p class="proto-note">Signal has no per-message signatures.</p>
+        </article>
+
+        <article class="bench-card" aria-labelledby="cat-parse">
+          <div class="bench-top">
+            <h3 id="cat-parse">Parse Envelope</h3>
+          </div>
+          <div class="proto-rows">
+            <div class="proto-row toloo">
+              <span class="proto-label">Toloo</span>
+              <div class="proto-bar" role="img" aria-label="Parse Envelope, Toloo: %{PROTO_PARSE_TOLOO_NS}% ns">
+                <div class="proto-fill toloo" style="width:%{PROTO_PARSE_TOLOO_PCT}%"></div>
+              </div>
+              <span class="proto-val">%{PROTO_PARSE_TOLOO_NS}% ns</span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">IRC</span>
+              <div class="proto-bar" role="img" aria-label="Parse Envelope, IRC: %{PROTO_PARSE_IRC_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_PARSE_IRC_PCT}%;background:%{PROTO_PARSE_IRC_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_PARSE_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_PARSE_IRC_NS}% ns, %{PROTO_PARSE_IRC_LABEL}%"><span class="proto-inline-ns">%{PROTO_PARSE_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_PARSE_IRC_LABEL}%</span>%{PROTO_PARSE_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_PARSE_IRC_NS}% ns · %{PROTO_PARSE_IRC_LABEL}%</span></span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">XMPP</span>
+              <div class="proto-bar" role="img" aria-label="Parse Envelope, XMPP: %{PROTO_PARSE_XMPP_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_PARSE_XMPP_PCT}%;background:%{PROTO_PARSE_XMPP_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_PARSE_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_PARSE_XMPP_NS}% ns, %{PROTO_PARSE_XMPP_LABEL}%"><span class="proto-inline-ns">%{PROTO_PARSE_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_PARSE_XMPP_LABEL}%</span>%{PROTO_PARSE_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_PARSE_XMPP_NS}% ns · %{PROTO_PARSE_XMPP_LABEL}%</span></span>
+            </div>
+%{PROTO_PARSE_MEASURED_ROWS}%
+          </div>
+        </article>
+
+        <article class="bench-card" aria-labelledby="cat-build">
+          <div class="bench-top">
+            <h3 id="cat-build">Event Build</h3>
+          </div>
+          <div class="proto-rows">
+            <div class="proto-row toloo">
+              <span class="proto-label">Toloo</span>
+              <div class="proto-bar" role="img" aria-label="Event Build, Toloo: %{PROTO_BUILD_TOLOO_NS}% ns">
+                <div class="proto-fill toloo" style="width:%{PROTO_BUILD_TOLOO_PCT}%"></div>
+              </div>
+              <span class="proto-val">%{PROTO_BUILD_TOLOO_NS}% ns</span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">IRC</span>
+              <div class="proto-bar" role="img" aria-label="Event Build, IRC: %{PROTO_BUILD_IRC_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_BUILD_IRC_PCT}%;background:%{PROTO_BUILD_IRC_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_BUILD_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_BUILD_IRC_NS}% ns, %{PROTO_BUILD_IRC_LABEL}%"><span class="proto-inline-ns">%{PROTO_BUILD_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_BUILD_IRC_LABEL}%</span>%{PROTO_BUILD_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_BUILD_IRC_NS}% ns · %{PROTO_BUILD_IRC_LABEL}%</span></span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">XMPP</span>
+              <div class="proto-bar" role="img" aria-label="Event Build, XMPP: %{PROTO_BUILD_XMPP_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_BUILD_XMPP_PCT}%;background:%{PROTO_BUILD_XMPP_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_BUILD_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_BUILD_XMPP_NS}% ns, %{PROTO_BUILD_XMPP_LABEL}%"><span class="proto-inline-ns">%{PROTO_BUILD_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_BUILD_XMPP_LABEL}%</span>%{PROTO_BUILD_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_BUILD_XMPP_NS}% ns · %{PROTO_BUILD_XMPP_LABEL}%</span></span>
+            </div>
+%{PROTO_BUILD_MEASURED_ROWS}%
+          </div>
+          <p class="proto-note">Signal has no signed-event build step.</p>
+        </article>
+
+        <article class="bench-card" aria-labelledby="cat-pool">
+          <div class="bench-top">
+            <h3 id="cat-pool">Pool Query (1k)</h3>
+          </div>
+          <div class="proto-rows">
+            <div class="proto-row toloo">
+              <span class="proto-label">Toloo</span>
+              <div class="proto-bar" role="img" aria-label="Pool Query 1k, Toloo: %{PROTO_POOL_TOLOO_NS}% ns">
+                <div class="proto-fill toloo" style="width:%{PROTO_POOL_TOLOO_PCT}%"></div>
+              </div>
+              <span class="proto-val">%{PROTO_POOL_TOLOO_NS}% ns</span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">IRC</span>
+              <div class="proto-bar" role="img" aria-label="Pool Query 1k, IRC: %{PROTO_POOL_IRC_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_POOL_IRC_PCT}%;background:%{PROTO_POOL_IRC_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_POOL_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_POOL_IRC_NS}% ns, %{PROTO_POOL_IRC_LABEL}%"><span class="proto-inline-ns">%{PROTO_POOL_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_POOL_IRC_LABEL}%</span>%{PROTO_POOL_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_POOL_IRC_NS}% ns · %{PROTO_POOL_IRC_LABEL}%</span></span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">XMPP</span>
+              <div class="proto-bar" role="img" aria-label="Pool Query 1k, XMPP: %{PROTO_POOL_XMPP_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_POOL_XMPP_PCT}%;background:%{PROTO_POOL_XMPP_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_POOL_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_POOL_XMPP_NS}% ns, %{PROTO_POOL_XMPP_LABEL}%"><span class="proto-inline-ns">%{PROTO_POOL_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_POOL_XMPP_LABEL}%</span>%{PROTO_POOL_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_POOL_XMPP_NS}% ns · %{PROTO_POOL_XMPP_LABEL}%</span></span>
+            </div>
+%{PROTO_POOL_MEASURED_ROWS}%
+          </div>
+        </article>
+
+        <article class="bench-card" aria-labelledby="cat-crypto">
+          <div class="bench-top">
+            <h3 id="cat-crypto">Crypto (ed25519)</h3>
+          </div>
+          <div class="proto-rows">
+            <div class="proto-row toloo">
+              <span class="proto-label">Toloo</span>
+              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, Toloo: %{PROTO_CRYPTO_TOLOO_NS}% ns">
+                <div class="proto-fill toloo" style="width:%{PROTO_CRYPTO_TOLOO_PCT}%"></div>
+              </div>
+              <span class="proto-val">%{PROTO_CRYPTO_TOLOO_NS}% ns</span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">IRC</span>
+              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, IRC: %{PROTO_CRYPTO_IRC_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_CRYPTO_IRC_PCT}%;background:%{PROTO_CRYPTO_IRC_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_CRYPTO_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_CRYPTO_IRC_NS}% ns, %{PROTO_CRYPTO_IRC_LABEL}%"><span class="proto-inline-ns">%{PROTO_CRYPTO_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_CRYPTO_IRC_LABEL}%</span>%{PROTO_CRYPTO_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CRYPTO_IRC_NS}% ns · %{PROTO_CRYPTO_IRC_LABEL}%</span></span>
+            </div>
+            <div class="proto-row ref">
+              <span class="proto-label">XMPP</span>
+              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, XMPP: %{PROTO_CRYPTO_XMPP_NS}% ns">
+                <div class="proto-fill" style="width:%{PROTO_CRYPTO_XMPP_PCT}%;background:%{PROTO_CRYPTO_XMPP_COLOR}%"></div>
+              </div>
+              <span class="proto-val%{PROTO_CRYPTO_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_CRYPTO_XMPP_NS}% ns, %{PROTO_CRYPTO_XMPP_LABEL}%"><span class="proto-inline-ns">%{PROTO_CRYPTO_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_CRYPTO_XMPP_LABEL}%</span>%{PROTO_CRYPTO_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CRYPTO_XMPP_NS}% ns · %{PROTO_CRYPTO_XMPP_LABEL}%</span></span>
+            </div>
+%{PROTO_CRYPTO_MEASURED_ROWS}%
+          </div>
+          <p class="proto-note">Nostr uses Schnorr (secp256k1); Signal is not ed25519.</p>
+        </article>
+%{PRIVATE_CARD}%
+      </div>
+    </section>
+
+    <!-- 02 / Platforms + 03 / Capacity -->
+    <div class="dash">
+      <section class="dash-card platforms-card" aria-labelledby="platforms-title">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow"><span class="num">02</span><span class="slash" aria-hidden="true">/</span>Platforms</p>
+            <h2 id="platforms-title">Cross-platform latency</h2>
           </div>
         </div>
-      </div>
-
-      <div class="proto-card">
-        <h3>Parse Envelope</h3>
-        <div class="proto-rows">
-          <div class="proto-row">
-            <span class="proto-label">Toloo</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_PARSE_TOLOO_PCT}%;background:var(--green)"></div>
-            </div>
-            <span class="proto-val">%{PROTO_PARSE_TOLOO_NS}% ns</span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">IRC</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_PARSE_IRC_PCT}%;background:%{PROTO_PARSE_IRC_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_PARSE_IRC_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_PARSE_IRC_NS}% ns</span><span class="proto-sub">%{PROTO_PARSE_IRC_LABEL}%</span><span class="proto-tooltip">%{PROTO_PARSE_IRC_NS}% ns · %{PROTO_PARSE_IRC_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">XMPP</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_PARSE_XMPP_PCT}%;background:%{PROTO_PARSE_XMPP_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_PARSE_XMPP_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_PARSE_XMPP_NS}% ns</span><span class="proto-sub">%{PROTO_PARSE_XMPP_LABEL}%</span><span class="proto-tooltip">%{PROTO_PARSE_XMPP_NS}% ns · %{PROTO_PARSE_XMPP_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">Matrix</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_PARSE_MATRIX_PCT}%;background:%{PROTO_PARSE_MATRIX_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_PARSE_MATRIX_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_PARSE_MATRIX_NS}% ns</span><span class="proto-sub">%{PROTO_PARSE_MATRIX_LABEL}%</span><span class="proto-tooltip">%{PROTO_PARSE_MATRIX_NS}% ns · %{PROTO_PARSE_MATRIX_LABEL}%</span></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="proto-card">
-        <h3>Event Build</h3>
-        <div class="proto-rows">
-          <div class="proto-row">
-            <span class="proto-label">Toloo</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_BUILD_TOLOO_PCT}%;background:var(--green)"></div>
-            </div>
-            <span class="proto-val">%{PROTO_BUILD_TOLOO_NS}% ns</span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">IRC</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_BUILD_IRC_PCT}%;background:%{PROTO_BUILD_IRC_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_BUILD_IRC_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_BUILD_IRC_NS}% ns</span><span class="proto-sub">%{PROTO_BUILD_IRC_LABEL}%</span><span class="proto-tooltip">%{PROTO_BUILD_IRC_NS}% ns · %{PROTO_BUILD_IRC_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">XMPP</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_BUILD_XMPP_PCT}%;background:%{PROTO_BUILD_XMPP_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_BUILD_XMPP_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_BUILD_XMPP_NS}% ns</span><span class="proto-sub">%{PROTO_BUILD_XMPP_LABEL}%</span><span class="proto-tooltip">%{PROTO_BUILD_XMPP_NS}% ns · %{PROTO_BUILD_XMPP_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">Matrix</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_BUILD_MATRIX_PCT}%;background:%{PROTO_BUILD_MATRIX_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_BUILD_MATRIX_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_BUILD_MATRIX_NS}% ns</span><span class="proto-sub">%{PROTO_BUILD_MATRIX_LABEL}%</span><span class="proto-tooltip">%{PROTO_BUILD_MATRIX_NS}% ns · %{PROTO_BUILD_MATRIX_LABEL}%</span></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="proto-card">
-        <h3>Pool Query (1k)</h3>
-        <div class="proto-rows">
-          <div class="proto-row">
-            <span class="proto-label">Toloo</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_POOL_TOLOO_PCT}%;background:var(--green)"></div>
-            </div>
-            <span class="proto-val">%{PROTO_POOL_TOLOO_NS}% ns</span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">IRC</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_POOL_IRC_PCT}%;background:%{PROTO_POOL_IRC_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_POOL_IRC_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_POOL_IRC_NS}% ns</span><span class="proto-sub">%{PROTO_POOL_IRC_LABEL}%</span><span class="proto-tooltip">%{PROTO_POOL_IRC_NS}% ns · %{PROTO_POOL_IRC_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">XMPP</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_POOL_XMPP_PCT}%;background:%{PROTO_POOL_XMPP_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_POOL_XMPP_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_POOL_XMPP_NS}% ns</span><span class="proto-sub">%{PROTO_POOL_XMPP_LABEL}%</span><span class="proto-tooltip">%{PROTO_POOL_XMPP_NS}% ns · %{PROTO_POOL_XMPP_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">Matrix</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_POOL_MATRIX_PCT}%;background:%{PROTO_POOL_MATRIX_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_POOL_MATRIX_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_POOL_MATRIX_NS}% ns</span><span class="proto-sub">%{PROTO_POOL_MATRIX_LABEL}%</span><span class="proto-tooltip">%{PROTO_POOL_MATRIX_NS}% ns · %{PROTO_POOL_MATRIX_LABEL}%</span></span>
-          </div>
-        </div>
-      </div>
-
-      <div class="proto-card">
-        <h3>Crypto (ed25519)</h3>
-        <div class="proto-rows">
-          <div class="proto-row">
-            <span class="proto-label">Toloo</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CRYPTO_TOLOO_PCT}%;background:var(--green)"></div>
-            </div>
-            <span class="proto-val">%{PROTO_CRYPTO_TOLOO_NS}% ns</span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">IRC</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CRYPTO_IRC_PCT}%;background:%{PROTO_CRYPTO_IRC_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_CRYPTO_IRC_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_CRYPTO_IRC_NS}% ns</span><span class="proto-sub">%{PROTO_CRYPTO_IRC_LABEL}%</span><span class="proto-tooltip">%{PROTO_CRYPTO_IRC_NS}% ns · %{PROTO_CRYPTO_IRC_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">XMPP</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CRYPTO_XMPP_PCT}%;background:%{PROTO_CRYPTO_XMPP_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_CRYPTO_XMPP_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_CRYPTO_XMPP_NS}% ns</span><span class="proto-sub">%{PROTO_CRYPTO_XMPP_LABEL}%</span><span class="proto-tooltip">%{PROTO_CRYPTO_XMPP_NS}% ns · %{PROTO_CRYPTO_XMPP_LABEL}%</span></span>
-          </div>
-          <div class="proto-row" style="opacity:.82">
-            <span class="proto-label">Matrix</span>
-            <div class="proto-bar">
-              <div class="proto-fill" style="width:%{PROTO_CRYPTO_MATRIX_PCT}%;background:%{PROTO_CRYPTO_MATRIX_COLOR}%"></div>
-            </div>
-            <span class="proto-val%{PROTO_CRYPTO_MATRIX_PARITY_CLASS}%"><span class="proto-inline-ns">%{PROTO_CRYPTO_MATRIX_NS}% ns</span><span class="proto-sub">%{PROTO_CRYPTO_MATRIX_LABEL}%</span><span class="proto-tooltip">%{PROTO_CRYPTO_MATRIX_NS}% ns · %{PROTO_CRYPTO_MATRIX_LABEL}%</span></span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-
-<!-- LEFT: Cross-Platform Latency (CSS-based static chart) -->
-<div>
-  <section class="section">
-    <div class="card">
-      <h2>Cross-Platform Latency</h2>
-      <p class="sub">Mean latency (ns) per platform across 6 benchmark categories. Measured on GitHub-hosted runners.</p>
-      <div class="chart-box">
-        <div class="chart-bars" id="platform-chart">
-          <!-- Populated by template -->
+        <p class="card-note">Mean latency by platform.</p>
+        <div class="chart-bars">
 %{PLATFORM_CHART_ROWS}%
         </div>
-        <div class="chart-legend">
-          <div class="chart-legend-item"><span class="chart-legend-color" style="background:#4a9cf0"></span>linux-x86</div>
-          <div class="chart-legend-item"><span class="chart-legend-color" style="background:#3dba6e"></span>linux-arm</div>
-          <div class="chart-legend-item"><span class="chart-legend-color" style="background:#e0a020"></span>windows</div>
-          <div class="chart-legend-item"><span class="chart-legend-color" style="background:#e05050"></span>macos-x86</div>
-          <div class="chart-legend-item"><span class="chart-legend-color" style="background:#8b6fd0"></span>macos-arm</div>
+        <div class="chart-legend" role="group" aria-label="Platform color legend">
+          <span class="chart-legend-item"><span class="chart-legend-color plat-linux-x86" aria-hidden="true"></span>linux-x86</span>
+          <span class="chart-legend-item"><span class="chart-legend-color plat-linux-arm" aria-hidden="true"></span>linux-arm</span>
+          <span class="chart-legend-item"><span class="chart-legend-color plat-windows" aria-hidden="true"></span>windows</span>
+          <span class="chart-legend-item"><span class="chart-legend-color plat-macos-x86" aria-hidden="true"></span>macos-x86</span>
+          <span class="chart-legend-item"><span class="chart-legend-color plat-macos-arm" aria-hidden="true"></span>macos-arm</span>
         </div>
-      </div>
-    </div>
-  </section>
-</div>
+      </section>
 
-<!-- RIGHT: Simulation + Capacity + Key Results -->
-<div>
+      <section class="dash-card capacity-card" aria-labelledby="capacity-title">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow"><span class="num">03</span><span class="slash" aria-hidden="true">/</span>Capacity</p>
+            <h2 id="capacity-title">Throughput &amp; headroom</h2>
+          </div>
+        </div>
 
-  <section class="section">
-    <div class="sim-card">
-      <h3>Real-World Messaging Simulation</h3>
-      <div class="sim-grid">
-        <div class="item">
-          <div class="label">Background Load</div>
-          <div class="num">%{SIM_BG_LOAD}% msg/s</div>
-          <div class="note">Modeled: 10 rooms × 1k users @ 0.02 msg/s + 1k active @ 0.1 msg/s</div>
+        <div class="sim-grid">
+          <div class="sim-item">
+            <span class="sim-label">Background load</span>
+            <span class="sim-num">%{SIM_BG_LOAD}%<span class="sim-unit">msg/s</span></span>
+          </div>
+          <div class="sim-item">
+            <span class="sim-label">Single thread</span>
+            <span class="sim-num sim-green">~%{SIM_SINGLE_THREAD}%<span class="sim-unit">msg/s</span></span>
+          </div>
         </div>
-        <div class="item">
-          <div class="label">Single Thread</div>
-          <div class="num text-green">~%{SIM_SINGLE_THREAD}% msg/s</div>
-          <div class="note">Measured: encode + verify + parse + build + pool + crypto</div>
-        </div>
-      </div>
-      <div class="sim-grid">
-        <div class="item">
-          <div class="label">Steady Headroom</div>
-          <div class="big-num text-green">%{SIM_STEADY}%×</div>
-        </div>
-        <div class="item">
-          <div class="label">Burst Headroom (50×)</div>
-          <div class="big-num text-red">%{SIM_BURST}%×</div>
-          <div class="note">Requires horizontal scale or queueing</div>
-        </div>
-      </div>
-    </div>
-  </section>
 
-  <section class="section">
-    <div class="sim-card">
-      <h3>Capacity Planning (Measured Scaling)</h3>
-      <table class="table">
-        <thead><tr><th>Config</th><th>Throughput</th><th>Users (0.1 msg/s)</th><th>Rooms</th></tr></thead>
-        <tbody>
-          <tr><td>1 thread (ubuntu-slim, 1 vCPU)</td><td>%{CAP_1_THREAD}% msg/s</td><td>%{CAP_1_USERS}%</td><td>10</td></tr>
-          <tr><td>4 threads (ubuntu-24.04, 4 vCPU)</td><td>%{CAP_4_THREAD}% msg/s</td><td>%{CAP_4_USERS}%</td><td>40</td></tr>
-          <tr><td>16 threads (sharded, estimated)</td><td>%{CAP_16_THREAD}% msg/s</td><td>%{CAP_16_USERS}%</td><td>160</td></tr>
-          <tr><td>64 threads (NUMA, estimated)</td><td>%{CAP_64_THREAD}% msg/s</td><td>%{CAP_64_USERS}%</td><td>640</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
+        <div class="sim-headroom" role="group" aria-label="Headroom comparison: steady %{SIM_STEADY}% times and burst %{SIM_BURST}% times ambient load on a zero-to-fifty scale; the tick marks one-times saturation">
+          <div class="sim-head-item">
+            <div class="sim-head-line">
+              <span class="sim-label">Steady headroom</span>
+              <span class="sim-num sim-green">%{SIM_STEADY}%<span class="sim-unit">×</span></span>
+            </div>
+            <div class="sim-head-track" aria-hidden="true">
+              <span class="sim-head-fill is-green" style="width:calc(%{SIM_STEADY}% * 2%)"></span>
+              <span class="sim-head-tick"></span>
+            </div>
+          </div>
+          <div class="sim-head-item">
+            <div class="sim-head-line">
+              <span class="sim-label">Burst headroom</span>
+              <span class="sim-num sim-red">%{SIM_BURST}%<span class="sim-unit">×</span></span>
+            </div>
+            <div class="sim-head-track" aria-hidden="true">
+              <span class="sim-head-fill is-red" style="width:calc(%{SIM_BURST}% * 2%)"></span>
+              <span class="sim-head-tick"></span>
+            </div>
+          </div>
+          <p class="sim-head-scale"><span>0× · tick = 1× saturation</span><span>50× scale</span></p>
+        </div>
 
-  <section class="section">
-    <div class="sim-card">
-      <h3>Key Results (linux-x86, 1 vCPU)</h3>
+        <div class="cap-block">
+          <div class="block-head">
+            <h3>Throughput</h3>
+          </div>
+          <table class="cap-table">
+            <thead>
+              <tr>
+                <th scope="col">Config</th>
+                <th scope="col">msg/s</th>
+                <th scope="col">Users<span class="th-sub">@ 0.1 msg/s</span></th>
+                <th scope="col">Rooms</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">1 thread</th>
+                <td>%{CAP_1_THREAD}%</td>
+                <td>%{CAP_1_USERS}%</td>
+                <td>10</td>
+              </tr>
+              <tr>
+                <th scope="row">4 threads</th>
+                <td>%{CAP_4_THREAD}%</td>
+                <td>%{CAP_4_USERS}%</td>
+                <td>40</td>
+              </tr>
+              <tr>
+                <th scope="row">16 threads</th>
+                <td>%{CAP_16_THREAD}%</td>
+                <td>%{CAP_16_USERS}%</td>
+                <td>160</td>
+              </tr>
+              <tr>
+                <th scope="row">64 threads</th>
+                <td>%{CAP_64_THREAD}%</td>
+                <td>%{CAP_64_USERS}%</td>
+                <td>640</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="cap-block">
+          <div class="block-head">
+            <h3>Key results</h3>
+            <span class="block-tag">linux-x86</span>
+          </div>
+          <div class="key-list">
 %{KEY_RESULTS_ROWS}%
+          </div>
+          <p class="key-scale">
+            <span><span class="dot dot-green" aria-hidden="true"></span>&lt; 50 µs</span>
+            <span><span class="dot dot-amber" aria-hidden="true"></span>50–100 µs</span>
+            <span><span class="dot dot-red" aria-hidden="true"></span>≥ 100 µs</span>
+          </p>
+        </div>
+      </section>
     </div>
-  </section>
 
-</div>
-
-</div>
+  </div>
+</main>
 </body>
 </html>

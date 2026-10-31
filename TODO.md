@@ -35,6 +35,13 @@ git. Current remaining work, in priority order:
       — log-scale bars, parity detection, CSS hover tooltips, equal-width columns
 - [x] Cross-repo push to `MehrWizard/toloo-benchmarks` with per-commit results
 - [x] Baseline comparison with 10%/20% regression thresholds (non-blocking)
+- [x] Cross-protocol benchmarks: `toloo-protocol-bench` measures Signal
+      (libsignal X3DH + Double Ratchet), Matrix (ruma signatures, vodozemac
+      Olm) and Nostr (Schnorr, NIP-44). Feature-gated (`protocols`), Linux x86
+      CI job, measured rows + 1:1 card on the dashboard, `est` tags for the
+      remaining reference estimates.
+- [ ] Future cross-protocol coverage: measured IRC/XMPP serialization (no
+      per-message crypto), and MLS/OpenMLS as the room-commit analogue.
 
 ## Codebase audit (2026-10-29)
 

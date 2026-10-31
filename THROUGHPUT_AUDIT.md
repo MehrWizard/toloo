@@ -643,3 +643,111 @@ HKDF block.
 CI benchmark numbers will be regenerated via the benchmark workflow; the
 local machine shows high variance for crypto benches, so CI remains the
 authoritative comparison.
+## Phase 9: Cross-protocol benchmarks (2026-10-31)
+
+The dashboard previously compared Toloo against hard-coded IRC/XMPP/Matrix
+estimates. Signal was absent and Matrix was not measured. Phase 9 adds a
+benchmark-only crate, `toloo-protocol-bench`, that links real protocol
+implementations and feeds measured rows into the same latency cards plus a new
+1:1 private-message card.
+
+### Libraries (pinned)
+
+| Protocol | Crate | Version | Scope |
+|---|---|---|---|
+| Signal | `libsignal-protocol-syft` | `=0.85.3-beta.5` | X3DH (`process_prekey_bundle`), Double Ratchet (`message_encrypt`/`message_decrypt`), Kyber prekeys, in-memory stores |
+| Matrix (events) | `ruma-signatures` / `ruma-common` | 0.22 / 0.20 | canonical JSON encode/parse, `sign_json`, `verify_json` |
+| Matrix (1:1) | `vodozemac` | 0.11 | Olm outbound/inbound sessions, encrypt/decrypt |
+| Nostr | `nostr` | 0.45 (`nip44`, `os-rng`) | event id + Schnorr sign/verify, JSON parse/serialize, NIP-44 v2 |
+| Toloo | `toloo-lib` | workspace | `encrypt_private` / `decrypt_private`, envelope canonical/parse/verify/build |
+
+### Isolation and build behavior
+
+- New workspace member, `publish = false`, license `AGPL-3.0-only`, default
+  features empty. Heavy dependencies are optional and compiled only with
+  `--features protocols`.
+- Normal `cargo build/test --workspace` never compiles libsignal; release
+  artifacts do not link AGPL code. Nothing combined is distributed.
+- `cargo test -p toloo-protocol-bench --features protocols` runs five adapter
+  round-trip tests (Signal ratchet, Olm, Matrix sign/verify/canonical, Nostr
+  event, NIP-44).
+
+### Methodology
+
+- Payload: the same 1,800-character body as `canonical/encode/medium`
+  (`{ "ch": 1, "body": ... }`); each library receives its natural equivalent
+  (Matrix event JSON, Nostr text note, Signal ciphertext of the body).
+- One current-thread Tokio runtime; libsignal stores are `?Send`, so criterion
+  closures call `block_on` rather than using an async harness.
+- Setup is untimed via `iter_batched`: key generation, X3DH, Olm account
+  creation, and the handshake round trip. Decrypt therefore measures the
+  steady-state ratchet/Olm operation on a fresh state, not replay.
+- Signal benchmarks use established sessions; encrypt measures ratchet output,
+  not pre-key messages.
+- Signal protobuf is serialized at message construction, so only
+  `protocol_parse/signal` exists; there is no standalone encode.
+- Cross-protocol numbers are Linux x86 only (`bench-protocols` CI job,
+  `continue-on-error`). Other platform jobs stay lean.
+
+### Criterion IDs and card mapping
+
+| Criterion ID | Card |
+|---|---|
+| `protocol_canonical/{matrix,nostr}` | Canonical Encode |
+| `protocol_verify/{matrix,nostr}` | Envelope Verify |
+| `protocol_parse/{matrix,signal,nostr}` | Parse Envelope |
+| `protocol_build/{matrix,nostr}` | Event Build |
+| `protocol_crypto/matrix_verify` | Crypto (ed25519) |
+| `protocol_private/{toloo,signal,olm,nostr}_{encrypt,decrypt}` | Private Message (1:1) |
+| `protocol_private/{signal,olm}_setup` | 1:1 card footnote |
+
+IRC and XMPP rows remain estimates (tagged `est`). Matrix rows become measured
+when `platforms.protocols` exists; without it the generator emits the old
+Matrix estimate row and omits the 1:1 card, so local generation from
+`results/latest.json` keeps working.
+
+### Fairness caveats
+
+- Signal/Olm encrypt is a symmetric ratchet step; Toloo private messages are
+  stateless X25519+ChaCha20-Poly1305 per message and include an ephemeral key
+  agreement. The 1:1 card shows setup costs separately; compare combined costs
+  for a new session, not only per-message encrypt/decrypt.
+- Matrix event verification (`verify_json`) includes canonical JSON
+  re-serialization; the raw ed25519 row uses `ed25519-dalek` directly.
+- Nostr uses Schnorr over secp256k1 (not Ed25519), so it is excluded from the
+  crypto card; Signal has no per-message signatures, so it is excluded from
+  verify/build.
+- Canonicalization differs by design: Toloo canonical envelope bytes, Matrix
+  canonical JSON, Nostr event JSON. The rows compare the closest equivalent
+  operation, not byte-identical work.
+
+### Indicative local numbers (short run, shared machine)
+
+| Benchmark | Mean |
+|---|---|
+| `protocol_canonical/matrix` | ~1.1 µs |
+| `protocol_canonical/nostr` | ~1.5 µs |
+| `protocol_verify/matrix` | ~43 µs |
+| `protocol_verify/nostr` | ~38 µs |
+| `protocol_parse/matrix` | ~0.9 µs |
+| `protocol_parse/signal` | ~0.3 µs |
+| `protocol_parse/nostr` | ~0.7 µs |
+| `protocol_build/matrix` | ~26 µs |
+| `protocol_build/nostr` | ~59 µs |
+| `protocol_crypto/matrix_verify` | ~36 µs |
+| `protocol_private/toloo_encrypt` / `toloo_decrypt` | ~85 / ~119 µs |
+| `protocol_private/signal_setup` / `signal_encrypt` / `signal_decrypt` | ~0.5 ms / ~12 µs / ~140 µs |
+| `protocol_private/olm_setup` / `olm_encrypt` / `olm_decrypt` | ~0.16 ms / ~22 µs / ~4 µs |
+| `protocol_private/nostr_encrypt` / `nostr_decrypt` | ~43 / ~46 µs |
+
+CI results are authoritative; the dashboard tags measured rows as untagged and
+estimates with `est`.
+
+### Future protocol coverage
+
+- Measured IRC/XMPP serialization is feasible (hand parser / `quick-xml`) but
+  has no per-message crypto equivalent.
+- MLS (`openmls`) is the closest analogue to Toloo room commits; deferred to a
+  later phase because integration cost is higher.
+- MQTT / ActivityPub / AT Protocol do not map onto these categories (transport
+  or trust model differs) and stay out of scope.

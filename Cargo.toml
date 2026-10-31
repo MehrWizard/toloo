@@ -3,6 +3,7 @@ members = [
     "toloo-lib",
     "toloo-cli",
     "toloo-app/src-tauri",
+    "toloo-protocol-bench",
 ]
 resolver = "2"
 

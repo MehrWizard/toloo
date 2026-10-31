@@ -260,13 +260,17 @@ Android APKs are only produced when signing secrets are configured: `KEYSTORE_BA
 ### CI / Benchmarks
 
 `.github/workflows/benchmark.yml` runs microbenchmarks across 5 platforms
-(linux-x86, linux-arm, windows, macos-x86, macos-arm) and publishes results
-to [`MehrWizard/toloo-benchmarks`](https://github.com/MehrWizard/toloo-benchmarks)
+(linux-x86, linux-arm, windows, macos-x86, macos-arm), plus a Linux x86
+cross-protocol job, and publishes results to
+[`MehrWizard/toloo-benchmarks`](https://github.com/MehrWizard/toloo-benchmarks)
 with a live static HTML dashboard. Full details in [`THROUGHPUT_AUDIT.md`](./THROUGHPUT_AUDIT.md).
 
 ```sh
 # Run benchmarks locally (5 minutes, 20 iterations)
 cd toloo-lib && cargo bench --bench canonical_bench
+
+# Cross-protocol benchmarks (Signal, Matrix, Nostr)
+cargo bench -p toloo-protocol-bench --features protocols --bench protocols
 ```
 
 ---
@@ -285,6 +289,36 @@ Measured on CI (commit 90c1d20, all optimizations, linux-x86):
 **2x is achievable with batch verification** on linux-x86 (3.73x), windows (3.07x),
 and linux-arm (2.09x). Single-signature verification does not reach 2x on any Linux/Windows
 platform; macOS runners beat IRC (Rosetta overhead aside) due to slower reference estimates.
+
+### Cross-protocol benchmarks (Signal, Matrix, Nostr)
+
+`toloo-protocol-bench/` is a benchmark-only crate (not published; heavy deps sit
+behind the non-default `protocols` feature). It measures the same ~2 KB message
+against real protocol implementations:
+
+| Protocol | Library | Operations |
+|---|---|---|
+| Signal | `libsignal-protocol-syft` 0.85.3-beta.5 (X3DH, Double Ratchet, Kyber) | protobuf parse, ratchet encrypt/decrypt, session setup |
+| Matrix | `ruma-signatures` 0.22 (canonical JSON + ed25519), `vodozemac` 0.11 (Olm) | canonical encode/parse, sign/verify, Olm encrypt/decrypt/session setup |
+| Nostr | `nostr` 0.45 (secp256k1 Schnorr, NIP-44 v2) | event build/parse/verify, NIP-44 encrypt/decrypt |
+| Toloo | `toloo-lib` | private-message encrypt/decrypt (X25519 + ChaCha20-Poly1305) |
+
+Measured rows feed the dashboard's latency cards and a 1:1 private-message card;
+rows tagged `est` remain reference estimates. Key generation and session setup
+are untimed (`iter_batched`), so decrypt figures are steady-state ratchet
+operations. Cross-protocol numbers run on Linux x86 only.
+
+```sh
+cargo test -p toloo-protocol-bench --features protocols   # round-trip smoke tests
+```
+
+Notes: libsignal serializes protobuf at message construction, so only parsing is
+measured; Signal has no per-message signatures, so it is absent from the verify
+and build cards. The `protocols` feature pulls in `libsignal-protocol-syft`
+(AGPL-3.0-only). The crate is `publish = false`, has an empty default feature
+set, and is never linked into relay or app artifacts — no combined binaries are
+distributed. Details and fairness caveats:
+[`THROUGHPUT_AUDIT.md`](./THROUGHPUT_AUDIT.md#phase-9-cross-protocol-benchmarks-2026-10-31).
 
 ---
 

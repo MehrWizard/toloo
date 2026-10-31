@@ -104,7 +104,51 @@ jobs:
             toloo-lib/bench-results.txt
             toloo-lib/bench-json/
 
+  # ────────────────────────────────────────────────────────────────────
+  # Cross-protocol comparison (Signal, Matrix, Nostr) — Linux x86 only.
+  # Heavy/AGPL libraries stay in toloo-protocol-bench behind a feature.
+  # ────────────────────────────────────────────────────────────────────
+  bench-protocols:
+    name: Benchmark Cross-Protocol (Linux x86_64)
+    needs: prepare-repo
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bench-protocols-${{ github.sha }}
+
+      - name: Run cross-protocol benchmarks
+        run: |
+          set -o pipefail
+          cargo bench -p toloo-protocol-bench --features protocols --bench protocols -- \
+            --warm-up-time 0.5 --measurement-time 2 2>&1 | tee bench-protocols-results.txt
+
+      - name: Extract benchmark JSON
+        run: |
+          mkdir -p bench-json
+          while IFS= read -r -d '' f; do
+            rel="${f#target/criterion/}"
+            rel="${rel%/new/estimates.json}"
+            rel_safe="${rel//\//__}"
+            cp "$f" "bench-json/${rel_safe}.json"
+          done < <(find target/criterion -name "estimates.json" -path "*/new/*" -print0)
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-protocols
+          path: |
+            bench-protocols-results.txt
+            bench-json/
 
   bench-linux-arm:
     name: Benchmark Linux aarch64
@@ -350,7 +394,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   aggregate:
     name: Aggregate & Store Results
-    needs: [prepare-repo, bench-linux-x86, bench-linux-arm, bench-windows, bench-macos-x86, bench-macos-arm]
+    needs: [prepare-repo, bench-linux-x86, bench-protocols, bench-linux-arm, bench-windows, bench-macos-x86, bench-macos-arm]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -430,7 +474,12 @@ jobs:
               for p in missing:
                   print(f"  ✗ {p}")
           else:
-              print(f"\n=== All 5 platforms present ===")
+              print(f"\n=== All 5 relay platforms present ===")
+
+          if 'protocols' in results["platforms"]:
+              print(f"  ✓ protocols (cross-protocol): {len(results['platforms']['protocols'])} benchmarks")
+          else:
+              print("  ✗ protocols (cross-protocol) missing — site falls back to estimates")
 
           print(f"\nWritten {output}")
           PYEOF
@@ -455,7 +504,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cp ../benchmark-report.json results/${{ github.sha }}.json
           cp ../benchmark-report.json results/latest.json
-          git add results/${{ github.sha }}.json results/latest.json index.html
+          cp ../benchmark-og.png og.png
+          git add results/${{ github.sha }}.json results/latest.json index.html og.png
           git commit -m "Benchmark: ${{ github.sha }} (${{ github.event.inputs.branch }})"
           git push
         env:
