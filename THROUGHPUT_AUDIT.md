@@ -730,34 +730,56 @@ Matrix estimate row and omits the 1:1 card, so local generation from
   canonical JSON, Nostr event JSON. The rows compare the closest equivalent
   operation, not byte-identical work.
 
-### CI results (commit c4d3363, linux-x86)
+### CI results (commit d6a798d, linux-x86)
 
-The `bench-protocols` job published these means on 2026-10-31:
+The `bench-protocols` job published these means on 2026-10-31 (second run,
+after the responder-side benches and the decrypt change):
 
 | Benchmark | Mean |
 |---|---|
-| `protocol_canonical/matrix` | 1.49 µs |
-| `protocol_canonical/nostr` | 1.76 µs |
-| `protocol_verify/matrix` | 43.9 µs |
-| `protocol_verify/nostr` | 45.8 µs |
-| `protocol_parse/matrix` | 1.05 µs |
-| `protocol_parse/signal` | 344 ns |
-| `protocol_parse/nostr` | 689 ns |
-| `protocol_build/matrix` | 28.3 µs |
-| `protocol_build/nostr` | 77.7 µs |
-| `protocol_crypto/matrix_verify` | 40.7 µs |
-| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 83.0 / 94.1 µs |
-| `protocol_private/signal_setup` / `signal_encrypt` / `signal_decrypt` | 449 µs / 12.3 µs / 148 µs |
-| `protocol_private/olm_setup` / `olm_encrypt` / `olm_decrypt` | 194 µs / 23.1 µs / 4.45 µs |
-| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 50.4 / 49.3 µs |
+| `protocol_canonical/matrix` | 636 ns |
+| `protocol_canonical/nostr` | 1.23 µs |
+| `protocol_verify/matrix` | 30.7 µs |
+| `protocol_verify/nostr` | 28.4 µs |
+| `protocol_parse/matrix` | 704 ns |
+| `protocol_parse/signal` | 243 ns |
+| `protocol_parse/nostr` | 477 ns |
+| `protocol_build/matrix` | 16.5 µs |
+| `protocol_build/nostr` | 46.7 µs |
+| `protocol_crypto/matrix_verify` | 29.7 µs |
+| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 49.7 / 49.3 µs |
+| `protocol_private/signal_setup` / `signal_inbound` | 295 / 275 µs |
+| `protocol_private/signal_encrypt` / `signal_decrypt` | 9.1 / 92.5 µs |
+| `protocol_private/olm_setup` / `olm_inbound` | 113 / 105 µs |
+| `protocol_private/olm_encrypt` / `olm_decrypt` | 15.2 / 3.3 µs |
+| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 32.4 / 31.7 µs |
 
-Against the same run's tolOO relay numbers (canonical 1.89 µs, verify 34.2 µs,
-parse 1.80 µs, event build 33.8 µs, raw ed25519 verify 31.7 µs): Matrix measured
-rows land between 0.79× (canonical) and 1.3× (signature verify) of Toloo; Nostr
-is 0.93× on canonical encode (parity) and 1.3× on verification. The private card
-shows the design trade-off: Signal/Olm ratchets are much cheaper per message
-(12–23 µs encrypt) but pay 0.2–0.45 ms of session setup, while Toloo's stateless
-private messages cost 83–94 µs each with no session.
+Against the same run's Toloo relay numbers (canonical 1.60 µs, verify 35.1 µs,
+parse 2.26 µs, event build 38.9 µs, raw ed25519 verify 34.8 µs), the measured
+Matrix rows range from 0.31× (parse) to 1.14× (signature verify) of Toloo;
+Nostr ranges from 0.21× to 1.20×. They are the same order of magnitude, not the
+orders-of-magnitude gaps the old estimates implied.
+
+**First-message economics.** Combining initiator setup with the first encrypt,
+and responder pre-key processing with the first decrypt:
+
+| Protocol | first send | first receive | steady enc / dec |
+|---|---|---|---|
+| Toloo | 49.7 µs (no setup) | 49.3 µs | 49.7 / 49.3 µs |
+| Olm | 127.8 µs | 105.3 µs | 15.2 / 3.3 µs |
+| Signal | 304.3 µs | 275.3 µs | 9.1 / 92.5 µs |
+| Nostr | 32.4 µs (no session) | 31.7 µs | 32.4 / 31.7 µs |
+
+Toloo is mid-pack on a new conversation and pays the same cost per message;
+Olm/Signal amortize their setup after a few messages, while Nostr is cheaper
+per message because it uses one static ECDH instead of Toloo's ephemeral key
+agreement.
+
+**Runner variance.** Hosted-runner hardware changed between the two Phase 9
+runs: every protocol absolute number moved 20–50% (e.g. Matrix verify 43.9 →
+30.7 µs). Treat the per-commit absolute values as snapshots and compare ratios
+within a single run. Cross-platform relay numbers show the same effect
+(`THROUGHPUT_AUDIT` local tables and the dashboard history are the record).
 
 ### Future protocol coverage
 
