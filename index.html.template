@@ -208,7 +208,7 @@
     font-family:var(--mono);font-size:.625rem;letter-spacing:.14em;text-transform:uppercase;
     color:var(--muted-text);margin:0 0 .2rem;
   }
-  .proto-note{margin:.7rem 0 0;font-size:.65rem;line-height:1.5;color:var(--muted-text)}
+  .proto-note{margin:.7rem 0 0;font-size:.65rem;line-height:1.5;color:var(--muted-text);text-wrap:pretty}
   .bench-card:hover .proto-fill{filter:brightness(1.06)}
   .proto-val{
     position:relative;min-width:0;font-family:var(--mono);font-size:.62rem;line-height:1.3;
@@ -222,7 +222,7 @@
   .proto-parity .proto-inline-ns{position:static;width:auto;height:auto;margin:0 .28rem 0 0;overflow:visible;clip:auto;clip-path:none;color:var(--success);font-weight:600}
   .proto-tooltip{
     display:none;position:absolute;right:0;bottom:calc(100% + 7px);z-index:20;
-    max-width:min(260px,calc(100vw - 2rem));
+    width:max-content;max-width:min(260px,calc(100vw - 2rem));
     padding:.34rem .55rem;border:1px solid var(--border-hi);border-radius:var(--radius-sm);
     background:var(--surface-2);color:var(--text);
     font-size:.6rem;white-space:normal;text-align:left;pointer-events:none;
@@ -498,14 +498,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Canonical Encode, IRC: %{PROTO_CANONICAL_IRC_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Canonical Encode, IRC: %{PROTO_CANONICAL_IRC_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_CANONICAL_IRC_PCT}%;background:%{PROTO_CANONICAL_IRC_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_CANONICAL_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_CANONICAL_IRC_NS}% ns, %{PROTO_CANONICAL_IRC_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_CANONICAL_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_CANONICAL_IRC_LABEL}%</span>%{PROTO_CANONICAL_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CANONICAL_IRC_NS}% ns · %{PROTO_CANONICAL_IRC_LABEL}%</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Canonical Encode, XMPP: %{PROTO_CANONICAL_XMPP_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Canonical Encode, XMPP: %{PROTO_CANONICAL_XMPP_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_CANONICAL_XMPP_PCT}%;background:%{PROTO_CANONICAL_XMPP_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_CANONICAL_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_CANONICAL_XMPP_NS}% ns, %{PROTO_CANONICAL_XMPP_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_CANONICAL_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_CANONICAL_XMPP_LABEL}%</span>%{PROTO_CANONICAL_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CANONICAL_XMPP_NS}% ns · %{PROTO_CANONICAL_XMPP_LABEL}%</span></span>
@@ -528,14 +528,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Envelope Verify, IRC: %{PROTO_VERIFY_IRC_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Envelope Verify, IRC: %{PROTO_VERIFY_IRC_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_VERIFY_IRC_PCT}%;background:%{PROTO_VERIFY_IRC_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_VERIFY_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_VERIFY_IRC_NS}% ns, %{PROTO_VERIFY_IRC_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_VERIFY_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_VERIFY_IRC_LABEL}%</span>%{PROTO_VERIFY_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_VERIFY_IRC_NS}% ns · %{PROTO_VERIFY_IRC_LABEL}%</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Envelope Verify, XMPP: %{PROTO_VERIFY_XMPP_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Envelope Verify, XMPP: %{PROTO_VERIFY_XMPP_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_VERIFY_XMPP_PCT}%;background:%{PROTO_VERIFY_XMPP_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_VERIFY_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_VERIFY_XMPP_NS}% ns, %{PROTO_VERIFY_XMPP_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_VERIFY_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_VERIFY_XMPP_LABEL}%</span>%{PROTO_VERIFY_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_VERIFY_XMPP_NS}% ns · %{PROTO_VERIFY_XMPP_LABEL}%</span></span>
@@ -559,14 +559,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Parse Envelope, IRC: %{PROTO_PARSE_IRC_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Parse Envelope, IRC: %{PROTO_PARSE_IRC_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_PARSE_IRC_PCT}%;background:%{PROTO_PARSE_IRC_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_PARSE_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_PARSE_IRC_NS}% ns, %{PROTO_PARSE_IRC_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_PARSE_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_PARSE_IRC_LABEL}%</span>%{PROTO_PARSE_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_PARSE_IRC_NS}% ns · %{PROTO_PARSE_IRC_LABEL}%</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Parse Envelope, XMPP: %{PROTO_PARSE_XMPP_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Parse Envelope, XMPP: %{PROTO_PARSE_XMPP_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_PARSE_XMPP_PCT}%;background:%{PROTO_PARSE_XMPP_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_PARSE_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_PARSE_XMPP_NS}% ns, %{PROTO_PARSE_XMPP_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_PARSE_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_PARSE_XMPP_LABEL}%</span>%{PROTO_PARSE_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_PARSE_XMPP_NS}% ns · %{PROTO_PARSE_XMPP_LABEL}%</span></span>
@@ -589,14 +589,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Event Build, IRC: %{PROTO_BUILD_IRC_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Event Build, IRC: %{PROTO_BUILD_IRC_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_BUILD_IRC_PCT}%;background:%{PROTO_BUILD_IRC_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_BUILD_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_BUILD_IRC_NS}% ns, %{PROTO_BUILD_IRC_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_BUILD_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_BUILD_IRC_LABEL}%</span>%{PROTO_BUILD_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_BUILD_IRC_NS}% ns · %{PROTO_BUILD_IRC_LABEL}%</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Event Build, XMPP: %{PROTO_BUILD_XMPP_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Event Build, XMPP: %{PROTO_BUILD_XMPP_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_BUILD_XMPP_PCT}%;background:%{PROTO_BUILD_XMPP_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_BUILD_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_BUILD_XMPP_NS}% ns, %{PROTO_BUILD_XMPP_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_BUILD_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_BUILD_XMPP_LABEL}%</span>%{PROTO_BUILD_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_BUILD_XMPP_NS}% ns · %{PROTO_BUILD_XMPP_LABEL}%</span></span>
@@ -620,14 +620,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Pool Query 1k, IRC: %{PROTO_POOL_IRC_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Pool Query 1k, IRC: %{PROTO_POOL_IRC_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_POOL_IRC_PCT}%;background:%{PROTO_POOL_IRC_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_POOL_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_POOL_IRC_NS}% ns, %{PROTO_POOL_IRC_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_POOL_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_POOL_IRC_LABEL}%</span>%{PROTO_POOL_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_POOL_IRC_NS}% ns · %{PROTO_POOL_IRC_LABEL}%</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Pool Query 1k, XMPP: %{PROTO_POOL_XMPP_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Pool Query 1k, XMPP: %{PROTO_POOL_XMPP_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_POOL_XMPP_PCT}%;background:%{PROTO_POOL_XMPP_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_POOL_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_POOL_XMPP_NS}% ns, %{PROTO_POOL_XMPP_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_POOL_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_POOL_XMPP_LABEL}%</span>%{PROTO_POOL_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_POOL_XMPP_NS}% ns · %{PROTO_POOL_XMPP_LABEL}%</span></span>
@@ -650,14 +650,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, IRC: %{PROTO_CRYPTO_IRC_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, IRC: %{PROTO_CRYPTO_IRC_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_CRYPTO_IRC_PCT}%;background:%{PROTO_CRYPTO_IRC_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_CRYPTO_IRC_PARITY_CLASS}%" tabindex="0" aria-label="IRC: %{PROTO_CRYPTO_IRC_NS}% ns, %{PROTO_CRYPTO_IRC_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_CRYPTO_IRC_NS}% ns</span> <span class="proto-sub">%{PROTO_CRYPTO_IRC_LABEL}%</span>%{PROTO_CRYPTO_IRC_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CRYPTO_IRC_NS}% ns · %{PROTO_CRYPTO_IRC_LABEL}%</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, XMPP: %{PROTO_CRYPTO_XMPP_NS}% ns">
+              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, XMPP: %{PROTO_CRYPTO_XMPP_NS}% ns, estimate">
                 <div class="proto-fill" style="width:%{PROTO_CRYPTO_XMPP_PCT}%;background:%{PROTO_CRYPTO_XMPP_COLOR}%"></div>
               </div>
               <span class="proto-val%{PROTO_CRYPTO_XMPP_PARITY_CLASS}%" tabindex="0" aria-label="XMPP: %{PROTO_CRYPTO_XMPP_NS}% ns, %{PROTO_CRYPTO_XMPP_LABEL}%, reference estimate"><span class="proto-inline-ns">%{PROTO_CRYPTO_XMPP_NS}% ns</span> <span class="proto-sub">%{PROTO_CRYPTO_XMPP_LABEL}%</span>%{PROTO_CRYPTO_XMPP_TAG}%<span class="proto-tooltip" aria-hidden="true">%{PROTO_CRYPTO_XMPP_NS}% ns · %{PROTO_CRYPTO_XMPP_LABEL}%</span></span>

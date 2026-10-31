@@ -208,7 +208,7 @@
     font-family:var(--mono);font-size:.625rem;letter-spacing:.14em;text-transform:uppercase;
     color:var(--muted-text);margin:0 0 .2rem;
   }
-  .proto-note{margin:.7rem 0 0;font-size:.65rem;line-height:1.5;color:var(--muted-text)}
+  .proto-note{margin:.7rem 0 0;font-size:.65rem;line-height:1.5;color:var(--muted-text);text-wrap:pretty}
   .bench-card:hover .proto-fill{filter:brightness(1.06)}
   .proto-val{
     position:relative;min-width:0;font-family:var(--mono);font-size:.62rem;line-height:1.3;
@@ -222,7 +222,7 @@
   .proto-parity .proto-inline-ns{position:static;width:auto;height:auto;margin:0 .28rem 0 0;overflow:visible;clip:auto;clip-path:none;color:var(--success);font-weight:600}
   .proto-tooltip{
     display:none;position:absolute;right:0;bottom:calc(100% + 7px);z-index:20;
-    max-width:min(260px,calc(100vw - 2rem));
+    width:max-content;max-width:min(260px,calc(100vw - 2rem));
     padding:.34rem .55rem;border:1px solid var(--border-hi);border-radius:var(--radius-sm);
     background:var(--surface-2);color:var(--text);
     font-size:.6rem;white-space:normal;text-align:left;pointer-events:none;
@@ -460,7 +460,7 @@
   <div class="shell">
 
     <section class="hero" aria-labelledby="hero-title">
-      <p class="meta-line"><span class="mono">commit c4d33639</span><span class="meta-sep" aria-hidden="true">·</span><span class="mono">2026-10-31 16:30 UTC</span></p>
+      <p class="meta-line"><span class="mono">commit c4d33639</span><span class="meta-sep" aria-hidden="true">·</span><span class="mono">2026-10-31 17:25 UTC</span></p>
       <h1 id="hero-title">Protocol <span class="grad-word">performance.</span></h1>
       <p class="lede">Toloo vs IRC, XMPP, Matrix, Signal and Nostr. Lower is better.</p>
     </section>
@@ -498,14 +498,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Canonical Encode, IRC: 150,000 ns">
+              <div class="proto-bar" role="img" aria-label="Canonical Encode, IRC: 150,000 ns, estimate">
                 <div class="proto-fill" style="width:73.5%;background:var(--amber)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="IRC: 150,000 ns, 79x slower, reference estimate"><span class="proto-inline-ns">150,000 ns</span> <span class="proto-sub">79x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">150,000 ns · 79x slower</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Canonical Encode, XMPP: 800,000 ns">
+              <div class="proto-bar" role="img" aria-label="Canonical Encode, XMPP: 800,000 ns, estimate">
                 <div class="proto-fill" style="width:100.0%;background:var(--red)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="XMPP: 800,000 ns, 424x slower, reference estimate"><span class="proto-inline-ns">800,000 ns</span> <span class="proto-sub">424x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">800,000 ns · 424x slower</span></span>
@@ -541,14 +541,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Envelope Verify, IRC: 50,000 ns">
+              <div class="proto-bar" role="img" aria-label="Envelope Verify, IRC: 50,000 ns, estimate">
                 <div class="proto-fill" style="width:39.5%;background:var(--success)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="IRC: 50,000 ns, 1.5x slower, reference estimate"><span class="proto-inline-ns">50,000 ns</span> <span class="proto-sub">1.5x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">50,000 ns · 1.5x slower</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Envelope Verify, XMPP: 300,000 ns">
+              <div class="proto-bar" role="img" aria-label="Envelope Verify, XMPP: 300,000 ns, estimate">
                 <div class="proto-fill" style="width:100.0%;background:var(--red)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="XMPP: 300,000 ns, 8.8x slower, reference estimate"><span class="proto-inline-ns">300,000 ns</span> <span class="proto-sub">8.8x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">300,000 ns · 8.8x slower</span></span>
@@ -585,14 +585,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Parse Envelope, IRC: 20,000 ns">
+              <div class="proto-bar" role="img" aria-label="Parse Envelope, IRC: 20,000 ns, estimate">
                 <div class="proto-fill" style="width:67.1%;background:var(--amber)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="IRC: 20,000 ns, 11x slower, reference estimate"><span class="proto-inline-ns">20,000 ns</span> <span class="proto-sub">11x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">20,000 ns · 11x slower</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Parse Envelope, XMPP: 150,000 ns">
+              <div class="proto-bar" role="img" aria-label="Parse Envelope, XMPP: 150,000 ns, estimate">
                 <div class="proto-fill" style="width:100.0%;background:var(--red)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="XMPP: 150,000 ns, 83x slower, reference estimate"><span class="proto-inline-ns">150,000 ns</span> <span class="proto-sub">83x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">150,000 ns · 83x slower</span></span>
@@ -635,14 +635,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Event Build, IRC: 100,000 ns">
+              <div class="proto-bar" role="img" aria-label="Event Build, IRC: 100,000 ns, estimate">
                 <div class="proto-fill" style="width:51.7%;background:var(--amber)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="IRC: 100,000 ns, 3.0x slower, reference estimate"><span class="proto-inline-ns">100,000 ns</span> <span class="proto-sub">3.0x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">100,000 ns · 3.0x slower</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Event Build, XMPP: 500,000 ns">
+              <div class="proto-bar" role="img" aria-label="Event Build, XMPP: 500,000 ns, estimate">
                 <div class="proto-fill" style="width:100.0%;background:var(--red)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="XMPP: 500,000 ns, 15x slower, reference estimate"><span class="proto-inline-ns">500,000 ns</span> <span class="proto-sub">15x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">500,000 ns · 15x slower</span></span>
@@ -679,14 +679,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Pool Query 1k, IRC: 500,000 ns">
+              <div class="proto-bar" role="img" aria-label="Pool Query 1k, IRC: 500,000 ns, estimate">
                 <div class="proto-fill" style="width:59.6%;background:var(--amber)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="IRC: 500,000 ns, 57x slower, reference estimate"><span class="proto-inline-ns">500,000 ns</span> <span class="proto-sub">57x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">500,000 ns · 57x slower</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Pool Query 1k, XMPP: 2,000,000 ns">
+              <div class="proto-bar" role="img" aria-label="Pool Query 1k, XMPP: 2,000,000 ns, estimate">
                 <div class="proto-fill" style="width:79.7%;background:var(--red)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="XMPP: 2,000,000 ns, 229x slower, reference estimate"><span class="proto-inline-ns">2,000,000 ns</span> <span class="proto-sub">229x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">2,000,000 ns · 229x slower</span></span>
@@ -715,14 +715,14 @@
             </div>
             <div class="proto-row ref">
               <span class="proto-label">IRC</span>
-              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, IRC: 45,000 ns">
+              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, IRC: 45,000 ns, estimate">
                 <div class="proto-fill" style="width:44.4%;background:var(--success)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="IRC: 45,000 ns, 1.4x slower, reference estimate"><span class="proto-inline-ns">45,000 ns</span> <span class="proto-sub">1.4x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">45,000 ns · 1.4x slower</span></span>
             </div>
             <div class="proto-row ref">
               <span class="proto-label">XMPP</span>
-              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, XMPP: 200,000 ns">
+              <div class="proto-bar" role="img" aria-label="Crypto ed25519 verify, XMPP: 200,000 ns, estimate">
                 <div class="proto-fill" style="width:100.0%;background:var(--red)"></div>
               </div>
               <span class="proto-val" tabindex="0" aria-label="XMPP: 200,000 ns, 6.3x slower, reference estimate"><span class="proto-inline-ns">200,000 ns</span> <span class="proto-sub">6.3x slower</span> <span class="proto-est">est</span><span class="proto-tooltip" aria-hidden="true">200,000 ns · 6.3x slower</span></span>
