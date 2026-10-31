@@ -126,6 +126,9 @@ jobs:
         with:
           key: bench-protocols-${{ github.sha }}
 
+      - name: Install protoc (libsignal build dependency)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Run cross-protocol benchmarks
         run: |
           set -o pipefail
@@ -333,7 +336,7 @@ jobs:
   bench-macos-arm:
     name: Benchmark macOS aarch64
     needs: prepare-repo
-    runs-on: macos-14
+    runs-on: macos-15
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -395,6 +398,7 @@ jobs:
   aggregate:
     name: Aggregate & Store Results
     needs: [prepare-repo, bench-linux-x86, bench-protocols, bench-linux-arm, bench-windows, bench-macos-x86, bench-macos-arm]
+    if: always() && needs.prepare-repo.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
