@@ -67,22 +67,20 @@ pub fn encrypt_private_with_eph(
     })
 }
 
-/// Decrypt a `PrivateCiphertext` using the recipient's X25519 private key (spec §3.5.3).
+/// Decrypt a `PrivateCiphertext` using the recipient's X25519 keypair (spec §3.5.3).
 ///
-/// Returns the original content JSON value.
-pub fn decrypt_private(c: &PrivateCiphertext, recipient_enc_priv: &str) -> Result<Value> {
+/// The public key is used only for the salt; passing it avoids recomputing it
+/// from the private key on every message.
+pub fn decrypt_private(
+    c: &PrivateCiphertext,
+    recipient_enc_priv: &str,
+    recipient_enc_pub: &str,
+) -> Result<Value> {
     let eph_pub_bytes = base64url::decode(&c.eph).context("invalid eph base64url")?;
     let rec_enc_priv_bytes =
         base64url::decode(recipient_enc_priv).context("invalid recipient enc priv base64url")?;
-    let rec_enc_pub_bytes = {
-        use x25519_dalek::{PublicKey, StaticSecret};
-        let priv_arr: [u8; 32] = rec_enc_priv_bytes
-            .as_slice()
-            .try_into()
-            .context("recipient enc priv must be 32 bytes")?;
-        let secret = StaticSecret::from(priv_arr);
-        PublicKey::from(&secret).as_bytes().to_vec()
-    };
+    let rec_enc_pub_bytes =
+        base64url::decode(recipient_enc_pub).context("invalid recipient enc pub base64url")?;
 
     // Step 1: shared secret using recipient's private key.
     let shared = x25519_shared_secret(&rec_enc_priv_bytes, &eph_pub_bytes)?;
@@ -111,7 +109,7 @@ mod tests {
     use crate::fixtures::*;
 
     use serde_json::json;
-    
+
     // Helper: derive X25519 public key from a 32-byte seed.
     fn x25519_pub_from_seed(seed_hex: &str) -> (String, String) {
         let priv_bytes: [u8; 32] = crate::hex::decode(seed_hex).unwrap().try_into().unwrap();
@@ -131,7 +129,7 @@ mod tests {
         assert_eq!(ct.eph.len(), 43, "eph must be 43-char base64url");
         assert!(!ct.encrypted.is_empty(), "encrypted must not be empty");
 
-        let decrypted = decrypt_private(&ct, &recipient.enc.priv_key)
+        let decrypted = decrypt_private(&ct, &recipient.enc.priv_key, &recipient.enc.pub_key)
             .expect("decrypt should succeed");
 
         assert_eq!(decrypted, content);
@@ -151,7 +149,7 @@ mod tests {
         *last ^= 0xff;
         ct.encrypted = base64url::encode(&bytes);
 
-        assert!(decrypt_private(&ct, &recipient.enc.priv_key).is_err());
+        assert!(decrypt_private(&ct, &recipient.enc.priv_key, &recipient.enc.pub_key).is_err());
     }
 
     #[test]
@@ -162,7 +160,7 @@ mod tests {
 
         let ct = encrypt_private(&content, &recipient.enc.pub_key).expect("encrypt should succeed");
 
-        assert!(decrypt_private(&ct, &wrong.enc.priv_key).is_err());
+        assert!(decrypt_private(&ct, &wrong.enc.priv_key, &wrong.enc.pub_key).is_err());
     }
 
     #[test]
@@ -181,11 +179,11 @@ mod tests {
 
         // Both must decrypt to same content.
         assert_eq!(
-            decrypt_private(&ct1, &recipient.enc.priv_key).unwrap(),
+            decrypt_private(&ct1, &recipient.enc.priv_key, &recipient.enc.pub_key).unwrap(),
             content
         );
         assert_eq!(
-            decrypt_private(&ct2, &recipient.enc.priv_key).unwrap(),
+            decrypt_private(&ct2, &recipient.enc.priv_key, &recipient.enc.pub_key).unwrap(),
             content
         );
     }
@@ -215,7 +213,8 @@ mod tests {
         assert_eq!(ct.eph.len(), 43);
 
         // Decryption must recover original content.
-        let decrypted = decrypt_private(&ct, &babak_enc_priv).expect("decrypt should succeed");
+        let decrypted =
+            decrypt_private(&ct, &babak_enc_priv, &babak_enc_pub).expect("decrypt should succeed");
         assert_eq!(decrypted, content);
 
         // Encrypting again with same seed must produce identical output.
@@ -237,6 +236,6 @@ mod tests {
             eph: "bad".to_owned(),
             encrypted: "dGVzdA".to_owned(),
         };
-        assert!(decrypt_private(&ct, &recipient.enc.priv_key).is_err());
+        assert!(decrypt_private(&ct, &recipient.enc.priv_key, &recipient.enc.pub_key).is_err());
     }
 }

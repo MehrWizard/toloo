@@ -684,6 +684,14 @@ implementations and feeds measured rows into the same latency cards plus a new
   steady-state ratchet/Olm operation on a fresh state, not replay.
 - Signal benchmarks use established sessions; encrypt measures ratchet output,
   not pre-key messages.
+- Responder first messages are measured separately: `signal_inbound` processes
+  a PreKeySignalMessage (inbound session establishment + decrypt) and
+  `olm_inbound` creates the inbound Olm session and decrypts. The dashboard's
+  1:1 note combines these with initiator setup + first encrypt so setup
+  amortization is visible ("first message incl. setup, send → receive").
+- Toloo `decrypt_private` now takes the recipient public key (part of the
+  identity file) instead of re-deriving it from the private key, removing one
+  X25519 base multiplication per decrypt.
 - Signal protobuf is serialized at message construction, so only
   `protocol_parse/signal` exists; there is no standalone encode.
 - Cross-protocol numbers are Linux x86 only (`bench-protocols` CI job,
@@ -699,7 +707,8 @@ implementations and feeds measured rows into the same latency cards plus a new
 | `protocol_build/{matrix,nostr}` | Event Build |
 | `protocol_crypto/matrix_verify` | Crypto (ed25519) |
 | `protocol_private/{toloo,signal,olm,nostr}_{encrypt,decrypt}` | Private Message (1:1) |
-| `protocol_private/{signal,olm}_setup` | 1:1 card footnote |
+| `protocol_private/{signal,olm}_setup` | 1:1 card first-message note (initiator) |
+| `protocol_private/{signal,olm}_inbound` | 1:1 card first-message note (responder) |
 
 IRC and XMPP rows remain estimates (tagged `est`). Matrix rows become measured
 when `platforms.protocols` exists; without it the generator emits the old

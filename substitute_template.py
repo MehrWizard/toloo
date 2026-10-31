@@ -263,14 +263,35 @@ def compute_private_card(data):
             '          <div class="proto-col">\n' + '\n'.join(rows) + '\n          </div>'
         )
 
-    notes = []
-    signal_setup = p.get('protocol_private/signal_setup', {}).get('mean_ns', 0)
-    olm_setup = p.get('protocol_private/olm_setup', {}).get('mean_ns', 0)
-    if signal_setup > 0:
-        notes.append(f'Signal setup {fmt_ns(signal_setup)}')
-    if olm_setup > 0:
-        notes.append(f'Olm setup {fmt_ns(olm_setup)}')
-    notes.append('Toloo needs no session')
+    def mean(key):
+        return p.get(key, {}).get('mean_ns', 0)
+
+    signal_setup = mean('protocol_private/signal_setup')
+    signal_encrypt = mean('protocol_private/signal_encrypt')
+    signal_inbound = mean('protocol_private/signal_inbound')
+    olm_setup = mean('protocol_private/olm_setup')
+    olm_encrypt = mean('protocol_private/olm_encrypt')
+    olm_inbound = mean('protocol_private/olm_inbound')
+    nostr_encrypt = mean('protocol_private/nostr_encrypt')
+    nostr_decrypt = mean('protocol_private/nostr_decrypt')
+
+    if signal_inbound > 0 and olm_inbound > 0:
+        note = (
+            'First message incl. setup, send → receive: '
+            f'Signal {fmt_ns(signal_setup + signal_encrypt)} → {fmt_ns(signal_inbound)} · '
+            f'Olm {fmt_ns(olm_setup + olm_encrypt)} → {fmt_ns(olm_inbound)} · '
+            f'Toloo {fmt_ns(baseline["Encrypt"])} → {fmt_ns(baseline["Decrypt"])} · '
+            f'Nostr {fmt_ns(nostr_encrypt)} → {fmt_ns(nostr_decrypt)}'
+        )
+    else:
+        parts = []
+        if signal_setup > 0:
+            parts.append(f'Signal setup {fmt_ns(signal_setup)}')
+        if olm_setup > 0:
+            parts.append(f'Olm setup {fmt_ns(olm_setup)}')
+        parts.append('Toloo needs no session')
+        note = ' · '.join(parts)
+    notes = [note]
 
     return (
         '        <article class="bench-card private-card" aria-labelledby="cat-private">\n'

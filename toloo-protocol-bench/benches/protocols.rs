@@ -170,8 +170,12 @@ fn private_benches(c: &mut Criterion) {
         b.iter_batched(
             || private::encrypt_private(&content, &recipient_pub).expect("encrypt"),
             |ciphertext| {
-                private::decrypt_private(black_box(&ciphertext), black_box(&recipient_priv))
-                    .expect("decrypt")
+                private::decrypt_private(
+                    black_box(&ciphertext),
+                    black_box(&recipient_priv),
+                    black_box(&recipient_pub),
+                )
+                .expect("decrypt")
             },
             BatchSize::SmallInput,
         )
@@ -181,6 +185,27 @@ fn private_benches(c: &mut Criterion) {
         b.iter_batched(
             || rt().block_on(signal::SignalPrepared::new()).expect("prepare"),
             |mut prepared| rt().block_on(prepared.establish()).expect("x3dh"),
+            BatchSize::SmallInput,
+        )
+    });
+
+    // Receiver's first message: PreKeySignalMessage processing establishes the
+    // inbound session and decrypts in one call.
+    group.bench_function("signal_inbound", |b| {
+        b.iter_batched(
+            || {
+                let mut pair = rt()
+                    .block_on(signal::SignalPair::new())
+                    .expect("signal pair");
+                let first = rt()
+                    .block_on(pair.encrypt(black_box(payload.as_bytes())))
+                    .expect("encrypt");
+                (pair, first)
+            },
+            |(mut pair, first)| {
+                rt().block_on(pair.decrypt(black_box(&first)))
+                    .expect("inbound decrypt")
+            },
             BatchSize::SmallInput,
         )
     });
@@ -221,6 +246,19 @@ fn private_benches(c: &mut Criterion) {
         b.iter_batched(
             matrix::OlmSetup::new,
             |setup| setup.create_outbound().expect("olm session"),
+            BatchSize::SmallInput,
+        )
+    });
+
+    // Receiver's first message: inbound session creation plus decryption.
+    group.bench_function("olm_inbound", |b| {
+        b.iter_batched(
+            || {
+                let mut pair = matrix::OlmPair::new().expect("olm pair");
+                let first = pair.encrypt(black_box(payload.as_bytes())).expect("encrypt");
+                (pair, first)
+            },
+            |(mut pair, first)| pair.decrypt(black_box(&first)).expect("inbound decrypt"),
             BatchSize::SmallInput,
         )
     });

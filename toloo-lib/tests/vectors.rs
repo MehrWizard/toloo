@@ -302,7 +302,7 @@ fn e7_decrypt_recovers_plaintext() {
         eph: v.e7_eph_pub_b64.clone(),
         encrypted: v.e7_ciphertext_b64.clone(),
     };
-    let plaintext = decrypt_private(&cipher, &babak.enc.priv_key).unwrap();
+    let plaintext = decrypt_private(&cipher, &babak.enc.priv_key, &babak.enc.pub_key).unwrap();
     assert_eq!(plaintext["body"], "Hello Babak");
 }
 
@@ -316,7 +316,7 @@ fn e7_tampered_ciphertext_fails() {
         eph: v.e7_eph_pub_b64.clone(),
         encrypted: base64url::encode(&bad_ct),
     };
-    assert!(decrypt_private(&cipher, &babak.enc.priv_key).is_err());
+    assert!(decrypt_private(&cipher, &babak.enc.priv_key, &babak.enc.pub_key).is_err());
 }
 
 // ---- §E.9 Proof of Work ----

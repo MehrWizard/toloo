@@ -308,7 +308,9 @@ against real protocol implementations:
 Measured rows feed the dashboard's latency cards and a 1:1 private-message card;
 rows tagged `est` remain reference estimates. Key generation and session setup
 are untimed (`iter_batched`), so decrypt figures are steady-state ratchet
-operations. Cross-protocol numbers run on Linux x86 only.
+operations; the 1:1 card also shows a first-message line combining initiator
+setup with responder pre-key processing, so session amortization is visible.
+Cross-protocol numbers run on Linux x86 only.
 
 ```sh
 cargo test -p toloo-protocol-bench --features protocols   # round-trip smoke tests

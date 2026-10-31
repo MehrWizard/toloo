@@ -40,6 +40,14 @@ git. Current remaining work, in priority order:
       Olm) and Nostr (Schnorr, NIP-44). Feature-gated (`protocols`), Linux x86
       CI job, measured rows + 1:1 card on the dashboard, `est` tags for the
       remaining reference estimates.
+- [x] Private-message decrypt takes the recipient public key instead of
+      re-deriving it (one less X25519 base multiplication per message).
+- [x] First-message economics: `signal_inbound` / `olm_inbound` measure
+      responder pre-key processing; the 1:1 card shows setup-inclusive
+      send → receive numbers.
+- [ ] Evaluate an X25519 SIMD/backend option (portability tradeoff for old
+      devices) if private-message latency remains a priority; matching a
+      ratchet per message would require a session layer (protocol decision).
 - [ ] Future cross-protocol coverage: measured IRC/XMPP serialization (no
       per-message crypto), and MLS/OpenMLS as the room-commit analogue.
 
