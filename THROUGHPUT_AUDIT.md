@@ -721,27 +721,34 @@ Matrix estimate row and omits the 1:1 card, so local generation from
   canonical JSON, Nostr event JSON. The rows compare the closest equivalent
   operation, not byte-identical work.
 
-### Indicative local numbers (short run, shared machine)
+### CI results (commit c4d3363, linux-x86)
+
+The `bench-protocols` job published these means on 2026-10-31:
 
 | Benchmark | Mean |
 |---|---|
-| `protocol_canonical/matrix` | ~1.1 µs |
-| `protocol_canonical/nostr` | ~1.5 µs |
-| `protocol_verify/matrix` | ~43 µs |
-| `protocol_verify/nostr` | ~38 µs |
-| `protocol_parse/matrix` | ~0.9 µs |
-| `protocol_parse/signal` | ~0.3 µs |
-| `protocol_parse/nostr` | ~0.7 µs |
-| `protocol_build/matrix` | ~26 µs |
-| `protocol_build/nostr` | ~59 µs |
-| `protocol_crypto/matrix_verify` | ~36 µs |
-| `protocol_private/toloo_encrypt` / `toloo_decrypt` | ~85 / ~119 µs |
-| `protocol_private/signal_setup` / `signal_encrypt` / `signal_decrypt` | ~0.5 ms / ~12 µs / ~140 µs |
-| `protocol_private/olm_setup` / `olm_encrypt` / `olm_decrypt` | ~0.16 ms / ~22 µs / ~4 µs |
-| `protocol_private/nostr_encrypt` / `nostr_decrypt` | ~43 / ~46 µs |
+| `protocol_canonical/matrix` | 1.49 µs |
+| `protocol_canonical/nostr` | 1.76 µs |
+| `protocol_verify/matrix` | 43.9 µs |
+| `protocol_verify/nostr` | 45.8 µs |
+| `protocol_parse/matrix` | 1.05 µs |
+| `protocol_parse/signal` | 344 ns |
+| `protocol_parse/nostr` | 689 ns |
+| `protocol_build/matrix` | 28.3 µs |
+| `protocol_build/nostr` | 77.7 µs |
+| `protocol_crypto/matrix_verify` | 40.7 µs |
+| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 83.0 / 94.1 µs |
+| `protocol_private/signal_setup` / `signal_encrypt` / `signal_decrypt` | 449 µs / 12.3 µs / 148 µs |
+| `protocol_private/olm_setup` / `olm_encrypt` / `olm_decrypt` | 194 µs / 23.1 µs / 4.45 µs |
+| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 50.4 / 49.3 µs |
 
-CI results are authoritative; the dashboard tags measured rows as untagged and
-estimates with `est`.
+Against the same run's tolOO relay numbers (canonical 1.89 µs, verify 34.2 µs,
+parse 1.80 µs, event build 33.8 µs, raw ed25519 verify 31.7 µs): Matrix measured
+rows land between 0.79× (canonical) and 1.3× (signature verify) of Toloo; Nostr
+is 0.93× on canonical encode (parity) and 1.3× on verification. The private card
+shows the design trade-off: Signal/Olm ratchets are much cheaper per message
+(12–23 µs encrypt) but pay 0.2–0.45 ms of session setup, while Toloo's stateless
+private messages cost 83–94 µs each with no session.
 
 ### Future protocol coverage
 

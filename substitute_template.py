@@ -195,7 +195,7 @@ def compute_proto_vars(data):
                 label, parity_class, op,
             ))
 
-        if not measured and 'MATRIX' in refs:
+        if 'Matrix' not in measured_names and 'MATRIX' in refs:
             ref_ns = refs['MATRIX']
             _, _, label, parity_class = ratio_parts(ref_ns, toloo_ns, 'MATRIX')
             rows.append(proto_row_html(
@@ -236,7 +236,7 @@ def compute_private_card(data):
     for group, specs in PRIVATE_ROWS.items():
         ns_values = [p.get(bench, {}).get('mean_ns', 0) for _, bench, _, _ in specs]
         log_pct = log_scale(ns_values)
-        rows = [f'            <div class="proto-subhead" role="presentation">{group}</div>']
+        rows = [f'              <div class="proto-subhead" role="presentation">{group}</div>']
         for name, bench, op, is_toloo in specs:
             ns = p.get(bench, {}).get('mean_ns', 0)
             if ns <= 0:
@@ -259,23 +259,25 @@ def compute_private_card(data):
                 rows.append(proto_row_html(
                     card, name, ns, pct, MEASURED_COLORS[name], label, parity_class, op,
                 ))
-        sections.append('\n'.join(rows))
+        sections.append(
+            '          <div class="proto-col">\n' + '\n'.join(rows) + '\n          </div>'
+        )
 
-    notes = ['Steady-state encryption (setup excluded)']
+    notes = []
     signal_setup = p.get('protocol_private/signal_setup', {}).get('mean_ns', 0)
     olm_setup = p.get('protocol_private/olm_setup', {}).get('mean_ns', 0)
     if signal_setup > 0:
-        notes.append(f'Signal X3DH setup {fmt_ns(signal_setup)}')
+        notes.append(f'Signal setup {fmt_ns(signal_setup)}')
     if olm_setup > 0:
-        notes.append(f'Olm session setup {fmt_ns(olm_setup)}')
-    notes.append('Toloo private messages are stateless and need no session.')
+        notes.append(f'Olm setup {fmt_ns(olm_setup)}')
+    notes.append('Toloo needs no session')
 
     return (
-        '        <article class="bench-card" aria-labelledby="cat-private">\n'
+        '        <article class="bench-card private-card" aria-labelledby="cat-private">\n'
         '          <div class="bench-top">\n'
         '            <h3 id="cat-private">Private Message (1:1)</h3>\n'
         '          </div>\n'
-        '          <div class="proto-rows">\n'
+        '          <div class="private-grid">\n'
         + '\n'.join(sections) + '\n'
         '          </div>\n'
         f'          <p class="proto-note">{" · ".join(notes)}</p>\n'
