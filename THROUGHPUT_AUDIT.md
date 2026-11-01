@@ -747,37 +747,36 @@ Matrix estimate row and omits the 1:1 card, so local generation from
   canonical JSON, Nostr event JSON. The rows compare the closest equivalent
   operation, not byte-identical work.
 
-### CI results (commit 002c29d, linux-x86)
+### CI results (commit d458c09, linux-x86)
 
-Third `bench-protocols` run, after the v2 static-static switch and cached
-pair/conversation-key benchmarks (24 benchmarks):
+Fourth `bench-protocols` run, with AWS-LC X25519/AEAD and the base64url/canonical
+fast paths (24 benchmarks):
 
 | Benchmark | Mean |
 |---|---|
-| `protocol_canonical/matrix` | 1.02 µs |
-| `protocol_canonical/nostr` | 1.21 µs |
-| `protocol_verify/matrix` | 45.4 µs |
-| `protocol_verify/nostr` | 45.4 µs |
-| `protocol_parse/matrix` | 1.12 µs |
-| `protocol_parse/signal` | 334 ns |
-| `protocol_parse/nostr` | 703 ns |
-| `protocol_build/matrix` | 28.3 µs |
-| `protocol_build/nostr` | 76.4 µs |
-| `protocol_crypto/matrix_verify` | 44.4 µs |
-| `protocol_private/toloo_pair_setup` | 58.5 µs |
-| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 9.8 / 20.5 µs |
-| `protocol_private/nostr_pair_setup` | 46.6 µs |
-| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 4.78 / 4.71 µs |
-| `protocol_private/signal_setup` / `signal_inbound` | 485 / 460 µs |
-| `protocol_private/signal_encrypt` / `signal_decrypt` | 13.3 / 149 µs |
-| `protocol_private/olm_setup` / `olm_inbound` | 192 / 179 µs |
-| `protocol_private/olm_encrypt` / `olm_decrypt` | 22.8 / 4.65 µs |
+| `protocol_canonical/matrix` | 1.23 µs |
+| `protocol_canonical/nostr` | 1.29 µs |
+| `protocol_verify/matrix` | 46.9 µs |
+| `protocol_verify/nostr` | 43.3 µs |
+| `protocol_parse/matrix` | 1.14 µs |
+| `protocol_parse/signal` | 332 ns |
+| `protocol_parse/nostr` | 729 ns |
+| `protocol_build/matrix` | 27.2 µs |
+| `protocol_build/nostr` | 73.0 µs |
+| `protocol_crypto/matrix_verify` | 45.5 µs |
+| `protocol_private/toloo_pair_setup` | 33.4 µs |
+| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 5.12 / 4.22 µs |
+| `protocol_private/nostr_pair_setup` | 44.8 µs |
+| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 4.83 / 4.83 µs |
+| `protocol_private/signal_setup` / `signal_inbound` | 420 / 407 µs |
+| `protocol_private/signal_encrypt` / `signal_decrypt` | 12.8 / 132 µs |
+| `protocol_private/olm_setup` / `olm_inbound` | 163 / 156 µs |
+| `protocol_private/olm_encrypt` / `olm_decrypt` | 21.0 / 5.06 µs |
 
-Against the same run's Toloo relay numbers (canonical 1.71 µs, verify 31.5 µs,
-parse 2.09 µs, event build 35.6 µs, raw ed25519 verify 30.4 µs), Matrix
-measured rows range from 0.53× (parse) to 1.46× (raw ed25519 verify); Nostr
-ranges from 0.34× (parse) to 2.15× (event build). They remain the same order
-of magnitude.
+Against the same run's Toloo relay numbers (canonical 1.61 µs, verify 35.8 µs,
+parse 2.20 µs, event build 38.5 µs, raw ed25519 verify 35.1 µs), Matrix ranges
+from 0.52× (parse) to 1.31× (raw ed25519 verify); Nostr from 0.33× (parse) to
+1.90× (event build).
 
 **First-message economics.** Pair/session setup included for the first message;
 steady state uses cached keys for Toloo/Nostr and established sessions for
@@ -785,19 +784,21 @@ Signal/Olm:
 
 | Protocol | first send | first receive | steady enc / dec |
 |---|---|---|---|
-| Toloo | 68.4 µs | 79.0 µs | 9.8 / 20.5 µs |
-| Olm | 214 µs | 179 µs | 22.8 / 4.65 µs |
-| Signal | 499 µs | 460 µs | 13.3 / 149 µs |
-| Nostr | 51.4 µs | 51.3 µs | 4.78 / 4.71 µs |
+| Toloo | 38.5 µs | 37.6 µs | 5.12 / 4.22 µs |
+| Olm | 183.7 µs | 155.5 µs | 21.0 / 5.06 µs |
+| Signal | 433.2 µs | 407.0 µs | 12.8 / 132 µs |
+| Nostr | 49.6 µs | 49.6 µs | 4.83 / 4.83 µs |
 
-Toloo's pair setup (X25519 + HKDF) is 58.5 µs versus Nostr's 46.6 µs
-(secp256k1 ECDH + HKDF). After caching, Toloo's steady state is ~2× slower to
-encrypt and ~4× slower to decrypt than Nostr; the decrypt gap is mostly the
-canonical-JSON parse plus the X25519-vs-libsecp backend, not the AEAD.
+AWS-LC's X25519 cut Toloo's pair setup from 58.5 µs (previous run) to 33.4 µs,
+now faster than Nostr's 44.8 µs. In this same run Toloo also beats Nostr on
+decrypt (4.22 vs 4.83 µs) and on a steady round trip (9.34 vs 9.66 µs); encrypt
+is ~6% slower, the remaining cost of canonical-JSON encoding. The base64url
+decoder fix alone removed a data-dependent decoder penalty that had made fresh
+ciphertexts ~12 µs more expensive than reused ones.
 
 **Runner variance.** Hosted-runner hardware changes between runs; absolute
-values moved 20–50% across Phase 9 runs. Treat each run's ratios as the
-signal and the dashboard history as the record.
+values moved 20–50% across Phase 9 runs. Treat each run's ratios as the signal
+and the dashboard history as the record.
 
 ### Future protocol coverage
 
