@@ -93,6 +93,9 @@ jobs:
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           mkdir -p dist/android
+          cargo apk build -p toloo-native --release --lib
+          cp target/release/apk/toloo-native.apk \
+            dist/android/toloo-native-universal.apk
           cargo apk build -p toloo-native --release --lib --target aarch64-linux-android
           cp target/release/apk/toloo-native.apk \
             dist/android/toloo-native-arm64-v8a.apk
@@ -287,6 +290,7 @@ jobs:
             | Linux CLI (x86_64) | `toloo-cli-linux-x86_64` | Static musl binary, zero system deps |
             | Linux CLI (aarch64) | `toloo-cli-linux-aarch64` | Static musl binary, cross-compiled |
             | Browser | `toloo-wasm.zip` | ESM JS + TypeScript types + wasm32 package (`toloo-wasm/`) |
-            | Android arm64 | `toloo-native-arm64-v8a.apk` | API 26+; experimental, signed with the `toloo` release key |
-            | Android armv7 | `toloo-native-armeabi-v7a.apk` | API 26+; experimental, signed with the `toloo` release key |
+            | Android arm64 | `toloo-native-arm64-v8a.apk` | API 26+; preferred, signed with the `toloo` release key |
+            | Android armv7 | `toloo-native-armeabi-v7a.apk` | API 26+; signed with the `toloo` release key |
+            | Android universal | `toloo-native-universal.apk` | API 26+, both ABIs; slower install |
           files: artifacts/**/*

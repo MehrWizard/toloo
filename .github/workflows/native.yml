@@ -107,6 +107,9 @@ jobs:
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           mkdir -p dist/android
+          cargo apk build -p toloo-native --release --lib
+          cp target/release/apk/toloo-native.apk \
+            dist/android/toloo-native-universal.apk
           cargo apk build -p toloo-native --release --lib --target aarch64-linux-android
           cp target/release/apk/toloo-native.apk \
             dist/android/toloo-native-arm64-v8a.apk
