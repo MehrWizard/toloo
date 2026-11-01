@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 #[cfg(not(feature = "aws-lc"))]
-use chacha20poly1305::aead::{Aead, AeadInPlace};
+use chacha20poly1305::aead::AeadInPlace;
 #[cfg(not(feature = "aws-lc"))]
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use dashmap::DashMap;

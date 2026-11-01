@@ -1,24 +1,18 @@
-// Toloo Protocol v0.2 — core protocol + stateful runtime in one crate.
-// Pure protocol modules have no IO; pool/transport/requests own state and network.
+//! Toloo Protocol v0.2 — stateful native runtime.
+//!
+//! The protocol core (envelopes, canonical JSON, crypto, identities, rules,
+//! events, discovery, private messages) lives in `toloo-core` and is
+//! re-exported here unchanged. This crate adds the I/O-bearing pieces:
+//! pool storage, transports, request handling, trust, and key storage.
 
-pub mod base64url;
-pub mod canonical;
-pub mod crypto;
-pub mod envelope;
-pub mod events;
-pub mod hex;
-pub mod ids;
-pub mod pow;
-pub mod private;
-pub mod rules;
-pub mod types;
-pub mod vectors;
-pub mod memzero;
+pub use toloo_core::{
+    base64url, canonical, crypto, discovery, envelope, events, hex, ids, memzero, pow, private,
+    rules, types, vectors,
+};
 
 #[cfg(test)]
-pub(crate) mod fixtures;
+pub(crate) use toloo_core::fixtures;
 
-pub mod discovery;
 pub mod pool;
 pub mod requests;
 pub mod transport;

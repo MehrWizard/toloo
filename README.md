@@ -5,9 +5,9 @@ Targets **Relay conformance** — the highest level defined in
 [`D-conformance.md`](../toloo-docs/D-conformance.md) §D.6.
 
 ```
-toloo/      ← This: Rust relay + Tauri desktop app     ← you are here
+toloo/      ← This: Rust relay + Tauri desktop app + wasm browser core   ← you are here
 toloo-docs/ ← Protocol specification (the contract)
-toloo-js/   ← Browser JS client (client conformance, fallback)
+toloo-js/   ← Legacy browser JS client (being replaced by toloo-wasm)
 ```
 
 ---
@@ -18,20 +18,19 @@ toloo-js/   ← Browser JS client (client conformance, fallback)
 It contains everything needed to run a relay, host rooms, and exchange messages
 — as a CLI daemon, as a library, or embedded in a native desktop app via Tauri.
 
-The companion [`toloo-js`](../toloo-js/) is a pure-JS browser client that speaks
-the same protocol over WebSocket and HTTP, intended as a fallback when the native
-Tauri shell is not available (e.g. running from a web server or a browser extension).
-Both implementations are faithful to the same spec and interoperate over the wire.
+Browser support is the same `toloo-core` compiled to WebAssembly (`toloo-wasm`),
+so there is one protocol implementation for native and web. The older
+hand-written [`toloo-js`](../toloo-js/) client is legacy and is being retired.
 
 ---
 
 ## Project layout
 
 ```
-toloo-lib/            Protocol + runtime — one crate
+toloo-core/           Portable protocol core — no I/O, native + wasm
   src/
     types.rs          All wire types: Envelope, DatumBody, LocalNode, LocalRoom,
-                        EndpointDescriptor, RelayConfig, RelayMetrics, …
+                        EndpointDescriptor, …
     base64url.rs      RFC 4648 §5 encode/decode
     canonical.rs      RFC 8785 canonical JSON (for signing + datum_id)
     crypto.rs         Ed25519 sign/verify, X25519 ECDH, SHA-256, HKDF,
@@ -42,8 +41,12 @@ toloo-lib/            Protocol + runtime — one crate
     pow.rs            Proof-of-Work compute + verify
     private.rs        private.message v2 E2E (static-static X25519, cached pair keys)
     rules.rs          room rule set parsing and evaluation
-    keystore.rs       Argon2id + AEAD encrypted-at-rest key wrapping
     vectors.rs        deterministic test vector computation [REF]
+    discovery.rs      toloo: URI and .toloo file encode/decode
+    fixtures.rs       deterministic identities/events (test/fixtures feature)
+
+toloo-lib/            Native stateful runtime — depends on toloo-core
+  src/
     pool.rs           Append-only event log + in-memory indexes; membership
                         reconstruction; TOFU pins, blocklist, blobs, pruning
     transport/
@@ -56,9 +59,19 @@ toloo-lib/            Protocol + runtime — one crate
                         room.compare, pool.exchange, node.peers, node.rooms,
                         system.fetch, blob.fetch, room.summary;
                         room authority + auto-commit
-    discovery.rs      toloo: URI and .toloo file encode/decode
+    trust.rs          TOFU trust levels, side attestations
+    keystore.rs       Argon2id + AEAD encrypted-at-rest key wrapping
   tests/
     vectors.rs        cross-implementation test vector assertions
+
+toloo-wasm/           Browser bindings — same core compiled to wasm32
+  src/
+    contract.rs       JSON-in/JSON-out contract (identity, envelopes, verify,
+                        canonical, private messages, pair-key cache)
+    bindings.rs       Thin wasm-bindgen exports
+  tests/
+    wasm.rs           wasm-bindgen-test suite (Node)
+  build.sh            Release build + generated JS/TS package in pkg/
 
 toloo-cli/            Binary — headless relay and scripting
   src/
@@ -77,8 +90,9 @@ toloo-app/            Desktop + Android app — Tauri v2
 
 Dependency chain:
 ```
-toloo-lib  ←  toloo-cli
-           ←  toloo-app/src-tauri
+toloo-core  ←  toloo-lib  ←  toloo-cli
+            ↑             ←  toloo-app/src-tauri
+            ←  toloo-wasm (wasm32-unknown-unknown)
 ```
 
 ---
@@ -130,6 +144,21 @@ cargo build                    # dev build (all crates)
 cargo build --release          # optimized
 cargo test                     # all unit + integration tests
 ```
+
+Browser package (`wasm32`):
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.126 --locked
+
+cargo test -p toloo-wasm --target wasm32-unknown-unknown   # wasm test suite (Node)
+./toloo-wasm/build.sh                                      # → toloo-wasm/pkg/ (JS + .d.ts + .wasm)
+```
+
+`toloo-wasm` has no native I/O or TLS: the browser remains a client, and AWS-LC
+is native-only, so wasm uses the dalek/RustCrypto path. WebAssembly is loaded
+from the generated `pkg/` by the web UI; hand-written protocol JavaScript is
+retired.
 
 CLI — platform-specific static builds:
 
@@ -360,21 +389,25 @@ own single-threaded Tokio runtime and an in-memory pool.
 A node can host its own relay in-app, generating a `toloo://` invite link that
 others can import to reach it over LAN or the internet.
 
-### Browser (toloo-js)
+### Browser (wasm)
 
-When running outside Tauri — in a browser, a web app, or a browser extension —
-the same protocol is spoken by [`toloo-js`](../toloo-js/). It connects to an
-external relay over `wss://` or `https://`. All crypto is implemented in pure
-JS using the WebCrypto API. There is no local relay in this mode; the browser
-is a pure client.
+When running outside Tauri — in a browser or a web app — protocol logic is the
+same `toloo-core` compiled to WebAssembly by `toloo-wasm`. The browser UI loads
+the generated `pkg/toloo_wasm.js`, which exposes the JSON contract (identity,
+signing, verification, canonical JSON, private messages). A browser cannot host
+a network relay, so this mode connects to an external relay over `wss://` or
+`https://` and remains a pure client.
 
 ```
 ┌────────────────────┐       wss:// or https://      ┌──────────────┐
 │  Browser           │ ──────────────────────────►   │  toloo       │
-│    toloo.js        │           TLS                 │  relay       │
-│    WebCrypto       │ ◄──────────────────────────   │  (Rust)      │
+│  SolidJS UI        │           TLS                 │  relay       │
+│  toloo-wasm (core) │ ◄──────────────────────────   │  (Rust)      │
 └────────────────────┘                               └──────────────┘
 ```
+
+The wasm build uses the dalek/RustCrypto crypto path (AWS-LC is not available
+on wasm) and `getrandom`'s browser/Node backend. Native builds keep AWS-LC.
 
 ---
 

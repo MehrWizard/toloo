@@ -20,10 +20,24 @@ git. Current remaining work, in priority order:
       CLI and app clients behind censored networks
 - [ ] Batched fsync policy in the pool append path (crash-durability polish)
 
+## Shared core & browser (2026-11-01)
+
+- [x] Extract portable `toloo-core` (no I/O, no tokio, no TLS) and make
+      `toloo-lib` re-export it; native runtime keeps pool/transport/requests/
+      trust/keystore. `toloo-lib` crypto deps are now feature-gated.
+- [x] `toloo-wasm` release target: JSON contract, `wasm-bindgen` exports,
+      `PairKeyCache`, wasm32 tests (Node) and a generated-package smoke test.
+- [x] Core CI workflow: native workspace tests/checks + wasm tests/build.
+- [ ] SolidJS contract-driven web UI consuming `toloo-wasm/pkg`;
+      retire `toloo-js` (do not migrate it to v2).
+- [ ] Wire `PairKeyCache` into the browser/native DM client paths (exposed in
+      wasm, still not used by a production client).
+- [ ] Benchmarks on real target devices (older phones) and a SIMD-vs-scalar
+      wasm comparison.
+
 ## Verification
 
-- [ ] `toloo-js` `selfTest()` against the regenerated Appendix E vectors
-      (the JS client still has zero tests)
+- [ ] Web UI test suite against the wasm contract (replaces `toloo-js` tests)
 
 ## CI & Benchmarking (Complete)
 
@@ -48,11 +62,11 @@ git. Current remaining work, in priority order:
 - [x] First-message economics: `signal_inbound` / `olm_inbound` measure
       responder pre-key processing; the 1:1 card shows setup-inclusive
       send → receive numbers.
-- [ ] Migrate `toloo-js` (`src/private.ts`, callers, bundles) to the v2
-      static-static payload; until then the JS client cannot decrypt new
-      Rust private messages. Spec docs `3-cryptography`, `4-identity`,
-      `6-events`, `B-wire-examples`, `C-security`, `D-conformance` are updated;
-      a deterministic v2 vector is still needed in `E-test-vectors`.
+- [ ] Retire `toloo-js` instead of migrating it: the browser client moves to
+      `toloo-wasm` (v2 native) + SolidJS. Spec docs `3-cryptography`,
+      `4-identity`, `6-events`, `B-wire-examples`, `C-security`,
+      `D-conformance` are updated; a deterministic v2 vector is still needed
+      in `E-test-vectors`.
 - [x] Faster crypto backend: X25519, ChaCha20-Poly1305, and Ed25519 signing use
       `aws-lc-rs` (assembly + runtime CPU detection; already linked via rustls)
       with the dalek/RustCrypto fallback when TLS/aws-lc is disabled. Ed25519

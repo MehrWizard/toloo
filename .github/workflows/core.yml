@@ -1,0 +1,55 @@
+name: Core
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native
+      - name: Test core and runtime
+        run: cargo test -p toloo-core -p toloo-lib -p toloo-wasm
+      - name: Check all workspace targets
+        run: cargo check --workspace --all-targets
+
+  wasm:
+    name: Wasm tests and package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+      # Must match the pinned wasm-bindgen crate version.
+      - uses: cargo-bins/cargo-binstall@v1.17.5
+        env:
+          BINSTALL_VERSION: "1.17.5"
+      - name: Install wasm-bindgen-cli
+        run: cargo binstall --no-confirm wasm-bindgen-cli --version 0.2.126
+      - name: Run wasm tests
+        run: cargo test -p toloo-wasm --target wasm32-unknown-unknown
+      - name: Build browser package
+        run: ./toloo-wasm/build.sh
+      - name: Smoke-test generated package
+        run: node toloo-wasm/test-package.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toloo-wasm-pkg
+          path: toloo-wasm/pkg/

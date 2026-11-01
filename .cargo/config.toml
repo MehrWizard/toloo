@@ -1,0 +1,5 @@
+# getrandom 0.3 needs an explicit backend when targeting wasm32. Native
+# targets ignore this section entirely.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+runner = "wasm-bindgen-test-runner"

@@ -1,11 +1,10 @@
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::Deserialize;
 use serde_json::Value;
-use simd_json;
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use crate::base64url;
 use crate::canonical::{
@@ -400,10 +399,13 @@ pub fn parse_envelope_ref(value: &Value) -> Result<Envelope> {
 
 /// Zero-copy parse and validate an envelope from JSON bytes.
 ///
-/// Uses simd-json for parsing without intermediate string allocation.
+/// Uses simd-json when the `simd` feature is enabled, serde_json otherwise.
 /// Takes a mutable byte slice (simd-json may reorder bytes for lazy parsing).
 pub fn parse_envelope_bytes(bytes: &mut [u8]) -> Result<Envelope> {
+    #[cfg(feature = "simd")]
     let value: Value = simd_json::from_slice(bytes).context("envelope JSON parse failed")?;
+    #[cfg(not(feature = "simd"))]
+    let value: Value = serde_json::from_slice(bytes).context("envelope JSON parse failed")?;
     parse_envelope(value)
 }
 

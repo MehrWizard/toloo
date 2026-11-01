@@ -298,7 +298,7 @@ fn parse_target(v: &Value) -> (RuleTarget, bool) {
     }
 }
 
-pub(crate) fn string_array(v: Option<&Value>) -> Vec<String> {
+pub fn string_array(v: Option<&Value>) -> Vec<String> {
     v.and_then(Value::as_array)
         .map(|arr| {
             arr.iter()

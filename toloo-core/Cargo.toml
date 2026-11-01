@@ -1,0 +1,41 @@
+[package]
+name = "toloo-core"
+version = "0.1.0"
+edition = "2021"
+description = "Toloo Protocol v0.2 — portable protocol core (no I/O; native + wasm)"
+
+[lib]
+name = "toloo_core"
+path = "src/lib.rs"
+
+[dependencies]
+# Cryptography (audited crates). Native builds optionally use aws-lc-rs;
+# wasm builds always take the pure-Rust path.
+getrandom        = "0.3"
+ed25519-dalek    = { version = "3", default-features = false, features = ["fast", "zeroize", "signature", "alloc", "batch"] }
+x25519-dalek     = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
+aws-lc-rs        = { version = "1", optional = true }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+hmac             = "0.12"
+sha2             = "0.10"
+
+# Serialization
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+simd-json  = { version = "0.8", features = ["allow-non-simd", "serde_impl"], optional = true }
+
+# Utilities
+anyhow   = "1"
+dashmap  = "6.2.1"
+web-time = "1"
+
+[features]
+default = ["simd"]
+# Native SIMD JSON parsing path; off for wasm builds.
+simd = ["dep:simd-json"]
+# Assembly-accelerated X25519/ChaCha20-Poly1305/Ed25519 signing; native only.
+aws-lc = ["dep:aws-lc-rs"]
+# Expose deterministic test fixtures to other crates.
+fixtures = []
+# Target wasm32 with the browser JS RNG.
+wasm = ["getrandom/wasm_js"]

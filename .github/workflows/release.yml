@@ -476,11 +476,55 @@ jobs:
           path: dist/
 
   # ────────────────────────────────────────────────────────────────────
+  # Browser package — toloo-core compiled to wasm32 + JS/TS glue
+  # ────────────────────────────────────────────────────────────────────
+  build-wasm:
+    name: Build (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+
+      - uses: cargo-bins/cargo-binstall@v1.17.5
+        env:
+          BINSTALL_VERSION: "1.17.5"
+      - name: Install wasm-bindgen-cli
+        run: cargo binstall --no-confirm wasm-bindgen-cli --version 0.2.126
+
+      - name: Build browser package
+        run: ./toloo-wasm/build.sh
+
+      - name: Smoke-test generated package
+        run: node toloo-wasm/test-package.mjs
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp -r toloo-wasm/pkg dist/toloo-wasm
+          cd dist && zip -r toloo-wasm.zip toloo-wasm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: dist/
+
+  # ────────────────────────────────────────────────────────────────────
   # Create GitHub Release — runs after all jobs complete
   # ────────────────────────────────────────────────────────────────────
   release:
     name: Create Release
-    needs: [check-android-signing, build, build-cli]
+    needs: [check-android-signing, build, build-cli, build-wasm]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
@@ -509,6 +553,7 @@ jobs:
             | Windows x86_64 | `.msi` / `.exe` | Standard 64-bit |
             | Windows aarch64 | `.msi` | Surface / Snapdragon laptops |
             | Android | `*-release.apk` | API 24+, universal APK — full native backend |
+            | Browser | `toloo-wasm.zip` | ESM JS + TypeScript types + wasm32 package (`toloo-wasm/`) |
 
             **Android sideload**: Settings → Security → Install unknown apps → enable for your file manager, then open the APK.
             **Signing**: Android APKs are only included when `KEYSTORE_BASE64` repo secret is configured.
