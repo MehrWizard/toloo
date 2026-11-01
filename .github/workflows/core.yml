@@ -20,9 +20,8 @@ jobs:
           key: native
       - name: Test core and runtime
         run: cargo test -p toloo-core -p toloo-lib -p toloo-wasm
-      # Tauri (toloo-app) needs GTK/WebKit system libraries; the release
-      # workflow builds it. This job covers the portable core, runtime, CLI,
-      # and wasm crates.
+      # Native Slint builds run in native.yml. This job covers the portable
+      # core, runtime, CLI, and wasm crates.
       - name: Check all targets
         run: cargo check -p toloo-core -p toloo-lib -p toloo-cli -p toloo-wasm --all-targets
 
@@ -52,7 +51,20 @@ jobs:
         run: ./toloo-wasm/build.sh
       - name: Smoke-test generated package
         run: node toloo-wasm/test-package.mjs
+      - name: Install web dependencies
+        working-directory: toloo-web
+        run: npm ci
+      - name: Test web client
+        working-directory: toloo-web
+        run: npm test
+      - name: Build web client
+        working-directory: toloo-web
+        run: npm run build
       - uses: actions/upload-artifact@v4
         with:
           name: toloo-wasm-pkg
           path: toloo-wasm/pkg/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toloo-web-dist
+          path: toloo-web/dist/

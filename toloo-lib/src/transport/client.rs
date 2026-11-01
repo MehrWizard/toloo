@@ -166,12 +166,28 @@ fn build_pool_exchange_request(node: &LocalNode, config: &PoolExchangeConfig) ->
         .map(|e| serde_json::to_value(e))
         .collect::<Result<Vec<_>, _>>()?;
 
+    // relay schema: want.rooms is a string array plus global after/limit.
+    let rooms: Vec<&str> = config
+        .want_rooms
+        .iter()
+        .map(|w| w.room_pub.as_str())
+        .collect();
+    let after = config
+        .want_rooms
+        .iter()
+        .map(|w| w.after)
+        .min()
+        .unwrap_or(0);
+    let limit = config
+        .want_rooms
+        .iter()
+        .map(|w| w.limit)
+        .max()
+        .unwrap_or(200);
     let want = serde_json::json!({
-        "rooms": config.want_rooms.iter().map(|w| serde_json::json!({
-            "room": w.room_pub,
-            "after": w.after,
-            "limit": w.limit,
-        })).collect::<Vec<_>>(),
+        "rooms": rooms,
+        "after": after,
+        "limit": limit,
     });
 
     make_envelope("pool.exchange", Some(serde_json::json!({

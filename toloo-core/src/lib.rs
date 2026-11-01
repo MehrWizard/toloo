@@ -13,6 +13,7 @@ pub mod envelope;
 pub mod events;
 pub mod hex;
 pub mod ids;
+pub mod membership;
 pub mod memzero;
 pub mod pow;
 pub mod private;

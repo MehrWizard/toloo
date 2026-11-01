@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"Default Toloo app capabilities","local":true,"windows":["main"],"permissions":["core:default","notification:default"]}}

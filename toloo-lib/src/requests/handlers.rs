@@ -92,7 +92,17 @@ fn handle_events_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
     let limit = clamp_limit(c.get("limit").and_then(Value::as_u64));
 
     let room_refs: Vec<&str> = rooms.iter().map(String::as_str).collect();
-    let entries = pool.get_wanted(&room_refs, &[], after, limit)?;
+    let mut entries = pool.get_wanted(&room_refs, &[], after, limit)?;
+    // Key holders discover uncommitted events through sync (§7.7.3).
+    let mut remaining = limit.saturating_sub(entries.len());
+    for room in &rooms {
+        if remaining == 0 {
+            break;
+        }
+        let pending = pool.get_pending(room, &[], remaining)?;
+        remaining = remaining.saturating_sub(pending.len());
+        entries.extend(pending);
+    }
     Ok(envelopes_json_bytes(entries))
 }
 
@@ -277,6 +287,26 @@ fn handle_pool_exchange(
                 && !pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
             {
                 responses.push(envelope_to_json_bytes(&entry.env));
+            }
+        }
+
+        // Key holders poll for uncommitted room events via pool.exchange.
+        let mut remaining = limit.saturating_sub(responses.len());
+        for room in &rooms {
+            if remaining == 0 {
+                break;
+            }
+            for entry in pool.get_pending(room, &type_refs, remaining)? {
+                if remaining == 0 {
+                    break;
+                }
+                if offered_ids.contains(entry.id.as_ref())
+                    || pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
+                {
+                    continue;
+                }
+                responses.push(envelope_to_json_bytes(&entry.env));
+                remaining -= 1;
             }
         }
     }
@@ -910,6 +940,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_returns_uncommitted_room_events_for_key_holders() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let author = mk_node();
+        let requester = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let message =
+            make_room_message(&author, &room.sig.pub_key, 1, "pending", vec![]).unwrap();
+        let offer = make_request(
+            &author,
+            "pool.exchange",
+            json!({ "offer": [serde_json::to_value(&message).unwrap()], "want": {"rooms": []} }),
+        );
+        handle_request(offer, &pool, &config).await.unwrap();
+
+        let expected = datum_id(&message);
+        let exchange = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "offer": [],
+                "want": {"rooms": [room.sig.pub_key], "after": 0, "limit": 100}
+            }),
+        );
+        let responses = handle_request(exchange, &pool, &config).await.unwrap();
+        let returned = responses
+            .iter()
+            .filter_map(|value| parse_envelope_response(value).ok())
+            .find(|envelope| innermost(envelope).d.t == "room.message");
+        assert_eq!(
+            returned.map(|envelope| datum_id(&envelope)),
+            Some(expected.clone()),
+            "pool.exchange must expose uncommitted events to key holders"
+        );
+
+        let sync = make_request(
+            &requester,
+            "events.sync",
+            json!({"rooms": [room.sig.pub_key], "after": 0, "limit": 100}),
+        );
+        let responses = handle_request(sync, &pool, &config).await.unwrap();
+        let found = responses.iter().any(|value| {
+            parse_envelope_response(value)
+                .map(|envelope| datum_id(&envelope) == expected)
+                .unwrap_or(false)
+        });
+        assert!(found, "events.sync must expose uncommitted room events");
+    }
+
+    #[tokio::test]
     async fn pool_exchange_excludes_offered_ids() {
         let pool = Arc::new(Pool::memory().unwrap());
         let relay = mk_node();
@@ -963,7 +1045,7 @@ mod tests {
 
         let msg2 = make_room_message(&node, &room.sig.pub_key, 1, "world", vec![]).unwrap();
         // Explicit distinct commit timestamps; wall-clock milliseconds can collide.
-        let tc2 = tc1 + 1;
+        let tc2 = (tc1 + 1).max(msg2.d.ts);
         let c2 = wrap_commit(msg2, &room, tc2).unwrap();
         pool.put(&c2).unwrap();
 

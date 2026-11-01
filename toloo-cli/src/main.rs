@@ -125,7 +125,7 @@ enum Commands {
         offer: Option<String>,
     },
 
-    /// Start the relay server (WebSocket).
+    /// Start the relay server (WebSocket and optional HTTP/CORS).
     ///
     /// Requires a node identity via --identity or env vars:
     ///   TOLOO_SIG_PUB, TOLOO_SIG_PRIV, TOLOO_ENC_PUB, TOLOO_ENC_PRIV
@@ -136,6 +136,13 @@ enum Commands {
         /// WebSocket port (plain JSON — use behind a TLS terminator for wss).
         #[arg(long, default_value = "7700")]
         port: u16,
+        /// Optional plain HTTP port (browser CORS enabled; use behind a TLS
+        /// terminator for https).
+        #[arg(long)]
+        http_port: Option<u16>,
+        /// Path served by the HTTP endpoint.
+        #[arg(long, default_value = "/toloo")]
+        http_path: String,
         /// Base path for the event pool (writes <path>.jsonl + <path>.meta.json +
         /// <path>.blobs/ + <path>.cold.jsonl). Omit for in-memory (data lost on exit).
         #[arg(long)]
@@ -188,8 +195,8 @@ async fn main() -> Result<()> {
         Commands::Sync { relay, room, after, identity, output, offer } => {
             cmd_sync(relay, room, after, identity, output, offer).await
         }
-        Commands::Relay { host, port, db, identity, room_key, max_resident_blocks, tail_blocks_to_keep, retention_public_days, retention_personal_days, retention_private_days } => {
-            cmd_relay(host, port, db, identity, room_key, max_resident_blocks, tail_blocks_to_keep, retention_public_days, retention_personal_days, retention_private_days).await
+        Commands::Relay { host, port, http_port, http_path, db, identity, room_key, max_resident_blocks, tail_blocks_to_keep, retention_public_days, retention_personal_days, retention_private_days } => {
+            cmd_relay(host, port, http_port, http_path, db, identity, room_key, max_resident_blocks, tail_blocks_to_keep, retention_public_days, retention_personal_days, retention_private_days).await
         }
         Commands::Vectors => cmd_vectors(),
     }
@@ -475,6 +482,8 @@ async fn cmd_sync(
 async fn cmd_relay(
     host:                 String,
     port:                 u16,
+    http_port:            Option<u16>,
+    http_path:            String,
     db:                   Option<PathBuf>,
     identity:             Option<PathBuf>,
     room_key_paths:       Vec<PathBuf>,
@@ -519,9 +528,21 @@ async fn cmd_relay(
     let ws_addr: std::net::SocketAddr =
         format!("{host}:{port}").parse().context("invalid WS address")?;
 
-    let endpoints = vec![
+    let mut endpoints = vec![
         EndpointConfig { addr: ws_addr, proto: "ws".to_owned(), path: None, tls: None },
     ];
+    if let Some(http_port) = http_port {
+        let http_addr: std::net::SocketAddr = format!("{host}:{http_port}")
+            .parse()
+            .context("invalid HTTP address")?;
+        endpoints.push(EndpointConfig {
+            addr: http_addr,
+            proto: "http".to_owned(),
+            path: Some(http_path.clone()),
+            tls: None,
+        });
+        eprintln!("[toloo] HTTP {http_addr} (path: {http_path})");
+    }
 
     eprintln!("[toloo] node: {}", node.sig.pub_key);
     eprintln!("[toloo] WS  {ws_addr}");

@@ -10,9 +10,28 @@ git. Current remaining work, in priority order:
       ranges from `<base>.jsonl` on demand) + tail-only replay on open
 - [ ] Default retention per room class (public rooms: hours–days;
       personal: months) applied when a room defines no rules
-- [ ] `app.js`: background rooms as sync cursors only (no live ingest)
-- [ ] `app.js`: per-room LRU tail windows + batched foreground ingest
-- [ ] `app.js`: virtualized message list (render visible rows only)
+- [ ] Client UI: background rooms as sync cursors only (no live ingest)
+- [ ] Client UI: per-room LRU tail windows + batched foreground ingest
+- [ ] Client UI: virtualized message list (render visible rows only)
+
+## Native Slint client (2026-11-01)
+
+- [x] `toloo-native` crate: Slint UI + engine thread over `toloo-lib`; native
+      WS/HTTP transports, local Pool, config persistence, room authority.
+- [x] Desktop build and engine tests (identity, restore, create room, send,
+      committed status, WS and HTTP relay sync).
+- [x] `native.yml`: desktop release builds + experimental Android APK job;
+      release workflow now ships native binaries instead of Tauri.
+- [x] Remove Tauri (`toloo-app/`) from workspace, CI, release, and docs.
+- [ ] Validate Android APK on a real API 26 device; verify AWS-LC/Skia
+      cross-compilation, IME, TLS, renderer choice, APK size and RSS.
+- [ ] Android release signing/AAB and store packaging.
+- [ ] Native feature parity: embedded relay hosting, private messages/UI,
+      discovery import/export, keystore/encrypted identity, blobs, moderation,
+      notifications and background sync (foreground service).
+- [ ] iOS feasibility spike with the pinned Slint version.
+- [ ] Android API 24–25 alternative is explicitly out of scope for Slint;
+      it would require native Android UI + FFI or another WebView shell.
 
 ## Networking
 
@@ -27,17 +46,44 @@ git. Current remaining work, in priority order:
       trust/keystore. `toloo-lib` crypto deps are now feature-gated.
 - [x] `toloo-wasm` release target: JSON contract, `wasm-bindgen` exports,
       `PairKeyCache`, wasm32 tests (Node) and a generated-package smoke test.
+- [x] Wasm client protocol surface: all event builders, all request builders,
+      chain verification/batching, private v2 with cached pair keys,
+      membership (shared core algorithm), room rules, discovery URI/file,
+      PoW solve/verify, hashing/base64, envelope metadata.
 - [x] Core CI workflow: native workspace tests/checks + wasm tests/build.
-- [ ] SolidJS contract-driven web UI consuming `toloo-wasm/pkg`;
-      retire `toloo-js` (do not migrate it to v2).
-- [ ] Wire `PairKeyCache` into the browser/native DM client paths (exposed in
-      wasm, still not used by a production client).
+- [x] SolidJS browser client (`toloo-web/`): onboarding, identity persistence,
+      relay settings, create/join rooms, verified sync, IndexedDB envelope
+      store, membership display, chat/send, invites, responsive UI.
+- [x] Browser store layer (IndexedDB) and JS transport (WebSocket/HTTP) using
+      wasm `envelopeInfo`/`buildMembership`/`RoomRules`. Transport policy:
+      `https:` pages use only `https/wss`; `http:` pages use only `http/ws`;
+      enforced in the adapter + covered by unit tests.
+- [x] Relay conformance fix: `pool.exchange`/`events.sync` now return
+      uncommitted room events so browser key holders can discover and commit
+      pending joins/messages (§7.7.3).
+- [x] Browser-compatible HTTP relay endpoint: CORS preflight/response headers,
+      plus `toloo relay --http-port <port> --http-path <path>` for local HTTP
+      testing.
+- [ ] Retire `toloo-js` (do not migrate it to v2).
+- [ ] Web client: direct-message UI using `PairKeyCache.makeMessage/openMessage`.
+- [ ] Web client: encrypted-at-rest keystore for identity/room keys (currently
+      plain IndexedDB).
+- [ ] Web client: notifications, offline/service-worker shell, message
+      reactions/edits UI, blob upload/download UI, moderation UI.
+- [ ] Deployment CSP for `toloo-web` (`connect-src` scheme-paired).
+- [ ] Index uncommitted room events instead of scanning all shards in
+      `get_pending` (native performance; key-holder polling path).
+- [ ] Blob split/reassemble helpers in wasm (hashing + `makeRoomBlob` exist;
+      blob design itself remains postponed).
 - [ ] Benchmarks on real target devices (older phones) and a SIMD-vs-scalar
       wasm comparison.
 
 ## Verification
 
-- [ ] Web UI test suite against the wasm contract (replaces `toloo-js` tests)
+- [x] Transport unit tests (`toloo-web/src/lib/transport.test.ts`), web build
+      in core CI.
+- [ ] Automated browser E2E tests (identity → relay → create/join → send →
+      commit) replacing ad-hoc local testing.
 
 ## CI & Benchmarking (Complete)
 
@@ -48,6 +94,8 @@ git. Current remaining work, in priority order:
 - [x] Static HTML benchmark visualization (`index.html.template` + `substitute_template.py`)
       — log-scale bars, parity detection, CSS hover tooltips, equal-width columns
 - [x] Cross-repo push to `MehrWizard/toloo-benchmarks` with per-commit results
+- [x] Opt-in same-host A/B (`baseline_ref` input) on linux-x86, with a Criterion
+      comparison report in the job summary and artifact
 - [x] Baseline comparison with 10%/20% regression thresholds (non-blocking)
 - [x] Cross-protocol benchmarks: `toloo-protocol-bench` measures Signal
       (libsignal X3DH + Double Ratchet), Matrix (ruma signatures, vodozemac

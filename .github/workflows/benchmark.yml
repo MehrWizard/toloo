@@ -15,6 +15,10 @@ on:
         description: 'Number of benchmark iterations'
         required: false
         default: '10'
+      baseline_ref:
+        description: 'Optional baseline ref/SHA for same-host A/B (linux-x86 only)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -63,11 +67,43 @@ jobs:
       - name: Install criterion deps
         run: sudo apt-get update && sudo apt-get install -y gnuplot
 
+      # Optional same-host A/B: measure the baseline and the candidate in the
+      # same job so runner/CPU variance cancels out. Linux-x86 only.
+      - name: Checkout A/B baseline
+        id: ab_checkout
+        if: github.event.inputs.baseline_ref != ''
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.baseline_ref }}
+          path: ab-baseline
+
+      - name: Run A/B baseline benchmarks
+        id: ab_bench
+        if: steps.ab_checkout.outcome == 'success'
+        continue-on-error: true
+        working-directory: ab-baseline/toloo-lib
+        run: |
+          set -o pipefail
+          cargo bench --bench canonical_bench 2>&1 | tee ../../ab-baseline-results.txt
+
       - name: Run benchmarks
         working-directory: toloo-lib
         run: |
           set -o pipefail
           cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+
+      - name: Compare A/B results (same host)
+        if: steps.ab_bench.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 .github/scripts/compare_criterion.py \
+            ab-baseline/target/criterion \
+            target/criterion \
+            --threshold 10 \
+            --markdown ab-comparison.md \
+            --json ab-comparison.json
+          cat ab-comparison.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Debug benchmark output
         if: always()
@@ -103,6 +139,16 @@ jobs:
           path: |
             toloo-lib/bench-results.txt
             toloo-lib/bench-json/
+
+      - name: Upload A/B comparison
+        if: steps.ab_bench.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-ab-linux-x86
+          path: |
+            ab-comparison.md
+            ab-comparison.json
+            ab-baseline-results.txt
 
   # ────────────────────────────────────────────────────────────────────
   # Cross-protocol comparison (Signal, Matrix, Nostr) — Linux x86 only.
@@ -442,6 +488,10 @@ jobs:
 
           for platform_dir in Path("artifacts").iterdir():
               if not platform_dir.is_dir():
+                  continue
+              # A/B comparison artifacts are reports, not platform results.
+              if not (platform_dir / "bench-json").is_dir():
+                  print(f"Skipping non-result artifact: {platform_dir.name}")
                   continue
               platform = platform_dir.name.replace("bench-", "")
               results["platforms"][platform] = {}

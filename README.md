@@ -5,7 +5,7 @@ Targets **Relay conformance** — the highest level defined in
 [`D-conformance.md`](../toloo-docs/D-conformance.md) §D.6.
 
 ```
-toloo/      ← This: Rust relay + Tauri desktop app + wasm browser core   ← you are here
+toloo/      ← This: Rust relay + Slint native app + wasm browser core   ← you are here
 toloo-docs/ ← Protocol specification (the contract)
 toloo-js/   ← Legacy browser JS client (being replaced by toloo-wasm)
 ```
@@ -16,7 +16,8 @@ toloo-js/   ← Legacy browser JS client (being replaced by toloo-wasm)
 
 `toloo` is the reference implementation of the Toloo messaging protocol.
 It contains everything needed to run a relay, host rooms, and exchange messages
-— as a CLI daemon, as a library, or embedded in a native desktop app via Tauri.
+— as a CLI daemon, as a library, in the native Slint client, or in the browser
+client.
 
 Browser support is the same `toloo-core` compiled to WebAssembly (`toloo-wasm`),
 so there is one protocol implementation for native and web. The older
@@ -66,50 +67,64 @@ toloo-lib/            Native stateful runtime — depends on toloo-core
 
 toloo-wasm/           Browser bindings — same core compiled to wasm32
   src/
-    contract.rs       JSON-in/JSON-out contract (identity, envelopes, verify,
-                        canonical, private messages, pair-key cache)
+    contract.rs       JSON-in/JSON-out contract: identities, all event builders,
+                        request builders, chain verification/batching, private
+                        messages + pair-key cache, membership, room rules,
+                        discovery URIs/files, PoW, canonical JSON, hashing
     bindings.rs       Thin wasm-bindgen exports
   tests/
     wasm.rs           wasm-bindgen-test suite (Node)
   build.sh            Release build + generated JS/TS package in pkg/
 
+toloo-web/            SolidJS + TypeScript browser client
+  src/lib/
+    wasm.ts           Typed bridge to the generated wasm package
+    transport.ts      WebSocket/HTTP adapters + page-scheme policy
+    db.ts             IndexedDB identity/relay/room/envelope stores
+    client.ts         Sync, verification, membership, room authority
+  src/components/     Onboarding, sidebar, chat, settings, modals
+  scripts/            Builds and copies toloo-wasm/pkg before Vite
+
+toloo-native/         Native Slint client over toloo-lib — no WebView
+  ui/app.slint        Declarative UI (identity, relays, rooms, chat)
+  src/engine.rs       Engine thread: native transports, pool, room authority
+  src/lib.rs          Slint bridge and snapshot polling
+  src/main.rs         Desktop entry point
+  build.rs            Slint UI compiler
+
 toloo-cli/            Binary — headless relay and scripting
   src/
     main.rs           keygen, relay, create-room, import, send, sync, vectors
-
-toloo-app/            Desktop + Android app — Tauri v2
-  src/
-    index.html        Single-page app shell
-    app.js            State, rooms, sync, relay hosting, import/export, context menus
-    styles.css        Dark theme, RTL support, mobile-responsive layout
-  src-tauri/src/
-    lib.rs            All Tauri commands (identity, rooms, relay, discovery)
-    main.rs           Tauri entry point
 
 ```
 
 Dependency chain:
 ```
 toloo-core  ←  toloo-lib  ←  toloo-cli
-            ↑             ←  toloo-app/src-tauri
-            ←  toloo-wasm (wasm32-unknown-unknown)
+                         ←  toloo-native (Slint, direct Rust)
+            ←  toloo-wasm  ←  toloo-web (wasm core + JS transport/store/UI)
 ```
 
 ---
 
 ## Platform support
 
-### Desktop app (Tauri)
+### Native client (Slint)
+
+No WebView and no JavaScript runtime. The UI is Slint; the protocol and
+transport engine is `toloo-lib` in the same process.
 
 | Platform | Minimum version | Notes |
 |---|---|---|
-| Linux x86_64 | glibc 2.17+, `webkit2gtk-4.1` | `toloo-linux-x86_64` standalone binary. `.deb` / `.rpm` install WebKit automatically. |
-| Linux aarch64 | glibc 2.17+, `webkit2gtk-4.1` | `toloo-linux-aarch64` standalone binary (Raspberry Pi 4/5, Ampere, AWS Graviton). |
-| Windows x86_64 | Windows 10 (1803+) | Requires WebView2 runtime (pre-installed on Win11; auto-downloaded on Win10). |
-| Windows aarch64 | Windows 10 on ARM | Surface / Snapdragon laptops. WebView2 pre-installed. |
-| Android | API 24 / Android 7.0+ | Tauri native build, full Rust backend. Universal APK (works on all devices). |
-| macOS | 10.15 Catalina+ | Build requires macOS runner — not in current CI. |
-| iOS | 16+ | Build requires macOS + Xcode — not in current CI. |
+| Linux x86_64 | glibc 2.17+ | `toloo-native` binary; X11/Wayland + OpenGL or software renderer |
+| Linux aarch64 | glibc 2.17+ | Raspberry Pi 4/5, Ampere, AWS Graviton |
+| Windows x86_64 | Windows 10 | `toloo-native.exe` |
+| macOS arm64 | macOS 11+ | Slint winit backend |
+| Android | **API 26 / Android 8.0+** | Rust + Slint + Skia/OpenGL ES; arm64-v8a and armeabi-v7a; experimental APK workflow |
+| iOS | not yet shipped | Slint iOS support is version-dependent; verify before planning |
+
+The old Tauri/WebView app has been removed. Android 7 / API 24–25 devices are
+not supported by the Slint backend; they require a separate native-UI path.
 
 ### CLI (`toloo-cli`)
 
@@ -131,11 +146,9 @@ natively on Linux, Windows, and macOS with no system libraries required.
 
 ### Prerequisites
 
-All platforms need [Rust stable](https://rustup.rs) and the Tauri CLI:
-
-```sh
-cargo install tauri-cli --version "^2" --locked
-```
+All platforms need [Rust stable](https://rustup.rs). The native Slint client
+additionally needs the platform windowing/OpenGL development libraries listed
+below.
 
 ### Library and CLI (any platform)
 
@@ -160,6 +173,19 @@ is native-only, so wasm uses the dalek/RustCrypto path. WebAssembly is loaded
 from the generated `pkg/` by the web UI; hand-written protocol JavaScript is
 retired.
 
+Web client (`toloo-web/`):
+
+```sh
+cd toloo-web
+npm install
+npm run dev       # wasm build + Vite dev server on :5173
+npm test          # transport policy and HTTP transport tests
+npm run build     # production bundle in dist/
+```
+
+See [`toloo-web/README.md`](./toloo-web/README.md) for the local-relay workflow
+and current feature scope.
+
 CLI — platform-specific static builds:
 
 ```sh
@@ -183,61 +209,50 @@ cargo build -p toloo-cli --release --target aarch64-pc-windows-msvc
 set RUSTFLAGS=-C target-feature=+crt-static
 ```
 
-### Desktop app — Linux
+### Native client — Linux
 
 ```sh
-# Install system dependencies (Debian/Ubuntu)
-sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-  libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+# Debian/Ubuntu build and runtime libraries for Slint's winit backend
+sudo apt-get install -y libxkbcommon-dev libfontconfig1-dev \
+  libwayland-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev
 
-cargo tauri dev   -p toloo-app          # hot-reload dev mode
-cargo tauri build -p toloo-app          # produces .deb + .rpm + standalone binary
+cargo run -p toloo-native
+cargo build -p toloo-native --release
 ```
 
-On Arch: `sudo pacman -S webkit2gtk-4.1 gtk3 libappindicator-gtk3 librsvg`
+Use `SLINT_BACKEND=winit-software cargo run -p toloo-native` for the CPU
+renderer on systems without usable OpenGL.
 
-### Desktop app — Windows
+### Native client — Windows / macOS
 
 ```sh
-# No extra dependencies — WebView2 is provided by Windows
-cargo tauri dev   -p toloo-app
-cargo tauri build -p toloo-app          # produces .msi + .exe (NSIS)
-
-# aarch64 cross-compile (from any Windows machine)
-rustup target add aarch64-pc-windows-msvc
-cargo tauri build -p toloo-app --target aarch64-pc-windows-msvc
+cargo build -p toloo-native --release
+# Windows: target/release/toloo-native.exe
+# macOS:   target/release/toloo-native
 ```
 
-### Android (Tauri native, API 24+)
+No WebView, WebView2, or JavaScript runtime is required.
+
+### Android (Slint, API 26+)
+
+Current Slint Android support is Rust-only and requires **API 26 minimum**.
+It cannot target Android 7 / API 24–25.
 
 ```sh
-# 1. Install Android SDK + NDK (via Android Studio or command-line tools)
-#    Set environment variables:
+# Android SDK + NDK, Java 17, and Rust targets
 export ANDROID_HOME=$HOME/Android/Sdk
-export NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
+export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
+rustup target add aarch64-linux-android armv7-linux-androideabi
 
-# 2. Install Java 17+
-#    Arch: sudo pacman -S jdk17-openjdk
-#    Ubuntu: sudo apt-get install -y openjdk-17-jdk
-
-# 3. Add Rust Android targets
-rustup target add \
-  aarch64-linux-android \
-  armv7-linux-androideabi \
-  x86_64-linux-android \
-  i686-linux-android
-
-# 4. One-time project init (generates toloo-app/src-tauri/gen/android/)
-cargo tauri android init -p toloo-app
-
-# 5. Build APKs (one per ABI)
-cargo tauri android build -p toloo-app --apk
-
-# 6. Dev mode on a connected device or emulator
-cargo tauri android dev -p toloo-app
+# cargo-apk packaging (lib crate; API 26 metadata in toloo-native/Cargo.toml)
+cargo install cargo-apk --locked
+cargo apk build -p toloo-native --release --lib
 ```
 
-Output: `toloo-app/src-tauri/gen/android/app/build/outputs/apk/`
+The `Native` GitHub workflow builds both ABIs. It is marked experimental until
+an APK has been validated on a real API 26 device. Slint uses Skia with
+OpenGL ES or Vulkan on Android; there is no documented software-renderer
+fallback on that platform.
 
 ### CLI
 
@@ -271,11 +286,10 @@ targets in parallel and creates a GitHub Release:
 
 | Job | Runner | Output |
 |---|---|---|
-| `build (linux-x86_64)` | ubuntu-latest | `.deb`, `.rpm`, `toloo-linux-x86_64` |
-| `build (linux-aarch64)` | ubuntu-24.04-arm | `.deb`, `.rpm`, `toloo-linux-aarch64` |
-| `build (windows-x86_64)` | windows-latest | `.msi`, `.exe` (app installer) |
-| `build (windows-aarch64)` | windows-latest | `.msi` (aarch64 app installer) |
-| `build (android-tauri)` | ubuntu-latest | signed universal `.apk` (API 24+) |
+| `build-native (linux-x86_64)` | ubuntu-latest | `toloo-native` |
+| `build-native (linux-aarch64)` | ubuntu-24.04-arm | `toloo-native` |
+| `build-native (windows-x86_64)` | windows-latest | `toloo-native.exe` |
+| `build-native (macos-aarch64)` | macos-latest | `toloo-native` |
 | `build-cli (cli-linux-x86_64)` | ubuntu-latest | static musl binary |
 | `build-cli (cli-linux-aarch64)` | ubuntu-latest | static musl binary (aarch64, zig cross) |
 | `build-cli (cli-windows-x86_64)` | windows-latest | `.exe` (static CRT) |
@@ -283,8 +297,8 @@ targets in parallel and creates a GitHub Release:
 | `build-cli (cli-macos-x86_64)` | macos-latest | macOS binary (x86_64) |
 | `build-cli (cli-macos-aarch64)` | macos-latest | macOS binary (Apple Silicon) |
 
-Android APKs are only produced when signing secrets are configured: `KEYSTORE_BASE64`,
-`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. Unsigned APKs are never published.
+Android APKs are built by `.github/workflows/native.yml` (API 26+, arm64 and
+armv7) and are currently experimental.
 
 ### CI / Benchmarks
 
@@ -301,6 +315,20 @@ cd toloo-lib && cargo bench --bench canonical_bench
 # Cross-protocol benchmarks (Signal, Matrix, Nostr)
 cargo bench -p toloo-protocol-bench --features protocols --bench protocols
 ```
+
+GitHub-hosted runner CPUs vary between runs, so absolute cross-run deltas can
+be misleading. For trusted regression checks, pass `baseline_ref` to measure a
+baseline and the dispatched branch back-to-back on the same linux-x86 runner:
+
+```sh
+gh workflow run benchmark.yml \
+  -f repo=MehrWizard/toloo-benchmarks \
+  -f branch=main \
+  -f baseline_ref=<sha-or-tag>
+```
+
+The A/B table is written to the job summary and uploaded as
+`bench-ab-linux-x86`; other platforms and normal runs are unchanged.
 
 ---
 
@@ -369,34 +397,35 @@ distributed. Details and fairness caveats:
 
 ## Execution model
 
-### Native (Tauri)
+### Native (Slint)
 
-The desktop app runs `toloo-lib` in-process via Tauri commands.
-State (rooms, messages, identity) lives in memory and is persisted to
-`localStorage` on the JS side. The relay runs in a dedicated OS thread with its
-own single-threaded Tokio runtime and an in-memory pool.
+The native client is one Rust process. Slint renders the UI; a dedicated engine
+thread owns `toloo-lib`'s pool, Tokio runtime, and native WebSocket/HTTP
+transports. The UI sends commands over a channel and applies snapshots on the
+Slint event-loop thread.
 
 ```
-┌─────────────────────────────────────┐
-│  toloo-app (WebView)                │
-│    app.js   ──invoke()──►  lib.rs   │
-│    styles.css               │       │
-│                         toloo-lib   │
-│                         Tokio RT    │
-└─────────────────────────────────────┘
+┌──────────────────────────────┐        commands        ┌──────────────────┐
+│  Slint UI                    │ ─────────────────────► │  engine thread   │
+│  ui/app.slint                │ ◄───────────────────── │  toloo-lib       │
+│  (no WebView / JS runtime)   │       snapshots        │  pool + tokio    │
+└──────────────────────────────┘                        └──────────────────┘
 ```
 
-A node can host its own relay in-app, generating a `toloo://` invite link that
-others can import to reach it over LAN or the internet.
+The native engine can later host a relay in-process; the browser client cannot.
+A browser node connects to an external relay, while the native app can use raw
+transports, self-signed pinning, and OS storage.
 
 ### Browser (wasm)
 
-When running outside Tauri — in a browser or a web app — protocol logic is the
-same `toloo-core` compiled to WebAssembly by `toloo-wasm`. The browser UI loads
-the generated `pkg/toloo_wasm.js`, which exposes the JSON contract (identity,
-signing, verification, canonical JSON, private messages). A browser cannot host
-a network relay, so this mode connects to an external relay over `wss://` or
-`https://` and remains a pure client.
+When running outside the native client — in a browser or a web app — protocol logic is the
+same `toloo-core` compiled to WebAssembly by `toloo-wasm`. `toloo-web/` is the
+SolidJS client: it loads the generated wasm package, owns WebSocket/HTTP
+transport and IndexedDB persistence, and keeps all signing, verification,
+private-message, membership, and room-rule logic in wasm. A browser cannot host
+a network relay, so this mode connects to an external relay and remains a pure
+client; rooms whose key lives in the browser are committed by that tab while it
+is open.
 
 ```
 ┌────────────────────┐       wss:// or https://      ┌──────────────┐
@@ -408,6 +437,15 @@ a network relay, so this mode connects to an external relay over `wss://` or
 
 The wasm build uses the dalek/RustCrypto crypto path (AWS-LC is not available
 on wasm) and `getrandom`'s browser/Node backend. Native builds keep AWS-LC.
+
+**Browser transport policy:** an `https://` chat page accepts only `https://`
+and `wss://` relay endpoints; an `http://` page accepts only `http://` and
+`ws://`. The hosted chat is therefore CA-TLS dependent for secure endpoints:
+self-signed relay certificates and certificate fingerprints are for the native
+client (and future pinned WebTransport), not for browser `wss://`. Browsers do
+allow `https/wss` from an `http` page, but the web client ignores them to keep
+one strict scheme pairing per origin. Enforce the pairing in the SolidJS
+transport and match it with CSP (`connect-src`).
 
 ---
 
@@ -475,7 +513,8 @@ The commit can happen directly (relay holds the room key) or via a relay chain
 
 ## Mobile
 
-Mobile support runs through the same Tauri app: Android APKs are built in CI
-via `cargo tauri android build`, producing a signed universal APK with the full
-Rust backend. iOS builds are possible with `cargo tauri ios build` on a macOS
-runner but are not in current CI.
+Mobile uses the native Slint app: Android APKs are built in the `Native`
+GitHub workflow with cargo-apk for arm64 and armv7. Slint requires Android
+API 26+, so API 24–25 devices are out of scope for this UI. The Android build
+is experimental until validated on a real device. iOS is not shipped; Slint
+iOS support is version-dependent and requires a macOS/Xcode build.

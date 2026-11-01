@@ -1,0 +1,125 @@
+name: Native
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Native tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-test
+      - name: Install Slint build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev libfontconfig1-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libgl1-mesa-dev
+      - name: Test native engine and UI crate
+        run: cargo test -p toloo-native
+
+  desktop:
+    name: Build desktop (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: linux-x86_64
+            binary: target/release/toloo-native
+          - os: windows-latest
+            artifact: windows-x86_64
+            binary: target/release/toloo-native.exe
+          - os: macos-latest
+            artifact: macos-aarch64
+            binary: target/release/toloo-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-desktop-${{ matrix.artifact }}
+      - name: Install Slint build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev libfontconfig1-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libgl1-mesa-dev
+      - name: Build
+        run: cargo build -p toloo-native --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toloo-native-${{ matrix.artifact }}
+          path: ${{ matrix.binary }}
+
+  android:
+    name: Build Android APK (experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
+      - name: Install Android SDK and NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-android
+      - uses: cargo-bins/cargo-binstall@v1.17.5
+        env:
+          BINSTALL_VERSION: "1.17.5"
+      - name: Install cargo-apk
+        run: cargo binstall --no-confirm cargo-apk || cargo install cargo-apk --locked
+      - name: Decode release signing keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/android"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d \
+            > "$RUNNER_TEMP/android/toloo-release.jks"
+      - name: Build APK (arm64 + armv7)
+        env:
+          CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/android/toloo-release.jks
+          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: cargo apk build -p toloo-native --release --lib
+      - name: Package APKs by ABI
+        run: |
+          mkdir -p dist/android
+          find target -name '*.apk' -type f | while read -r apk; do
+            case "$apk" in
+              *aarch64*) abi=arm64-v8a ;;
+              *armv7*) abi=armeabi-v7a ;;
+              *) abi=unknown ;;
+            esac
+            cp "$apk" "dist/android/toloo-native-${abi}.apk"
+          done
+          ls -lh dist/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toloo-native-android
+          path: dist/android/*.apk
+          if-no-files-found: error

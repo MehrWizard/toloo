@@ -800,7 +800,12 @@ than AWS-LC for single verify on this runner, and batch stays on dalek).
 
 **Runner variance.** Hosted-runner hardware changes between runs; absolute
 values moved 20–50% across Phase 9 runs. Treat each run's ratios as the signal
-and the dashboard history as the record.
+and the dashboard history as the record. For regression gating, dispatch
+`benchmark.yml` with `baseline_ref=<sha-or-ref>`: the linux-x86 job then checks
+out and measures the baseline and the candidate back-to-back on one runner and
+writes `ab-comparison.md`/`.json` to the job summary and the
+`bench-ab-linux-x86` artifact. Normal runs remain single-pass, and the other
+platforms remain single-run context.
 
 ### Future protocol coverage
 

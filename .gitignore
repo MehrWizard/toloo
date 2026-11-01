@@ -1,7 +1,6 @@
 /target
 /toloo-wasm/pkg/
-tolo-app/src-tauri/gen/
-tolo-app/src-tauri/target/
+/toloo-web/src/generated/
 node_modules/
 dist/
 

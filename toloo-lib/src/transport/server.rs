@@ -369,11 +369,26 @@ async fn do_http_connection(
         }
     }
 
+    // Browser clients POST JSON cross-origin, which requires a preflight.
+    if method == "OPTIONS" && path == want_path {
+        let resp = "HTTP/1.1 204 No Content\r\n\
+                    Access-Control-Allow-Origin: *\r\n\
+                    Access-Control-Allow-Methods: POST, OPTIONS\r\n\
+                    Access-Control-Allow-Headers: content-type\r\n\
+                    Access-Control-Max-Age: 86400\r\n\
+                    Content-Length: 0\r\n\
+                    Connection: close\r\n\r\n";
+        stream.write_all(resp.as_bytes()).await.ok();
+        stream.flush().await.ok();
+        return Ok(());
+    }
+
     // Only handle POST to the configured path; everything else → 404.
     if method != "POST" || path != want_path {
         let body = b"Not Found\n";
         let resp = format!(
             "HTTP/1.1 404 Not Found\r\n\
+             Access-Control-Allow-Origin: *\r\n\
              Content-Type: text/plain\r\n\
              Content-Length: {}\r\n\
              Connection: close\r\n\r\n",
@@ -420,6 +435,7 @@ async fn do_http_connection(
 
     let resp_headers = format!(
         "HTTP/1.1 200 OK\r\n\
+         Access-Control-Allow-Origin: *\r\n\
          Content-Type: application/json\r\n\
          Content-Length: {}\r\n\
          Connection: close\r\n\r\n",

@@ -3,13 +3,20 @@ members = [
     "toloo-core",
     "toloo-lib",
     "toloo-cli",
-    "toloo-app/src-tauri",
     "toloo-protocol-bench",
     "toloo-wasm",
+    "toloo-native",
 ]
 resolver = "2"
+
+# Lean dev artifacts; for full symbols:
+# CARGO_PROFILE_DEV_DEBUG=2 CARGO_PROFILE_DEV_STRIP=none
+[profile.dev]
+debug = 0
+strip = "debuginfo"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
+strip = true

@@ -1,0 +1,333 @@
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct RoomRow {
+    room-id: string,
+    display-name: string,
+    selected: bool,
+    has-key: bool,
+}
+
+export struct MessageRow {
+    author: string,
+    body: string,
+    clock: string,
+    mine: bool,
+    committed: bool,
+}
+
+export component AppWindow inherits Window {
+    title: "Toloo";
+    preferred-width: 1120px;
+    preferred-height: 760px;
+    background: #070b0a;
+
+    in property <bool> has-identity: false;
+    in property <string> identity-label: "No identity";
+    in property <string> status: "Starting…";
+    in property <string> active-room: "";
+    in property <string> members-label: "";
+    in property <[RoomRow]> rooms;
+    in property <[MessageRow]> messages;
+
+    in-out property <string> relay-input: "";
+    in-out property <string> create-room-name: "";
+    in-out property <string> join-input: "";
+    in-out property <string> sig-seed: "";
+    in-out property <string> enc-priv: "";
+    in-out property <string> message-input: "";
+
+    callback create-identity();
+    callback restore-identity(string, string);
+    callback add-relay(string);
+    callback create-room(string);
+    callback join-room(string);
+    callback select-room(string);
+    callback sync-now();
+    callback send-message(string);
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0px;
+
+        Rectangle {
+            width: 328px;
+            background: #0d1311;
+            border-width: 1px;
+            border-color: #1f2c27;
+            border-radius: 0px;
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "toloo";
+                        color: #7de2b3;
+                        font-size: 23px;
+                        font-weight: 800;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: "native";
+                        color: #52685f;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: root.status;
+                    color: #8da49b;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: 1px; background: #1f2c27; }
+
+                Text {
+                    text: "THIS DEVICE";
+                    color: #617a70;
+                    font-size: 10px;
+                    letter-spacing: 1px;
+                }
+                Text {
+                    text: root.identity-label;
+                    color: #dcebe5;
+                    font-size: 12px;
+                    font-family: "monospace";
+                }
+
+                if !root.has-identity : VerticalLayout {
+                    spacing: 7px;
+                    LineEdit {
+                        placeholder-text: "Signing seed";
+                        text <=> root.sig-seed;
+                    }
+                    LineEdit {
+                        placeholder-text: "Encryption private key";
+                        text <=> root.enc-priv;
+                    }
+                    HorizontalLayout {
+                        spacing: 7px;
+                        Button {
+                            text: "Restore";
+                            clicked => { root.restore-identity(root.sig-seed, root.enc-priv); }
+                        }
+                        Button {
+                            text: "Create identity";
+                            clicked => { root.create-identity(); }
+                        }
+                    }
+                }
+
+                if root.has-identity : VerticalLayout {
+                    spacing: 7px;
+
+                    Text { text: "RELAY"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
+                    HorizontalLayout {
+                        spacing: 7px;
+                        LineEdit {
+                            placeholder-text: "wss://relay.example";
+                            text <=> root.relay-input;
+                        }
+                        Button {
+                            text: "Add";
+                            clicked => {
+                                if (root.relay-input != "") {
+                                    root.add-relay(root.relay-input);
+                                    root.relay-input = "";
+                                }
+                            }
+                        }
+                    }
+
+                    Text { text: "NEW ROOM"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
+                    HorizontalLayout {
+                        spacing: 7px;
+                        LineEdit {
+                            placeholder-text: "Room name";
+                            text <=> root.create-room-name;
+                        }
+                        Button {
+                            text: "Create";
+                            clicked => {
+                                if (root.create-room-name != "") {
+                                    root.create-room(root.create-room-name);
+                                    root.create-room-name = "";
+                                }
+                            }
+                        }
+                    }
+
+                    Text { text: "JOIN"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
+                    HorizontalLayout {
+                        spacing: 7px;
+                        LineEdit {
+                            placeholder-text: "toloo://… or room key";
+                            text <=> root.join-input;
+                        }
+                        Button {
+                            text: "Join";
+                            clicked => {
+                                if (root.join-input != "") {
+                                    root.join-room(root.join-input);
+                                    root.join-input = "";
+                                }
+                            }
+                        }
+                    }
+
+                    Text { text: "ROOMS"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
+                    ScrollView {
+                        min-height: 120px;
+                        VerticalLayout {
+                            spacing: 3px;
+                            for room in root.rooms : Rectangle {
+                                height: 48px;
+                                border-radius: 8px;
+                                background: room.selected ? #16231e : transparent;
+
+                                VerticalLayout {
+                                    padding: 7px;
+                                    spacing: 1px;
+                                    Text {
+                                        text: room.display-name;
+                                        color: room.selected ? #eaf3ef : #c3d4cd;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: room.room-id;
+                                        color: #617a70;
+                                        font-size: 9px;
+                                        font-family: "monospace";
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => { root.select-room(room.room-id); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+                Text {
+                    text: "Native engine · Slint · no WebView";
+                    color: #52685f;
+                    font-size: 9px;
+                }
+            }
+        }
+
+        Rectangle {
+            background: #070b0a;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 11px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    Text {
+                        text: root.active-room == "" ? "Select a room" : root.active-room;
+                        color: #eaf3ef;
+                        font-size: 18px;
+                        font-weight: 650;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.members-label;
+                        color: #617a70;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Button {
+                        text: "Sync";
+                        enabled: root.has-identity && root.active-room != "";
+                        clicked => { root.sync-now(); }
+                    }
+                }
+                Rectangle { height: 1px; background: #1f2c27; }
+
+                if root.active-room == "" : Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        text: "Create or join a room to start.";
+                        color: #8da49b;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.active-room != "" : ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 8px;
+                        padding: 2px;
+                        for message in root.messages : HorizontalLayout {
+                            alignment: message.mine ? end : start;
+                            Rectangle {
+                                max-width: 580px;
+                                background: message.mine ? #142a21 : #111a17;
+                                border-width: 1px;
+                                border-color: message.mine ? #24513d : #22312c;
+                                border-radius: 12px;
+                                VerticalLayout {
+                                    padding: 9px;
+                                    spacing: 3px;
+                                    Text {
+                                        text: message.author;
+                                        color: #617a70;
+                                        font-size: 9px;
+                                        font-family: "monospace";
+                                    }
+                                    Text {
+                                        text: message.body;
+                                        color: #dcebe5;
+                                        font-size: 14px;
+                                        wrap: word-wrap;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        Text {
+                                            text: message.clock;
+                                            color: #52685f;
+                                            font-size: 9px;
+                                        }
+                                        Text {
+                                            text: message.committed ? "sent" : "pending";
+                                            color: message.committed ? #7de2b3 : #efbe78;
+                                            font-size: 9px;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit {
+                        placeholder-text: "Message";
+                        text <=> root.message-input;
+                        enabled: root.active-room != "";
+                    }
+                    Button {
+                        text: "Send";
+                        enabled: root.active-room != "" && root.message-input != "";
+                        clicked => {
+                            if (root.message-input != "") {
+                                root.send-message(root.message-input);
+                                root.message-input = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

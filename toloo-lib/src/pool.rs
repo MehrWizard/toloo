@@ -185,11 +185,7 @@ pub struct PoolEntry {
     pub channel: Option<i32>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct MembershipState {
-    pub members: HashSet<String>,
-    pub banned: HashSet<String>,
-}
+pub use toloo_core::membership::MembershipState;
 
 /// Result of a TOFU pin check (§4.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1289,46 +1285,9 @@ impl Pool {
         }
 
         let events = self.get_room_channel(room, -2)?;
-        let mut state = MembershipState::default();
-
-        for event in events {
-            if event.tc.is_none() {
-                continue;
-            }
-            let d = &innermost(&event.env).d;
-            match d.t.as_str() {
-                "room.join" => {
-                    if !state.banned.contains(&d.n) {
-                        state.members.insert(d.n.clone());
-                    }
-                }
-                "room.leave" => {
-                    state.members.remove(&d.n);
-                }
-                "room.ban" => {
-                    if let Some(target) =
-                        d.c.as_ref()
-                            .and_then(|c| c.get("banned"))
-                            .and_then(|v| v.as_str())
-                    {
-                        state.members.remove(target);
-                        state.banned.insert(target.to_owned());
-                    }
-                }
-                "room.unban" => {
-                    if let Some(target) =
-                        d.c.as_ref()
-                            .and_then(|c| c.get("unbanned"))
-                            .and_then(|v| v.as_str())
-                    {
-                        state.banned.remove(target);
-                    }
-                }
-                "room.invite" => {}
-                _ => {}
-            }
-        }
-
+        let state = toloo_core::membership::from_events(
+            events.iter().map(|event| event.env.as_ref()),
+        );
         let state = Arc::new(state);
         self.membership_cache
             .insert(room.to_owned(), (version, Arc::clone(&state)));
@@ -1403,6 +1362,29 @@ impl Pool {
             let skip = out.len() - tail_limit;
             out.drain(0..skip);
         }
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    /// Uncommitted events for one room, oldest first.
+    ///
+    /// Key holders poll these when they sync, then wrap valid events in
+    /// commits. Results are capped by `limit`; `types` filters inner types.
+    pub fn get_pending(
+        &self,
+        room: &str,
+        types: &[&str],
+        limit: usize,
+    ) -> Result<Vec<Arc<PoolEntry>>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out = self.select(|entry| {
+            entry.room.as_deref() == Some(room)
+                && entry.tc.is_none()
+                && (types.is_empty() || types.contains(&entry.event_type.as_ref()))
+        })?;
+        out.sort_by(|a, b| cmp_ts_id(a, b));
         out.truncate(limit);
         Ok(out)
     }

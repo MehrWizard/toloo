@@ -61,6 +61,35 @@ fn batch_verification_in_wasm() {
 }
 
 #[wasm_bindgen_test]
+fn room_lifecycle_and_requests_in_wasm() {
+    let identity = contract::generate_identity().unwrap();
+    let room = contract::generate_room_identity().unwrap();
+    let room_id: Value = serde_json::from_str(&room).unwrap();
+    let room_pub = room_id["sigPub"].as_str().unwrap();
+
+    let pair: Value = serde_json::from_str(
+        &contract::make_room_create(&identity, &room, Some("wasm room"), None).unwrap(),
+    )
+    .unwrap();
+    let committed = pair["committed"].to_string();
+    assert_eq!(contract::verify_chain_result(&committed), r#"{"ok":true}"#);
+
+    let message = contract::make_room_message(&identity, room_pub, 1, "hello", None).unwrap();
+    assert_eq!(contract::verify_chain_result(&message), r#"{"ok":true}"#);
+    let info: Value = serde_json::from_str(&contract::envelope_info(&message).unwrap()).unwrap();
+    assert_eq!(info["type"], "room.message");
+
+    let sync = contract::request_events_sync(&identity, "[\"room\"]", Some(0), Some(10)).unwrap();
+    let info: Value = serde_json::from_str(&contract::envelope_info(&sync).unwrap()).unwrap();
+    assert_eq!(info["type"], "events.sync");
+
+    let envelopes = json!([serde_json::from_str::<Value>(&message).unwrap()]).to_string();
+    let uri = contract::encode_uri(&envelopes).unwrap();
+    let decoded: Value = serde_json::from_str(&contract::decode_discovery(&uri).unwrap()).unwrap();
+    assert_eq!(decoded.as_array().unwrap().len(), 1);
+}
+
+#[wasm_bindgen_test]
 fn cached_private_messages_in_wasm() {
     let alice = identity();
     let bob = identity();
