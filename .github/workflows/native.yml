@@ -106,17 +106,15 @@ jobs:
           CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/android/toloo-release.jks
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: cargo apk build -p toloo-native --release --lib
-      - name: Package APKs by ABI
+      - name: Package universal APK
         run: |
           mkdir -p dist/android
-          find target -name '*.apk' -type f | while read -r apk; do
-            case "$apk" in
-              *aarch64*) abi=arm64-v8a ;;
-              *armv7*) abi=armeabi-v7a ;;
-              *) abi=unknown ;;
-            esac
-            cp "$apk" "dist/android/toloo-native-${abi}.apk"
-          done
+          mapfile -t apks < <(find target -name '*.apk' -type f)
+          if [ "${#apks[@]}" -ne 1 ]; then
+            echo "expected one universal APK, found ${#apks[@]}" >&2
+            exit 1
+          fi
+          cp "${apks[0]}" dist/android/toloo-native.apk
           ls -lh dist/android
       - uses: actions/upload-artifact@v4
         with:
