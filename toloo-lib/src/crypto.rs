@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Context, Result};
 #[cfg(not(feature = "aws-lc"))]
-use chacha20poly1305::aead::Aead;
+use chacha20poly1305::aead::{Aead, AeadInPlace};
 #[cfg(not(feature = "aws-lc"))]
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use dashmap::DashMap;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey, verify_batch};
+use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey, verify_batch};
+#[cfg(not(feature = "aws-lc"))]
+use ed25519_dalek::Signer;
 use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -74,10 +76,22 @@ pub fn ed25519_pub_from_seed(seed: &[u8]) -> Result<Vec<u8>> {
 
 /// Sign a message with a 32-byte Ed25519 seed.
 pub fn ed25519_sign(message: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
-    let seed_bytes = exact_bytes(seed, "Ed25519 seed")?;
-    let signing = SigningKey::from_bytes(&seed_bytes);
-    let signature: Signature = signing.sign(message);
-    Ok(signature.to_bytes().to_vec())
+    let seed_bytes: [u8; 32] = exact_bytes(seed, "Ed25519 seed")?;
+
+    #[cfg(feature = "aws-lc")]
+    {
+        use aws_lc_rs::signature::Ed25519KeyPair;
+        let key = Ed25519KeyPair::from_seed_unchecked(&seed_bytes)
+            .map_err(|_| anyhow!("invalid Ed25519 seed"))?;
+        Ok(key.sign(message).as_ref().to_vec())
+    }
+
+    #[cfg(not(feature = "aws-lc"))]
+    {
+        let signing = SigningKey::from_bytes(&seed_bytes);
+        let signature: Signature = signing.sign(message);
+        Ok(signature.to_bytes().to_vec())
+    }
 }
 
 /// Verify Ed25519 signature using base64url-encoded public key (uses cache).
@@ -270,8 +284,9 @@ pub fn derive_private_message_key(shared: &[u8], salt: &[u8]) -> ([u8; 32], [u8;
     (key, nonce)
 }
 
-/// ChaCha20-Poly1305 encryption.
-pub fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u8> {
+/// ChaCha20-Poly1305 encryption, operating in place on `buffer`
+/// (the AEAD tag is appended).
+pub fn chacha20_encrypt_in_place(key: &[u8; 32], nonce: &[u8; 12], buffer: &mut Vec<u8>) {
     #[cfg(feature = "aws-lc")]
     {
         use aws_lc_rs::aead::{
@@ -280,28 +295,31 @@ pub fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> V
         let cipher = LessSafeKey::new(
             UnboundKey::new(&CHACHA20_POLY1305, key).expect("valid ChaCha20-Poly1305 key"),
         );
-        let mut out = plaintext.to_vec();
         cipher
             .seal_in_place_append_tag(
                 LcNonce::assume_unique_for_key(*nonce),
                 Aad::empty(),
-                &mut out,
+                buffer,
             )
             .expect("ChaCha20-Poly1305 encryption failed");
-        out
     }
 
     #[cfg(not(feature = "aws-lc"))]
     {
         let cipher = ChaCha20Poly1305::new(key.into());
         cipher
-            .encrypt(Nonce::from_slice(nonce), plaintext)
-            .expect("encryption failed for input length")
+            .encrypt_in_place(Nonce::from_slice(nonce), b"", buffer)
+            .expect("encryption failed for input length");
     }
 }
 
-/// ChaCha20-Poly1305 decryption.
-pub fn chacha20_decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8]) -> Result<Vec<u8>> {
+/// ChaCha20-Poly1305 decryption, operating in place on `buffer`
+/// (truncated to the plaintext on success).
+pub fn chacha20_decrypt_in_place(
+    key: &[u8; 32],
+    nonce: &[u8; 12],
+    buffer: &mut Vec<u8>,
+) -> Result<()> {
     #[cfg(feature = "aws-lc")]
     {
         use aws_lc_rs::aead::{
@@ -310,24 +328,39 @@ pub fn chacha20_decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8]) -> 
         let cipher = LessSafeKey::new(
             UnboundKey::new(&CHACHA20_POLY1305, key).expect("valid ChaCha20-Poly1305 key"),
         );
-        let mut out = ciphertext.to_vec();
         let plaintext = cipher
             .open_in_place(
                 LcNonce::assume_unique_for_key(*nonce),
                 Aad::empty(),
-                &mut out,
+                buffer,
             )
             .map_err(|_| anyhow!("ChaCha20-Poly1305 authentication failed"))?;
-        Ok(plaintext.to_vec())
+        let len = plaintext.len();
+        buffer.truncate(len);
+        Ok(())
     }
 
     #[cfg(not(feature = "aws-lc"))]
     {
         let cipher = ChaCha20Poly1305::new(key.into());
         cipher
-            .decrypt(Nonce::from_slice(nonce), ciphertext)
+            .decrypt_in_place(Nonce::from_slice(nonce), b"", buffer)
             .map_err(|_| anyhow!("ChaCha20-Poly1305 authentication failed"))
     }
+}
+
+/// ChaCha20-Poly1305 encryption.
+pub fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u8> {
+    let mut out = plaintext.to_vec();
+    chacha20_encrypt_in_place(key, nonce, &mut out);
+    out
+}
+
+/// ChaCha20-Poly1305 decryption.
+pub fn chacha20_decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8]) -> Result<Vec<u8>> {
+    let mut out = ciphertext.to_vec();
+    chacha20_decrypt_in_place(key, nonce, &mut out)?;
+    Ok(out)
 }
 
 fn exact_bytes<const N: usize>(input: &[u8], name: &str) -> Result<[u8; N]> {

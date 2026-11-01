@@ -950,7 +950,8 @@ mod tests {
         pool.put(&c1).unwrap();
 
         let msg2 = make_room_message(&node, &room.sig.pub_key, 1, "world", vec![]).unwrap();
-        let tc2 = msg2.d.ts;
+        // Explicit distinct commit timestamps; wall-clock milliseconds can collide.
+        let tc2 = tc1 + 1;
         let c2 = wrap_commit(msg2, &room, tc2).unwrap();
         pool.put(&c2).unwrap();
 

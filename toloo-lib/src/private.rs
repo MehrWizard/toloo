@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use crate::base64url;
 use crate::canonical::canonical_value_bytes;
 use crate::crypto::{
-    chacha20_decrypt, chacha20_encrypt, derive_private_message_key, hkdf_sha256, sha256,
-    x25519_generate, x25519_shared_secret,
+    chacha20_decrypt_in_place, chacha20_encrypt_in_place, derive_private_message_key,
+    hkdf_sha256, sha256, x25519_generate, x25519_shared_secret,
 };
 
 const PAIR_KEY_INFO: &[u8] = b"toloo-private-pair-v2";
@@ -63,12 +63,12 @@ pub fn encrypt_private_with_eph(
     let (key, nonce) = derive_private_message_key(&shared, &salt);
 
     // Step 6-7: encrypt canonical(content).
-    let plaintext_bytes = canonical_value_bytes(content)?;
-    let ciphertext = chacha20_encrypt(&key, &nonce, &plaintext_bytes);
+    let mut plaintext_bytes = canonical_value_bytes(content)?;
+    chacha20_encrypt_in_place(&key, &nonce, &mut plaintext_bytes);
 
     Ok(PrivateCiphertext {
         eph: base64url::encode(&eph_pub_bytes),
-        encrypted: base64url::encode(&ciphertext),
+        encrypted: base64url::encode(&plaintext_bytes),
     })
 }
 
@@ -100,8 +100,9 @@ pub fn decrypt_private(
     let (key, nonce) = derive_private_message_key(&shared, &salt);
 
     // Step 5: decrypt.
-    let ciphertext = base64url::decode(&c.encrypted).context("invalid encrypted base64url")?;
-    let plaintext_bytes = chacha20_decrypt(&key, &nonce, &ciphertext)
+    let mut plaintext_bytes =
+        base64url::decode(&c.encrypted).context("invalid encrypted base64url")?;
+    chacha20_decrypt_in_place(&key, &nonce, &mut plaintext_bytes)
         .context("ChaCha20-Poly1305 decryption failed")?;
 
     serde_json::from_slice(&plaintext_bytes).context("decrypted content is not valid JSON")
@@ -203,14 +204,14 @@ pub fn encrypt_private_v2_with_key(
     let salt_hash = message_salt_hash(&sender_pub, &recipient_pub, &salt);
     let (mut key, nonce) = message_key_from_pair(pair_key, &salt_hash);
 
-    let plaintext_bytes = canonical_value_bytes(content)?;
-    let ciphertext = chacha20_encrypt(&key, &nonce, &plaintext_bytes);
+    let mut plaintext_bytes = canonical_value_bytes(content)?;
+    chacha20_encrypt_in_place(&key, &nonce, &mut plaintext_bytes);
     key.fill(0);
 
     Ok(PrivateCiphertextV2 {
         from: sender_enc_pub.to_owned(),
         salt: base64url::encode(&salt),
-        encrypted: base64url::encode(&ciphertext),
+        encrypted: base64url::encode(&plaintext_bytes),
     })
 }
 
@@ -239,10 +240,11 @@ pub fn decrypt_private_v2_with_key(
     let salt_hash = message_salt_hash(&sender_pub, &recipient_pub, &salt);
     let (mut key, nonce) = message_key_from_pair(pair_key, &salt_hash);
 
-    let ciphertext = base64url::decode(&c.encrypted).context("invalid encrypted base64url")?;
-    let decrypted = chacha20_decrypt(&key, &nonce, &ciphertext);
+    let mut plaintext_bytes =
+        base64url::decode(&c.encrypted).context("invalid encrypted base64url")?;
+    let decrypted = chacha20_decrypt_in_place(&key, &nonce, &mut plaintext_bytes);
     key.fill(0);
-    let plaintext_bytes = decrypted.context("ChaCha20-Poly1305 decryption failed")?;
+    decrypted.context("ChaCha20-Poly1305 decryption failed")?;
 
     serde_json::from_slice(&plaintext_bytes).context("decrypted content is not valid JSON")
 }
