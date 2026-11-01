@@ -101,20 +101,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/android"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d \
             > "$RUNNER_TEMP/android/toloo-release.jks"
-      - name: Build APK (arm64 + armv7)
+      - name: Build per-ABI APKs
         env:
           CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/android/toloo-release.jks
           CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: cargo apk build -p toloo-native --release --lib
-      - name: Package universal APK
         run: |
           mkdir -p dist/android
-          mapfile -t apks < <(find target -name '*.apk' -type f ! -name '*-unaligned.apk')
-          if [ "${#apks[@]}" -ne 1 ]; then
-            echo "expected one universal APK, found ${#apks[@]}" >&2
-            exit 1
-          fi
-          cp "${apks[0]}" dist/android/toloo-native.apk
+          cargo apk build -p toloo-native --release --lib --target aarch64-linux-android
+          cp target/release/apk/toloo-native.apk \
+            dist/android/toloo-native-arm64-v8a.apk
+          cargo apk build -p toloo-native --release --lib --target armv7-linux-androideabi
+          cp target/release/apk/toloo-native.apk \
+            dist/android/toloo-native-armeabi-v7a.apk
           ls -lh dist/android
       - uses: actions/upload-artifact@v4
         with:

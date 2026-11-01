@@ -62,7 +62,8 @@ release keystore from the `ANDROID_KEYSTORE_BASE64` and
 
 ```sh
 # Download the toloo-native-android artifact from the Native workflow, then:
-adb install -r toloo-native.apk   # universal APK: arm64 + armv7
+adb install -r toloo-native-arm64-v8a.apk     # modern phones
+adb install -r toloo-native-armeabi-v7a.apk   # 32-bit ARM devices
 ```
 
 The APK has not yet been validated on a physical device. Slint has no
