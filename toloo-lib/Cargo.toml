@@ -9,9 +9,6 @@ name = "toloo_lib"
 path = "src/lib.rs"
 
 [dependencies]
-# Portable protocol core (crypto, envelopes, canonical JSON, ids, events).
-toloo-core = { path = "../toloo-core" }
-
 # Cryptography still used directly by the native runtime (TLS key/cert
 # generation, key-store nonces, RNG).
 getrandom     = { version = "0.3", optional = true }
@@ -42,6 +39,15 @@ serde_json = "1"
 # Error handling
 anyhow    = "1"
 dashmap = "6.2.1"
+
+# Portable protocol core (crypto, envelopes, canonical JSON, ids, events).
+# simd-json 0.8 cannot build its scalar fallback on ARM Android, so Android
+# uses the serde_json parser; desktop keeps SIMD parsing.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+toloo-core = { path = "../toloo-core" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+toloo-core = { path = "../toloo-core", default-features = false }
 
 [features]
 default = ["tls", "argon2"]
