@@ -272,6 +272,8 @@ def compute_private_card(data):
     olm_setup = mean('protocol_private/olm_setup')
     olm_encrypt = mean('protocol_private/olm_encrypt')
     olm_inbound = mean('protocol_private/olm_inbound')
+    toloo_setup = mean('protocol_private/toloo_pair_setup')
+    nostr_setup = mean('protocol_private/nostr_pair_setup')
     nostr_encrypt = mean('protocol_private/nostr_encrypt')
     nostr_decrypt = mean('protocol_private/nostr_decrypt')
 
@@ -280,8 +282,10 @@ def compute_private_card(data):
             'First message incl. setup, send → receive: '
             f'Signal {fmt_ns(signal_setup + signal_encrypt)} → {fmt_ns(signal_inbound)} · '
             f'Olm {fmt_ns(olm_setup + olm_encrypt)} → {fmt_ns(olm_inbound)} · '
-            f'Toloo {fmt_ns(baseline["Encrypt"])} → {fmt_ns(baseline["Decrypt"])} · '
-            f'Nostr {fmt_ns(nostr_encrypt)} → {fmt_ns(nostr_decrypt)}'
+            f'Toloo {fmt_ns(toloo_setup + baseline["Encrypt"])} → '
+            f'{fmt_ns(toloo_setup + baseline["Decrypt"])} · '
+            f'Nostr {fmt_ns(nostr_setup + nostr_encrypt)} → '
+            f'{fmt_ns(nostr_setup + nostr_decrypt)}'
         )
     else:
         parts = []

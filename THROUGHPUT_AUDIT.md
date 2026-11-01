@@ -659,7 +659,7 @@ implementations and feeds measured rows into the same latency cards plus a new
 | Matrix (events) | `ruma-signatures` / `ruma-common` | 0.22 / 0.20 | canonical JSON encode/parse, `sign_json`, `verify_json` |
 | Matrix (1:1) | `vodozemac` | 0.11 | Olm outbound/inbound sessions, encrypt/decrypt |
 | Nostr | `nostr` | 0.45 (`nip44`, `os-rng`) | event id + Schnorr sign/verify, JSON parse/serialize, NIP-44 v2 |
-| Toloo | `toloo-lib` | workspace | `encrypt_private` / `decrypt_private`, envelope canonical/parse/verify/build |
+| Toloo | `toloo-lib` | workspace | v2 static-static private messages (cached pair key + per-message salt), envelope canonical/parse/verify/build |
 
 ### Isolation and build behavior
 
@@ -689,9 +689,14 @@ implementations and feeds measured rows into the same latency cards plus a new
   `olm_inbound` creates the inbound Olm session and decrypts. The dashboard's
   1:1 note combines these with initiator setup + first encrypt so setup
   amortization is visible ("first message incl. setup, send → receive").
-- Toloo `decrypt_private` now takes the recipient public key (part of the
-  identity file) instead of re-deriving it from the private key, removing one
-  X25519 base multiplication per decrypt.
+- Toloo v2 private messages are static-static: one X25519 pair key per peer,
+  cached across messages, plus a random 32-byte per-message salt. `toloo_pair_setup`
+  measures the ECDH + pair-key HKDF; `toloo_encrypt`/`toloo_decrypt` use a
+  precomputed pair key, so they are steady-state symmetric operations. v1
+  ephemeral messages remain decryptable.
+- Nostr is benchmarked the same way: `nostr_pair_setup` derives the NIP-44
+  conversation key once, and `nostr_encrypt`/`nostr_decrypt` use the cached key
+  (the library's per-call API otherwise recomputes the ECDH every time).
 - Signal protobuf is serialized at message construction, so only
   `protocol_parse/signal` exists; there is no standalone encode.
 - Cross-protocol numbers are Linux x86 only (`bench-protocols` CI job,
@@ -707,6 +712,7 @@ implementations and feeds measured rows into the same latency cards plus a new
 | `protocol_build/{matrix,nostr}` | Event Build |
 | `protocol_crypto/matrix_verify` | Crypto (ed25519) |
 | `protocol_private/{toloo,signal,olm,nostr}_{encrypt,decrypt}` | Private Message (1:1) |
+| `protocol_private/{toloo,nostr}_pair_setup` | 1:1 card first-message note (pair key) |
 | `protocol_private/{signal,olm}_setup` | 1:1 card first-message note (initiator) |
 | `protocol_private/{signal,olm}_inbound` | 1:1 card first-message note (responder) |
 
@@ -717,10 +723,15 @@ Matrix estimate row and omits the 1:1 card, so local generation from
 
 ### Fairness caveats
 
-- Signal/Olm encrypt is a symmetric ratchet step; Toloo private messages are
-  stateless X25519+ChaCha20-Poly1305 per message and include an ephemeral key
-  agreement. The 1:1 card shows setup costs separately; compare combined costs
-  for a new session, not only per-message encrypt/decrypt.
+- Signal/Olm encrypt is a symmetric ratchet step on established sessions;
+  Toloo/Nostr steady-state rows use cached pairwise conversation keys and a
+  random per-message salt. The 1:1 card shows one-time pair/session setup
+  separately; compare combined costs for a new peer, not only steady state.
+- Toloo's v2 private messages are stateless and asynchronous but provide **no
+  forward secrecy**. A leaked static `enc` key decrypts stored messages to that
+  node; using the sender's static key also exposes messages the node sent. The
+  earlier spec claim that per-message ephemerals provided forward secrecy was
+  incorrect (the ephemeral public key is stored with the ciphertext).
 - Matrix event verification (`verify_json`) includes canonical JSON
   re-serialization; the raw ed25519 row uses `ed25519-dalek` directly.
 - Nostr uses Schnorr over secp256k1 (not Ed25519), so it is excluded from the

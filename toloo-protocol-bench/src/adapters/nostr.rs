@@ -2,6 +2,10 @@
 //! NIP-44 1:1 encryption.
 
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use nostr::nips::nip44::v2::{
+    decrypt_to_bytes as decrypt_v2, encrypt_to_bytes_with_nonce, ConversationKey,
+};
 use nostr::prelude::*;
 
 pub struct NostrPair {
@@ -57,6 +61,28 @@ impl NostrPair {
             ciphertext,
         )
         .context("nip44 decrypt")
+    }
+
+    /// Derive the NIP-44 conversation key once for a peer (one ECDH).
+    pub fn conversation_key(&self) -> Result<ConversationKey> {
+        ConversationKey::derive(self.sender.secret_key(), &self.recipient.public_key())
+            .context("nip44 conversation key")
+    }
+
+    /// Encrypt with a cached conversation key: no ECDH per message.
+    pub fn encrypt_cached(&self, key: &ConversationKey, plaintext: &[u8]) -> Result<String> {
+        let nonce = rand::random::<[u8; 32]>();
+        let payload =
+            encrypt_to_bytes_with_nonce(key, plaintext, nonce).context("nip44 encrypt cached")?;
+        Ok(STANDARD.encode(payload))
+    }
+
+    /// Decrypt with a cached conversation key: no ECDH per message.
+    pub fn decrypt_cached(&self, key: &ConversationKey, ciphertext: &str) -> Result<Vec<u8>> {
+        let payload = STANDARD
+            .decode(ciphertext)
+            .context("nip44 cached base64 decode")?;
+        decrypt_v2(key, &payload).context("nip44 decrypt cached")
     }
 }
 

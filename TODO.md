@@ -40,11 +40,19 @@ git. Current remaining work, in priority order:
       Olm) and Nostr (Schnorr, NIP-44). Feature-gated (`protocols`), Linux x86
       CI job, measured rows + 1:1 card on the dashboard, `est` tags for the
       remaining reference estimates.
-- [x] Private-message decrypt takes the recipient public key instead of
-      re-deriving it (one less X25519 base multiplication per message).
+- [x] Private-message v2: static-static X25519 with cached pair keys, a
+      random 32-byte per-message salt, and v1 decrypt compatibility. The 1:1
+      card reports cached steady state plus pair-setup first-message costs.
+      No forward secrecy (documented); sender static-key compromise exposes
+      outbound history.
 - [x] First-message economics: `signal_inbound` / `olm_inbound` measure
       responder pre-key processing; the 1:1 card shows setup-inclusive
       send → receive numbers.
+- [ ] Migrate `toloo-js` (`src/private.ts`, callers, bundles) to the v2
+      static-static payload; until then the JS client cannot decrypt new
+      Rust private messages. Spec docs `3-cryptography`, `4-identity`,
+      `6-events`, `B-wire-examples`, `C-security`, `D-conformance` are updated;
+      a deterministic v2 vector is still needed in `E-test-vectors`.
 - [ ] Evaluate an X25519 SIMD/backend option (portability tradeoff for old
       devices) if private-message latency remains a priority; matching a
       ratchet per message would require a session layer (protocol decision).

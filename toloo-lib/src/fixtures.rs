@@ -61,7 +61,12 @@ pub fn mk_private_message(sender: &LocalNode, recipient_sig: &str, ts: u64) -> E
         t: "private.message".to_owned(),
         ts,
         to: Some(recipient_sig.to_owned()),
-        c: Some(json!({"encrypted": "abc", "eph": sender.enc.pub_key})),
+        c: Some(json!({
+            "v": 2,
+            "from": sender.enc.pub_key,
+            "salt": base64url::encode(&[0u8; 32]),
+            "encrypted": "abc",
+        })),
         ..DatumBody::default()
     };
     sign_envelope(d, &sender.sig.priv_key).expect("sign should succeed")

@@ -40,7 +40,7 @@ toloo-lib/            Protocol + runtime — one crate
     ids.rs            eid, datum_id, channel_of
     events.rs         typed event builders + content field validators
     pow.rs            Proof-of-Work compute + verify
-    private.rs        private.message E2E encrypt/decrypt (ephemeral ECDH)
+    private.rs        private.message v2 E2E (static-static X25519, cached pair keys)
     rules.rs          room rule set parsing and evaluation
     keystore.rs       Argon2id + AEAD encrypted-at-rest key wrapping
     vectors.rs        deterministic test vector computation [REF]
@@ -303,14 +303,21 @@ against real protocol implementations:
 | Signal | `libsignal-protocol-syft` 0.85.3-beta.5 (X3DH, Double Ratchet, Kyber) | protobuf parse, ratchet encrypt/decrypt, session setup |
 | Matrix | `ruma-signatures` 0.22 (canonical JSON + ed25519), `vodozemac` 0.11 (Olm) | canonical encode/parse, sign/verify, Olm encrypt/decrypt/session setup |
 | Nostr | `nostr` 0.45 (secp256k1 Schnorr, NIP-44 v2) | event build/parse/verify, NIP-44 encrypt/decrypt |
-| Toloo | `toloo-lib` | private-message encrypt/decrypt (X25519 + ChaCha20-Poly1305) |
+| Toloo | `toloo-lib` | private-message v2 encrypt/decrypt (static-static X25519, cached pair key + per-message salt) |
 
 Measured rows feed the dashboard's latency cards and a 1:1 private-message card;
 rows tagged `est` remain reference estimates. Key generation and session setup
-are untimed (`iter_batched`), so decrypt figures are steady-state ratchet
-operations; the 1:1 card also shows a first-message line combining initiator
-setup with responder pre-key processing, so session amortization is visible.
-Cross-protocol numbers run on Linux x86 only.
+are untimed (`iter_batched`); Signal/Olm decrypt figures are steady-state ratchet
+operations, while Toloo/Nostr use a cached pairwise conversation key. The 1:1
+card shows a first-message line combining pair/session setup with responder
+processing, so setup amortization is visible. Cross-protocol numbers run on
+Linux x86 only.
+
+Toloo private messages use a v2 payload: sender X25519 public key, a random
+32-byte per-message salt, and the ciphertext. The pair key is one X25519
+computation per peer and can be cached; v1 ephemeral-key messages remain
+decryptable. This is stateless and asynchronous, but it provides **no forward
+secrecy**: a leaked static encryption key decrypts stored messages.
 
 ```sh
 cargo test -p toloo-protocol-bench --features protocols   # round-trip smoke tests

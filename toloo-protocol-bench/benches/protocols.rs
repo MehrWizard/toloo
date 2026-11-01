@@ -145,8 +145,9 @@ fn crypto_benches(c: &mut Criterion) {
     group.finish();
 }
 
-/// 1:1 private messages: Toloo X25519+ChaCha20-Poly1305, Signal Double
-/// Ratchet, Matrix Olm, Nostr NIP-44.
+/// 1:1 private messages: Toloo static-static X25519 (cached pair key) +
+/// ChaCha20-Poly1305, Signal Double Ratchet, Matrix Olm, Nostr NIP-44
+/// (cached conversation key).
 fn private_benches(c: &mut Criterion) {
     let mut group = c.benchmark_group("protocol_private");
     group.sample_size(10);
@@ -155,25 +156,48 @@ fn private_benches(c: &mut Criterion) {
     let content = payload_json();
     let payload = body();
 
-    let (recipient_pub, recipient_priv) = x25519_generate();
+    let (sender_pub, sender_priv) = x25519_generate();
+    let sender_pub = base64url::encode(&sender_pub);
+    let sender_priv = base64url::encode(&sender_priv);
+    let (recipient_pub, _recipient_priv) = x25519_generate();
     let recipient_pub = base64url::encode(&recipient_pub);
-    let recipient_priv = base64url::encode(&recipient_priv);
+    let pair_key = private::derive_pair_key(&sender_priv, &recipient_pub).expect("pair key");
+
+    group.bench_function("toloo_pair_setup", |b| {
+        b.iter(|| {
+            private::derive_pair_key(black_box(&sender_priv), black_box(&recipient_pub))
+                .expect("pair key")
+        })
+    });
 
     group.bench_function("toloo_encrypt", |b| {
         b.iter(|| {
-            private::encrypt_private(black_box(&content), black_box(&recipient_pub))
-                .expect("encrypt")
+            private::encrypt_private_v2_with_key(
+                black_box(&content),
+                black_box(&sender_pub),
+                black_box(&recipient_pub),
+                black_box(&pair_key),
+            )
+            .expect("encrypt")
         })
     });
 
     group.bench_function("toloo_decrypt", |b| {
         b.iter_batched(
-            || private::encrypt_private(&content, &recipient_pub).expect("encrypt"),
+            || {
+                private::encrypt_private_v2_with_key(
+                    &content,
+                    &sender_pub,
+                    &recipient_pub,
+                    &pair_key,
+                )
+                .expect("encrypt")
+            },
             |ciphertext| {
-                private::decrypt_private(
+                private::decrypt_private_v2_with_key(
                     black_box(&ciphertext),
-                    black_box(&recipient_priv),
                     black_box(&recipient_pub),
+                    black_box(&pair_key),
                 )
                 .expect("decrypt")
             },
@@ -285,13 +309,29 @@ fn private_benches(c: &mut Criterion) {
     });
 
     let nostr_pair = nostr::NostrPair::new();
-    group.bench_function("nostr_encrypt", |b| {
-        b.iter(|| nostr_pair.encrypt(black_box(payload.as_bytes())).expect("encrypt"))
+    let nostr_key = nostr_pair.conversation_key().expect("nostr pair key");
+
+    group.bench_function("nostr_pair_setup", |b| {
+        b.iter(|| nostr_pair.conversation_key().expect("pair key"))
     });
 
-    let nostr_ciphertext = nostr_pair.encrypt(payload.as_bytes()).expect("encrypt");
+    group.bench_function("nostr_encrypt", |b| {
+        b.iter(|| {
+            nostr_pair
+                .encrypt_cached(black_box(&nostr_key), black_box(payload.as_bytes()))
+                .expect("encrypt")
+        })
+    });
+
+    let nostr_ciphertext = nostr_pair
+        .encrypt_cached(&nostr_key, payload.as_bytes())
+        .expect("encrypt");
     group.bench_function("nostr_decrypt", |b| {
-        b.iter(|| nostr_pair.decrypt(black_box(&nostr_ciphertext)).expect("decrypt"))
+        b.iter(|| {
+            nostr_pair
+                .decrypt_cached(black_box(&nostr_key), black_box(&nostr_ciphertext))
+                .expect("decrypt")
+        })
     });
 
     group.finish();

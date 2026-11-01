@@ -1,12 +1,17 @@
-use anyhow::{Context, Result};
-use serde_json::Value;
+use std::collections::HashMap;
+
+use anyhow::{anyhow, Context, Result};
+use serde_json::{json, Value};
 
 use crate::base64url;
 use crate::canonical::canonical;
 use crate::crypto::{
-    chacha20_decrypt, chacha20_encrypt, derive_private_message_key, sha256, x25519_generate,
-    x25519_shared_secret,
+    chacha20_decrypt, chacha20_encrypt, derive_private_message_key, hkdf_sha256, sha256,
+    x25519_generate, x25519_shared_secret,
 };
+
+const PAIR_KEY_INFO: &[u8] = b"toloo-private-pair-v2";
+const MESSAGE_INFO: &[u8] = b"toloo-private-v2";
 
 /// The encrypted payload stored in `c` of a `private.message` envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,9 +107,202 @@ pub fn decrypt_private(
     serde_json::from_slice(&plaintext_bytes).context("decrypted content is not valid JSON")
 }
 
+/// v2 static-static private payload: the sender's long-lived X25519 public key,
+/// a random per-message salt, and the ciphertext (spec §3.5.3 v2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateCiphertextV2 {
+    /// 43-char base64url sender X25519 public key.
+    pub from: String,
+    /// 43-char base64url random 32-byte salt.
+    pub salt: String,
+    /// base64url ChaCha20-Poly1305 ciphertext (canonical JSON of content).
+    pub encrypted: String,
+}
+
+impl PrivateCiphertextV2 {
+    /// Serialize to the envelope `c` object.
+    pub fn to_content(&self) -> Value {
+        json!({
+            "v": 2,
+            "from": self.from,
+            "salt": self.salt,
+            "encrypted": self.encrypted,
+        })
+    }
+}
+
+fn decode_key(value: &str, label: &str) -> Result<[u8; 32]> {
+    let bytes = base64url::decode(value).with_context(|| format!("invalid {label} base64url"))?;
+    bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("{label} must decode to 32 bytes"))
+}
+
+/// Derive the cached pairwise key for a peer.
+///
+/// This is one X25519 operation per peer, not per message; callers should cache
+/// the result (for example with `PairKeyCache`) and reuse it for every message.
+pub fn derive_pair_key(own_enc_priv: &str, peer_enc_pub: &str) -> Result<[u8; 32]> {
+    let own = decode_key(own_enc_priv, "local enc priv")?;
+    let peer = decode_key(peer_enc_pub, "peer enc pub")?;
+    let mut shared = x25519_shared_secret(&own, &peer)?;
+    let okm = hkdf_sha256(&shared, PAIR_KEY_INFO, b"pair", 32);
+    shared.fill(0);
+
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&okm[..32]);
+    Ok(key)
+}
+
+fn message_key_from_pair(pair_key: &[u8; 32], salt: &[u8; 32]) -> ([u8; 32], [u8; 12]) {
+    let okm = hkdf_sha256(pair_key, salt, MESSAGE_INFO, 44);
+    let mut key = [0u8; 32];
+    let mut nonce = [0u8; 12];
+    key.copy_from_slice(&okm[0..32]);
+    nonce.copy_from_slice(&okm[32..44]);
+    (key, nonce)
+}
+
+fn message_salt_hash(sender_pub: &[u8; 32], recipient_pub: &[u8; 32], salt: &[u8; 32]) -> [u8; 32] {
+    let mut input = [0u8; 96];
+    input[..32].copy_from_slice(sender_pub);
+    input[32..64].copy_from_slice(recipient_pub);
+    input[64..].copy_from_slice(salt);
+    sha256(&input)
+}
+
+/// Encrypt a v2 private message with a freshly derived pairwise key.
+///
+/// Prefer `encrypt_private_v2_with_key` with a cached pair key for repeated
+/// messages to the same recipient.
+pub fn encrypt_private_v2(
+    content: &Value,
+    sender_enc_priv: &str,
+    sender_enc_pub: &str,
+    recipient_enc_pub: &str,
+) -> Result<PrivateCiphertextV2> {
+    let mut pair_key = derive_pair_key(sender_enc_priv, recipient_enc_pub)?;
+    let result = encrypt_private_v2_with_key(content, sender_enc_pub, recipient_enc_pub, &pair_key);
+    pair_key.fill(0);
+    result
+}
+
+/// Encrypt a v2 private message using a cached pairwise key.
+pub fn encrypt_private_v2_with_key(
+    content: &Value,
+    sender_enc_pub: &str,
+    recipient_enc_pub: &str,
+    pair_key: &[u8; 32],
+) -> Result<PrivateCiphertextV2> {
+    let sender_pub = decode_key(sender_enc_pub, "sender enc pub")?;
+    let recipient_pub = decode_key(recipient_enc_pub, "recipient enc pub")?;
+
+    let mut salt = [0u8; 32];
+    getrandom::fill(&mut salt).expect("system RNG failure");
+    let salt_hash = message_salt_hash(&sender_pub, &recipient_pub, &salt);
+    let (mut key, nonce) = message_key_from_pair(pair_key, &salt_hash);
+
+    let plaintext_bytes = canonical(content)?.into_bytes();
+    let ciphertext = chacha20_encrypt(&key, &nonce, &plaintext_bytes);
+    key.fill(0);
+
+    Ok(PrivateCiphertextV2 {
+        from: sender_enc_pub.to_owned(),
+        salt: base64url::encode(&salt),
+        encrypted: base64url::encode(&ciphertext),
+    })
+}
+
+/// Decrypt a v2 private message with a freshly derived pairwise key.
+pub fn decrypt_private_v2(
+    c: &PrivateCiphertextV2,
+    recipient_enc_priv: &str,
+    recipient_enc_pub: &str,
+) -> Result<Value> {
+    let mut pair_key = derive_pair_key(recipient_enc_priv, &c.from)?;
+    let result = decrypt_private_v2_with_key(c, recipient_enc_pub, &pair_key);
+    pair_key.fill(0);
+    result
+}
+
+/// Decrypt a v2 private message using a cached pairwise key.
+pub fn decrypt_private_v2_with_key(
+    c: &PrivateCiphertextV2,
+    recipient_enc_pub: &str,
+    pair_key: &[u8; 32],
+) -> Result<Value> {
+    let sender_pub = decode_key(&c.from, "sender enc pub")?;
+    let recipient_pub = decode_key(recipient_enc_pub, "recipient enc pub")?;
+    let salt = decode_key(&c.salt, "private salt")?;
+
+    let salt_hash = message_salt_hash(&sender_pub, &recipient_pub, &salt);
+    let (mut key, nonce) = message_key_from_pair(pair_key, &salt_hash);
+
+    let ciphertext = base64url::decode(&c.encrypted).context("invalid encrypted base64url")?;
+    let decrypted = chacha20_decrypt(&key, &nonce, &ciphertext);
+    key.fill(0);
+    let plaintext_bytes = decrypted.context("ChaCha20-Poly1305 decryption failed")?;
+
+    serde_json::from_slice(&plaintext_bytes).context("decrypted content is not valid JSON")
+}
+
+/// Small cache of pairwise keys for repeated messages to the same peers.
+///
+/// One cache belongs to one local identity: changing `own_enc_priv` requires
+/// `clear()`. When full, an arbitrary entry is evicted; callers can size the
+/// cache to their contact set.
+pub struct PairKeyCache {
+    capacity: usize,
+    keys: HashMap<String, [u8; 32]>,
+}
+
+impl PairKeyCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            keys: HashMap::new(),
+        }
+    }
+
+    pub fn pair_key(&mut self, own_enc_priv: &str, peer_enc_pub: &str) -> Result<[u8; 32]> {
+        if let Some(key) = self.keys.get(peer_enc_pub) {
+            return Ok(*key);
+        }
+
+        let key = derive_pair_key(own_enc_priv, peer_enc_pub)?;
+        if self.keys.len() >= self.capacity {
+            if let Some(oldest) = self.keys.keys().next().cloned() {
+                if let Some(mut old) = self.keys.remove(&oldest) {
+                    old.fill(0);
+                }
+            }
+        }
+        self.keys.insert(peer_enc_pub.to_owned(), key);
+        Ok(key)
+    }
+
+    pub fn clear(&mut self) {
+        for key in self.keys.values_mut() {
+            key.fill(0);
+        }
+        self.keys.clear();
+    }
+}
+
+impl Drop for PairKeyCache {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{decrypt_private, encrypt_private, encrypt_private_with_eph, PrivateCiphertext};
+    use super::{
+        decrypt_private, decrypt_private_v2, derive_pair_key, encrypt_private,
+        encrypt_private_v2, encrypt_private_v2_with_key, encrypt_private_with_eph,
+        PairKeyCache, PrivateCiphertext, PrivateCiphertextV2,
+    };
     use crate::base64url;
     use crate::fixtures::*;
 
@@ -237,5 +435,180 @@ mod tests {
             encrypted: "dGVzdA".to_owned(),
         };
         assert!(decrypt_private(&ct, &recipient.enc.priv_key, &recipient.enc.pub_key).is_err());
+    }
+
+    #[test]
+    fn v2_roundtrip_with_cached_pair_key() {
+        let sender = mk_node();
+        let recipient = mk_node();
+        let content = json!({"body": "hello v2", "blobs": []});
+
+        let mut cache = PairKeyCache::new(16);
+        let send_key = cache
+            .pair_key(&sender.enc.priv_key, &recipient.enc.pub_key)
+            .expect("sender pair key");
+        let ct = encrypt_private_v2_with_key(
+            &content,
+            &sender.enc.pub_key,
+            &recipient.enc.pub_key,
+            &send_key,
+        )
+        .expect("encrypt");
+
+        assert_eq!(ct.salt.len(), 43);
+        assert!(!ct.encrypted.is_empty());
+
+        let recv_key = cache
+            .pair_key(&recipient.enc.priv_key, &sender.enc.pub_key)
+            .expect("recipient pair key");
+        assert_eq!(send_key, recv_key, "X25519 pair keys must be symmetric");
+
+        let decrypted = super::decrypt_private_v2_with_key(
+            &ct,
+            &recipient.enc.pub_key,
+            &recv_key,
+        )
+        .expect("decrypt");
+        assert_eq!(decrypted, content);
+    }
+
+    #[test]
+    fn v2_cold_roundtrip_and_salt_uniqueness() {
+        let sender = mk_node();
+        let recipient = mk_node();
+        let content = json!({"body": "same content"});
+
+        let ct1 = encrypt_private_v2(
+            &content,
+            &sender.enc.priv_key,
+            &sender.enc.pub_key,
+            &recipient.enc.pub_key,
+        )
+        .expect("encrypt 1");
+        let ct2 = encrypt_private_v2(
+            &content,
+            &sender.enc.priv_key,
+            &sender.enc.pub_key,
+            &recipient.enc.pub_key,
+        )
+        .expect("encrypt 2");
+
+        assert_ne!(ct1.salt, ct2.salt, "salt must be fresh per message");
+        assert_ne!(ct1.encrypted, ct2.encrypted);
+        assert_eq!(ct1.from, sender.enc.pub_key);
+
+        for ct in [ct1, ct2] {
+            let decrypted = decrypt_private_v2(
+                &ct,
+                &recipient.enc.priv_key,
+                &recipient.enc.pub_key,
+            )
+            .expect("decrypt");
+            assert_eq!(decrypted, content);
+        }
+    }
+
+    #[test]
+    fn v2_tamper_and_wrong_sender_fail() {
+        let sender = mk_node();
+        let recipient = mk_node();
+        let wrong = mk_node();
+        let content = json!({"body": "secret"});
+
+        let ct = encrypt_private_v2(
+            &content,
+            &sender.enc.priv_key,
+            &sender.enc.pub_key,
+            &recipient.enc.pub_key,
+        )
+        .expect("encrypt");
+
+        let mut tampered = ct.clone();
+        let mut bytes = base64url::decode(&tampered.encrypted).unwrap();
+        *bytes.last_mut().unwrap() ^= 0xff;
+        tampered.encrypted = base64url::encode(&bytes);
+        assert!(decrypt_private_v2(
+            &tampered,
+            &recipient.enc.priv_key,
+            &recipient.enc.pub_key
+        )
+        .is_err());
+
+        let mut impostor = ct;
+        impostor.from = wrong.enc.pub_key.clone();
+        assert!(decrypt_private_v2(
+            &impostor,
+            &recipient.enc.priv_key,
+            &recipient.enc.pub_key
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn v2_invalid_fields_are_rejected() {
+        let sender = mk_node();
+        let recipient = mk_node();
+        let content = json!({"body": "x"});
+        let key = derive_pair_key(&sender.enc.priv_key, &recipient.enc.pub_key).unwrap();
+
+        let mut ct = encrypt_private_v2_with_key(
+            &content,
+            &sender.enc.pub_key,
+            &recipient.enc.pub_key,
+            &key,
+        )
+        .unwrap();
+        ct.salt = "bad".to_owned();
+        assert!(super::decrypt_private_v2_with_key(&ct, &recipient.enc.pub_key, &key).is_err());
+    }
+
+    #[test]
+    fn pair_key_cache_reuses_and_clears() {
+        let sender = mk_node();
+        let recipient = mk_node();
+        let mut cache = PairKeyCache::new(2);
+
+        let first = cache
+            .pair_key(&sender.enc.priv_key, &recipient.enc.pub_key)
+            .unwrap();
+        let second = cache
+            .pair_key(&sender.enc.priv_key, &recipient.enc.pub_key)
+            .unwrap();
+        assert_eq!(first, second);
+
+        cache.clear();
+        let third = cache
+            .pair_key(&sender.enc.priv_key, &recipient.enc.pub_key)
+            .unwrap();
+        assert_eq!(first, third);
+    }
+
+    #[test]
+    fn v2_content_shape_is_versioned() {
+        let sender = mk_node();
+        let recipient = mk_node();
+        let ct = encrypt_private_v2(
+            &json!({"body": "x"}),
+            &sender.enc.priv_key,
+            &sender.enc.pub_key,
+            &recipient.enc.pub_key,
+        )
+        .unwrap();
+        let content = ct.to_content();
+        assert_eq!(content["v"], 2);
+        assert_eq!(content["from"], sender.enc.pub_key);
+        assert_eq!(content["salt"], ct.salt);
+        assert_eq!(content["encrypted"], ct.encrypted);
+    }
+
+    #[test]
+    fn v2_empty_ciphertext_fails() {
+        let recipient = mk_node();
+        let ct = PrivateCiphertextV2 {
+            from: recipient.enc.pub_key.clone(),
+            salt: base64url::encode(&[0u8; 32]),
+            encrypted: String::new(),
+        };
+        assert!(decrypt_private_v2(&ct, &recipient.enc.priv_key, &recipient.enc.pub_key).is_err());
     }
 }

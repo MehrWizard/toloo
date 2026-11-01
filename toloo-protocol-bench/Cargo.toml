@@ -13,6 +13,7 @@ toloo-lib = { path = "../toloo-lib" }
 
 # Heavy protocol libraries are optional so normal workspace builds/tests never
 # compile them.
+base64 = { version = "0.22", optional = true }
 ed25519-dalek = { version = "3", features = ["pkcs8"], optional = true }
 libsignal-protocol-syft = { version = "=0.85.3-beta.5", optional = true }
 nostr = { version = "0.45", features = ["nip44", "os-rng"], optional = true }
@@ -25,6 +26,7 @@ vodozemac = { version = "0.11", optional = true }
 [features]
 default = []
 protocols = [
+    "dep:base64",
     "dep:ed25519-dalek",
     "dep:libsignal-protocol-syft",
     "dep:nostr",

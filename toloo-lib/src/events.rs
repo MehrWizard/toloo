@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 
 use crate::base64url;
 use crate::envelope::{innermost, make_envelope, now_ms, sign_envelope, wrap_commit, DatumBodyExtra};
-use crate::private::encrypt_private;
+use crate::private::encrypt_private_v2;
 use crate::types::{DatumBody, EndpointDescriptor, Envelope, LocalNode, LocalRoom};
 
 const MAX_MESSAGE_BODY: usize = 4096;
@@ -267,12 +267,13 @@ pub fn make_private_message(
     blobs: Vec<String>,
 ) -> Result<Envelope> {
     let content_obj = json!({ "body": body, "blobs": blobs });
-    let ct = encrypt_private(&content_obj, to_enc_pub)?;
-
-    let content = json!({
-        "eph": ct.eph,
-        "encrypted": ct.encrypted
-    });
+    let ct = encrypt_private_v2(
+        &content_obj,
+        &sender.enc.priv_key,
+        &sender.enc.pub_key,
+        to_enc_pub,
+    )?;
+    let content = ct.to_content();
 
     let extra = DatumBodyExtra {
         to: Some(to.to_owned()),
@@ -635,11 +636,31 @@ fn validate_room_blob(d: &DatumBody) -> Result<()> {
 
 fn validate_private_payload(d: &DatumBody) -> Result<()> {
     let c = content_object(d)?;
-    let eph = c
-        .get("eph")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("private payload requires c.eph"))?;
-    ensure_base64url_key(eph, "private payload eph")?;
+
+    if let Some(version) = c.get("v") {
+        let version = version
+            .as_u64()
+            .ok_or_else(|| anyhow!("private payload v must be a number"))?;
+        if version != 2 {
+            bail!("unsupported private payload version {version}");
+        }
+        let from = c
+            .get("from")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("private payload v2 requires c.from"))?;
+        ensure_base64url_key(from, "private payload from")?;
+        let salt = c
+            .get("salt")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("private payload v2 requires c.salt"))?;
+        ensure_base64url_key(salt, "private payload salt")?;
+    } else {
+        let eph = c
+            .get("eph")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("private payload requires c.eph"))?;
+        ensure_base64url_key(eph, "private payload eph")?;
+    }
 
     let encrypted = c
         .get("encrypted")
@@ -768,7 +789,7 @@ mod tests {
 
     use crate::envelope::{depth, sign_envelope, verify_chain};
     use crate::types::DatumBody;
-    use serde_json::json;
+    use serde_json::{json, Value};
     
     #[test]
     fn make_node_meta_puts_enc_in_content() {
@@ -868,13 +889,18 @@ mod tests {
         assert_eq!(env.d.to.as_deref(), Some(recipient.sig.pub_key.as_str()));
         validate_event_content(&env).expect("private.message should validate");
 
-        // c.eph must be a fresh ephemeral key — not the recipient's permanent enc pub.
+        // v2 static-static shape: sender enc key + per-message salt, no ephemeral key.
         let c = env.d.c.as_ref().unwrap();
-        let eph = c.get("eph").and_then(|v| v.as_str()).unwrap();
-        assert_ne!(
-            eph, recipient.enc.pub_key,
-            "c.eph must be ephemeral, not recipient's permanent enc pub"
+        assert_eq!(c.get("v").and_then(Value::as_u64), Some(2));
+        assert_eq!(
+            c.get("from").and_then(Value::as_str),
+            Some(sender.enc.pub_key.as_str())
         );
+        assert_eq!(
+            c.get("salt").and_then(Value::as_str).map(str::len),
+            Some(43)
+        );
+        assert!(c.get("eph").is_none());
         // c.encrypted must be non-empty base64url (real ciphertext, not plaintext).
         let encrypted = c.get("encrypted").and_then(|v| v.as_str()).unwrap();
         let decoded = crate::base64url::decode(encrypted).expect("must be valid base64url");
