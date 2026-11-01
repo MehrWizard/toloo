@@ -51,6 +51,18 @@ pub async fn handle_request(
         return Ok(vec![error_bytes("invalid_signature", &e.to_string())]);
     }
 
+    handle_request_verified(envelope, pool, config).await
+}
+
+/// Dispatch an already-verified request envelope.
+///
+/// The batch processor verifies a whole batch of request envelopes together
+/// and then calls this per request to avoid a second single-signature check.
+pub(crate) async fn handle_request_verified(
+    envelope: Envelope,
+    pool: &Arc<Pool>,
+    config: &RelayConfig,
+) -> Result<Vec<Vec<u8>>> {
     let d = &innermost(&envelope).d;
     let responses = match d.t.as_str() {
         "events.sync" => handle_events_sync(d.c.as_ref(), pool),
@@ -602,7 +614,7 @@ fn envelopes_json_bytes(entries: Vec<Arc<crate::pool::PoolEntry>>) -> Vec<Vec<u8
         .collect()
 }
 
-fn error_bytes(code: &str, message: &str) -> Vec<u8> {
+pub(crate) fn error_bytes(code: &str, message: &str) -> Vec<u8> {
     format!("{{\"error\":\"{}\",\"message\":\"{}\"}}", code, message).into_bytes()
 }
 

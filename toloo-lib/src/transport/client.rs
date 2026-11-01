@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, Connector, MaybeTlsStream};
 use std::sync::Arc;
 
-use crate::envelope::{make_envelope, parse_envelope, verify_chain};
+use crate::envelope::{make_envelope, parse_envelope, verify_chain, verify_chains_batch};
 use crate::types::{Envelope, LocalNode};
 
 #[cfg(feature = "tls")]
@@ -95,14 +95,12 @@ pub async fn pool_exchange_ws(
             if v.get("error").is_some() { continue; }
             if v.get("wr").is_some() { continue; }
             if let Ok(env) = parse_envelope(v) {
-                if verify_chain(&env).is_ok() {
-                    results.push(env);
-                }
+                results.push(env);
             }
         }
     }
     let _ = ws.close(None).await;
-    Ok(results)
+    Ok(verify_envelope_batch(results))
 }
 
 /// Perform `pool.exchange` over HTTP/HTTPS.
@@ -124,12 +122,28 @@ pub async fn pool_exchange_http(
     for v in values {
         if v.get("error").is_some() || v.get("done").is_some() { continue; }
         if let Ok(env) = parse_envelope(v) {
-            if verify_chain(&env).is_ok() {
-                results.push(env);
-            }
+            results.push(env);
         }
     }
-    Ok(results)
+    Ok(verify_envelope_batch(results))
+}
+
+/// Verify a sync response with one batch when it contains multiple envelopes.
+fn verify_envelope_batch(envelopes: Vec<Envelope>) -> Vec<Envelope> {
+    if envelopes.len() < 2 {
+        return envelopes
+            .into_iter()
+            .filter(|env| verify_chain(env).is_ok())
+            .collect();
+    }
+
+    let refs: Vec<&Envelope> = envelopes.iter().collect();
+    let verdicts = verify_chains_batch(&refs);
+    envelopes
+        .into_iter()
+        .zip(verdicts)
+        .filter_map(|(env, verdict)| verdict.ok().map(|_| env))
+        .collect()
 }
 
 /// Auto-detect transport from URL scheme and perform `pool.exchange`.
