@@ -54,7 +54,6 @@ jobs:
   build-android:
     name: Android APK (experimental)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -264,7 +263,7 @@ jobs:
   release:
     name: Create Release
     needs: [build-native, build-android, build-cli, build-wasm]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.build-android.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
