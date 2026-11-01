@@ -20,8 +20,11 @@ jobs:
           key: native
       - name: Test core and runtime
         run: cargo test -p toloo-core -p toloo-lib -p toloo-wasm
-      - name: Check all workspace targets
-        run: cargo check --workspace --all-targets
+      # Tauri (toloo-app) needs GTK/WebKit system libraries; the release
+      # workflow builds it. This job covers the portable core, runtime, CLI,
+      # and wasm crates.
+      - name: Check all targets
+        run: cargo check -p toloo-core -p toloo-lib -p toloo-cli -p toloo-wasm --all-targets
 
   wasm:
     name: Wasm tests and package
