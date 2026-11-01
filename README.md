@@ -277,20 +277,20 @@ cargo bench -p toloo-protocol-bench --features protocols --bench protocols
 
 ### Throughput vs IRC/XMPP/Matrix
 
-Measured on CI (commit d6a798d, linux-x86):
+Measured on CI (commit 002c29d, linux-x86):
 
 | Category | Toloo (ns) | IRC (ns) | Ratio |
 |----------|-----------|----------|-------|
-| ed25519 verify (single-sig) | 34,835 | 45,000 | 1.29x slower |
-| ed25519 verify (batch-10, per-sig) | 19,043 | 45,000 | **2.36x faster** ✅ |
-| Envelope verify (depth-1) | 35,129 | 50,000 | 1.43x slower |
-| Canonical encode (medium) | 1,595 | 150,000 | 94x faster ✅ |
+| ed25519 verify (single-sig) | 30,411 | 45,000 | 1.48x slower |
+| ed25519 verify (batch-10, per-sig) | 18,783 | 45,000 | **2.40x faster** ✅ |
+| Envelope verify (depth-1) | 31,514 | 50,000 | 1.59x slower |
+| Canonical encode (medium) | 1,707 | 150,000 | 88x faster ✅ |
 
-**2x is achievable with batch verification** on every measured platform in this
-run: linux-x86 2.36x, windows 2.47x, linux-arm 2.08x, macOS-x86 2.46x, macOS-arm
-2.21x. Single-signature verification does not reach 2x on any platform.
-GitHub-runner variance is significant between runs (absolute numbers can move
-20–50%), so use same-run ratios; the dashboard keeps the per-commit history.
+**2x is achievable with batch verification** on linux-x86 (2.40x), windows
+(2.43x), linux-arm (2.10x), and macOS-x86 (2.70x); macOS-arm reaches 1.77x.
+Single-signature verification does not reach 2x on any platform. GitHub-runner
+variance is significant between runs (absolute numbers can move 20–50%), so use
+same-run ratios; the dashboard keeps the per-commit history.
 
 ### Cross-protocol benchmarks (Signal, Matrix, Nostr)
 

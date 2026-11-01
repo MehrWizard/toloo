@@ -741,56 +741,57 @@ Matrix estimate row and omits the 1:1 card, so local generation from
   canonical JSON, Nostr event JSON. The rows compare the closest equivalent
   operation, not byte-identical work.
 
-### CI results (commit d6a798d, linux-x86)
+### CI results (commit 002c29d, linux-x86)
 
-The `bench-protocols` job published these means on 2026-10-31 (second run,
-after the responder-side benches and the decrypt change):
+Third `bench-protocols` run, after the v2 static-static switch and cached
+pair/conversation-key benchmarks (24 benchmarks):
 
 | Benchmark | Mean |
 |---|---|
-| `protocol_canonical/matrix` | 636 ns |
-| `protocol_canonical/nostr` | 1.23 µs |
-| `protocol_verify/matrix` | 30.7 µs |
-| `protocol_verify/nostr` | 28.4 µs |
-| `protocol_parse/matrix` | 704 ns |
-| `protocol_parse/signal` | 243 ns |
-| `protocol_parse/nostr` | 477 ns |
-| `protocol_build/matrix` | 16.5 µs |
-| `protocol_build/nostr` | 46.7 µs |
-| `protocol_crypto/matrix_verify` | 29.7 µs |
-| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 49.7 / 49.3 µs |
-| `protocol_private/signal_setup` / `signal_inbound` | 295 / 275 µs |
-| `protocol_private/signal_encrypt` / `signal_decrypt` | 9.1 / 92.5 µs |
-| `protocol_private/olm_setup` / `olm_inbound` | 113 / 105 µs |
-| `protocol_private/olm_encrypt` / `olm_decrypt` | 15.2 / 3.3 µs |
-| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 32.4 / 31.7 µs |
+| `protocol_canonical/matrix` | 1.02 µs |
+| `protocol_canonical/nostr` | 1.21 µs |
+| `protocol_verify/matrix` | 45.4 µs |
+| `protocol_verify/nostr` | 45.4 µs |
+| `protocol_parse/matrix` | 1.12 µs |
+| `protocol_parse/signal` | 334 ns |
+| `protocol_parse/nostr` | 703 ns |
+| `protocol_build/matrix` | 28.3 µs |
+| `protocol_build/nostr` | 76.4 µs |
+| `protocol_crypto/matrix_verify` | 44.4 µs |
+| `protocol_private/toloo_pair_setup` | 58.5 µs |
+| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 9.8 / 20.5 µs |
+| `protocol_private/nostr_pair_setup` | 46.6 µs |
+| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 4.78 / 4.71 µs |
+| `protocol_private/signal_setup` / `signal_inbound` | 485 / 460 µs |
+| `protocol_private/signal_encrypt` / `signal_decrypt` | 13.3 / 149 µs |
+| `protocol_private/olm_setup` / `olm_inbound` | 192 / 179 µs |
+| `protocol_private/olm_encrypt` / `olm_decrypt` | 22.8 / 4.65 µs |
 
-Against the same run's Toloo relay numbers (canonical 1.60 µs, verify 35.1 µs,
-parse 2.26 µs, event build 38.9 µs, raw ed25519 verify 34.8 µs), the measured
-Matrix rows range from 0.31× (parse) to 1.14× (signature verify) of Toloo;
-Nostr ranges from 0.21× to 1.20×. They are the same order of magnitude, not the
-orders-of-magnitude gaps the old estimates implied.
+Against the same run's Toloo relay numbers (canonical 1.71 µs, verify 31.5 µs,
+parse 2.09 µs, event build 35.6 µs, raw ed25519 verify 30.4 µs), Matrix
+measured rows range from 0.53× (parse) to 1.46× (raw ed25519 verify); Nostr
+ranges from 0.34× (parse) to 2.15× (event build). They remain the same order
+of magnitude.
 
-**First-message economics.** Combining initiator setup with the first encrypt,
-and responder pre-key processing with the first decrypt:
+**First-message economics.** Pair/session setup included for the first message;
+steady state uses cached keys for Toloo/Nostr and established sessions for
+Signal/Olm:
 
 | Protocol | first send | first receive | steady enc / dec |
 |---|---|---|---|
-| Toloo | 49.7 µs (no setup) | 49.3 µs | 49.7 / 49.3 µs |
-| Olm | 127.8 µs | 105.3 µs | 15.2 / 3.3 µs |
-| Signal | 304.3 µs | 275.3 µs | 9.1 / 92.5 µs |
-| Nostr | 32.4 µs (no session) | 31.7 µs | 32.4 / 31.7 µs |
+| Toloo | 68.4 µs | 79.0 µs | 9.8 / 20.5 µs |
+| Olm | 214 µs | 179 µs | 22.8 / 4.65 µs |
+| Signal | 499 µs | 460 µs | 13.3 / 149 µs |
+| Nostr | 51.4 µs | 51.3 µs | 4.78 / 4.71 µs |
 
-Toloo is mid-pack on a new conversation and pays the same cost per message;
-Olm/Signal amortize their setup after a few messages, while Nostr is cheaper
-per message because it uses one static ECDH instead of Toloo's ephemeral key
-agreement.
+Toloo's pair setup (X25519 + HKDF) is 58.5 µs versus Nostr's 46.6 µs
+(secp256k1 ECDH + HKDF). After caching, Toloo's steady state is ~2× slower to
+encrypt and ~4× slower to decrypt than Nostr; the decrypt gap is mostly the
+canonical-JSON parse plus the X25519-vs-libsecp backend, not the AEAD.
 
-**Runner variance.** Hosted-runner hardware changed between the two Phase 9
-runs: every protocol absolute number moved 20–50% (e.g. Matrix verify 43.9 →
-30.7 µs). Treat the per-commit absolute values as snapshots and compare ratios
-within a single run. Cross-platform relay numbers show the same effect
-(`THROUGHPUT_AUDIT` local tables and the dashboard history are the record).
+**Runner variance.** Hosted-runner hardware changes between runs; absolute
+values moved 20–50% across Phase 9 runs. Treat each run's ratios as the
+signal and the dashboard history as the record.
 
 ### Future protocol coverage
 
