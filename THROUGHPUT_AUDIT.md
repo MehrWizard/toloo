@@ -694,6 +694,12 @@ implementations and feeds measured rows into the same latency cards plus a new
   measures the ECDH + pair-key HKDF; `toloo_encrypt`/`toloo_decrypt` use a
   precomputed pair key, so they are steady-state symmetric operations. v1
   ephemeral messages remain decryptable.
+- The `aws-lc` feature (implied by `tls`, enabled by default) backs X25519 and
+  ChaCha20-Poly1305 with AWS-LC assembly and runtime CPU detection; builds
+  without it use `x25519-dalek` and RustCrypto ChaCha20-Poly1305. The base64url
+  codec is table-driven and canonical string writing has a no-escape fast path;
+  these removed the data-dependent decoder cost and most of the per-message
+  symmetric overhead.
 - Nostr is benchmarked the same way: `nostr_pair_setup` derives the NIP-44
   conversation key once, and `nostr_encrypt`/`nostr_decrypt` use the cached key
   (the library's per-call API otherwise recomputes the ECDH every time).

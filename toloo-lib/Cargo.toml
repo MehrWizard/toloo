@@ -13,6 +13,7 @@ path = "src/lib.rs"
 getrandom        = "0.3"
 ed25519-dalek    = { version = "3", default-features = false, features = ["fast", "zeroize", "pkcs8", "signature", "alloc", "batch"] }
 x25519-dalek     = { version = "3", default-features = false, features = ["static_secrets", "zeroize"] }
+aws-lc-rs        = { version = "1", optional = true }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 hmac             = "0.12"
 sha2             = "0.10"
@@ -46,7 +47,9 @@ dashmap = "6.2.1"
 [features]
 default = ["tls", "argon2"]
 # TLS support for wss/https relay endpoints
-tls = ["tokio-rustls", "rustls/std", "rustls/tls12", "rustls/aws-lc-rs", "x509-cert/std", "x509-cert/pem", "der", "const-oid", "tokio-tungstenite/rustls-tls-webpki-roots"]
+tls = ["tokio-rustls", "rustls/std", "rustls/tls12", "rustls/aws-lc-rs", "x509-cert/std", "x509-cert/pem", "der", "const-oid", "tokio-tungstenite/rustls-tls-webpki-roots", "aws-lc"]
+# Assembly-accelerated X25519 with runtime CPU detection; dalek is the fallback
+aws-lc = ["dep:aws-lc-rs"]
 # Argon2 for key derivation (password hashing)
 argon2 = ["dep:argon2"]
 

@@ -303,7 +303,7 @@ against real protocol implementations:
 | Signal | `libsignal-protocol-syft` 0.85.3-beta.5 (X3DH, Double Ratchet, Kyber) | protobuf parse, ratchet encrypt/decrypt, session setup |
 | Matrix | `ruma-signatures` 0.22 (canonical JSON + ed25519), `vodozemac` 0.11 (Olm) | canonical encode/parse, sign/verify, Olm encrypt/decrypt/session setup |
 | Nostr | `nostr` 0.45 (secp256k1 Schnorr, NIP-44 v2) | event build/parse/verify, NIP-44 encrypt/decrypt |
-| Toloo | `toloo-lib` | private-message v2 encrypt/decrypt (static-static X25519, cached pair key + per-message salt) |
+| Toloo | `toloo-lib` | private-message v2 encrypt/decrypt (static-static X25519 via `aws-lc-rs` with dalek fallback, cached pair key + per-message salt) |
 
 Measured rows feed the dashboard's latency cards and a 1:1 private-message card;
 rows tagged `est` remain reference estimates. Key generation and session setup

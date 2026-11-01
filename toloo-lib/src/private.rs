@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 
 use crate::base64url;
-use crate::canonical::canonical;
+use crate::canonical::canonical_value_bytes;
 use crate::crypto::{
     chacha20_decrypt, chacha20_encrypt, derive_private_message_key, hkdf_sha256, sha256,
     x25519_generate, x25519_shared_secret,
@@ -63,7 +63,7 @@ pub fn encrypt_private_with_eph(
     let (key, nonce) = derive_private_message_key(&shared, &salt);
 
     // Step 6-7: encrypt canonical(content).
-    let plaintext_bytes = canonical(content)?.into_bytes();
+    let plaintext_bytes = canonical_value_bytes(content)?;
     let ciphertext = chacha20_encrypt(&key, &nonce, &plaintext_bytes);
 
     Ok(PrivateCiphertext {
@@ -203,7 +203,7 @@ pub fn encrypt_private_v2_with_key(
     let salt_hash = message_salt_hash(&sender_pub, &recipient_pub, &salt);
     let (mut key, nonce) = message_key_from_pair(pair_key, &salt_hash);
 
-    let plaintext_bytes = canonical(content)?.into_bytes();
+    let plaintext_bytes = canonical_value_bytes(content)?;
     let ciphertext = chacha20_encrypt(&key, &nonce, &plaintext_bytes);
     key.fill(0);
 

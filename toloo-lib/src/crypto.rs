@@ -1,11 +1,15 @@
 use anyhow::{anyhow, Context, Result};
+#[cfg(not(feature = "aws-lc"))]
 use chacha20poly1305::aead::Aead;
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
+#[cfg(not(feature = "aws-lc"))]
+use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use dashmap::DashMap;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey, verify_batch};
+use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::sync::LazyLock;
+#[cfg(not(feature = "aws-lc"))]
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::base64url;
@@ -143,27 +147,77 @@ where
     verify_batch(&messages, &signatures, &verifying_keys).map_err(|e| anyhow!("batch verification failed: {e}"))
 }
 
+#[cfg(feature = "aws-lc")]
+fn aws_x25519_public(priv_bytes: &[u8; 32]) -> Result<[u8; 32]> {
+    use aws_lc_rs::agreement::{PrivateKey, X25519};
+    let key = PrivateKey::from_private_key(&X25519, priv_bytes)
+        .map_err(|_| anyhow!("invalid X25519 private key"))?;
+    let public = key
+        .compute_public_key()
+        .map_err(|_| anyhow!("X25519 public key derivation failed"))?;
+    public
+        .as_ref()
+        .try_into()
+        .map_err(|_| anyhow!("invalid X25519 public key length"))
+}
+
 /// Generate an X25519 keypair (public key, private key) from system randomness.
 pub fn x25519_generate() -> (Vec<u8>, Vec<u8>) {
     let mut priv_bytes = [0u8; 32];
     getrandom::fill(&mut priv_bytes).expect("system RNG failure");
-    let secret = StaticSecret::from(priv_bytes);
-    (PublicKey::from(&secret).as_bytes().to_vec(), priv_bytes.to_vec())
+
+    #[cfg(feature = "aws-lc")]
+    {
+        let public = aws_x25519_public(&priv_bytes).expect("X25519 public key derivation failed");
+        (public.to_vec(), priv_bytes.to_vec())
+    }
+
+    #[cfg(not(feature = "aws-lc"))]
+    {
+        let secret = StaticSecret::from(priv_bytes);
+        (PublicKey::from(&secret).as_bytes().to_vec(), priv_bytes.to_vec())
+    }
 }
 
 /// Derive an X25519 public key from a 32-byte private key.
 pub fn x25519_pub_from_seed(priv_key: &[u8; 32]) -> [u8; 32] {
-    *PublicKey::from(&StaticSecret::from(*priv_key)).as_bytes()
+    #[cfg(feature = "aws-lc")]
+    {
+        aws_x25519_public(priv_key).expect("X25519 public key derivation failed")
+    }
+
+    #[cfg(not(feature = "aws-lc"))]
+    {
+        *PublicKey::from(&StaticSecret::from(*priv_key)).as_bytes()
+    }
 }
 
 /// Compute X25519 shared secret.
 pub fn x25519_shared_secret(my_priv: &[u8], their_pub: &[u8]) -> Result<Vec<u8>> {
-    let my_priv_bytes = exact_bytes(my_priv, "X25519 private key")?;
-    let their_pub_bytes = exact_bytes(their_pub, "X25519 public key")?;
-    let my_secret = StaticSecret::from(my_priv_bytes);
-    let their_public = PublicKey::from(their_pub_bytes);
-    let shared = my_secret.diffie_hellman(&their_public);
-    Ok(shared.as_bytes().to_vec())
+    let my_priv_bytes: [u8; 32] = exact_bytes(my_priv, "X25519 private key")?;
+    let their_pub_bytes: [u8; 32] = exact_bytes(their_pub, "X25519 public key")?;
+
+    #[cfg(feature = "aws-lc")]
+    {
+        use aws_lc_rs::agreement::{agree, PrivateKey, UnparsedPublicKey, X25519};
+        let private_key = PrivateKey::from_private_key(&X25519, &my_priv_bytes)
+            .map_err(|_| anyhow!("invalid X25519 private key"))?;
+        let peer = UnparsedPublicKey::new(&X25519, their_pub_bytes);
+        agree(
+            &private_key,
+            peer,
+            anyhow!("X25519 agreement failed"),
+            |secret| Ok(secret.to_vec()),
+        )
+    }
+
+    #[cfg(not(feature = "aws-lc"))]
+    {
+        let my_secret = StaticSecret::from(my_priv_bytes);
+        let their_public = PublicKey::from(their_pub_bytes);
+        let shared = my_secret.diffie_hellman(&their_public);
+        Ok(shared.as_bytes().to_vec())
+    }
 }
 
 /// SHA-256 digest.
@@ -218,18 +272,62 @@ pub fn derive_private_message_key(shared: &[u8], salt: &[u8]) -> ([u8; 32], [u8;
 
 /// ChaCha20-Poly1305 encryption.
 pub fn chacha20_encrypt(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Vec<u8> {
-    let cipher = ChaCha20Poly1305::new(key.into());
-    cipher
-        .encrypt(Nonce::from_slice(nonce), plaintext)
-        .expect("encryption failed for input length")
+    #[cfg(feature = "aws-lc")]
+    {
+        use aws_lc_rs::aead::{
+            Aad, LessSafeKey, Nonce as LcNonce, UnboundKey, CHACHA20_POLY1305,
+        };
+        let cipher = LessSafeKey::new(
+            UnboundKey::new(&CHACHA20_POLY1305, key).expect("valid ChaCha20-Poly1305 key"),
+        );
+        let mut out = plaintext.to_vec();
+        cipher
+            .seal_in_place_append_tag(
+                LcNonce::assume_unique_for_key(*nonce),
+                Aad::empty(),
+                &mut out,
+            )
+            .expect("ChaCha20-Poly1305 encryption failed");
+        out
+    }
+
+    #[cfg(not(feature = "aws-lc"))]
+    {
+        let cipher = ChaCha20Poly1305::new(key.into());
+        cipher
+            .encrypt(Nonce::from_slice(nonce), plaintext)
+            .expect("encryption failed for input length")
+    }
 }
 
 /// ChaCha20-Poly1305 decryption.
 pub fn chacha20_decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8]) -> Result<Vec<u8>> {
-    let cipher = ChaCha20Poly1305::new(key.into());
-    cipher
-        .decrypt(Nonce::from_slice(nonce), ciphertext)
-        .map_err(|_| anyhow!("ChaCha20-Poly1305 authentication failed"))
+    #[cfg(feature = "aws-lc")]
+    {
+        use aws_lc_rs::aead::{
+            Aad, LessSafeKey, Nonce as LcNonce, UnboundKey, CHACHA20_POLY1305,
+        };
+        let cipher = LessSafeKey::new(
+            UnboundKey::new(&CHACHA20_POLY1305, key).expect("valid ChaCha20-Poly1305 key"),
+        );
+        let mut out = ciphertext.to_vec();
+        let plaintext = cipher
+            .open_in_place(
+                LcNonce::assume_unique_for_key(*nonce),
+                Aad::empty(),
+                &mut out,
+            )
+            .map_err(|_| anyhow!("ChaCha20-Poly1305 authentication failed"))?;
+        Ok(plaintext.to_vec())
+    }
+
+    #[cfg(not(feature = "aws-lc"))]
+    {
+        let cipher = ChaCha20Poly1305::new(key.into());
+        cipher
+            .decrypt(Nonce::from_slice(nonce), ciphertext)
+            .map_err(|_| anyhow!("ChaCha20-Poly1305 authentication failed"))
+    }
 }
 
 fn exact_bytes<const N: usize>(input: &[u8], name: &str) -> Result<[u8; N]> {

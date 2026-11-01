@@ -53,11 +53,12 @@ git. Current remaining work, in priority order:
       Rust private messages. Spec docs `3-cryptography`, `4-identity`,
       `6-events`, `B-wire-examples`, `C-security`, `D-conformance` are updated;
       a deterministic v2 vector is still needed in `E-test-vectors`.
-- [ ] Evaluate a faster X25519 backend: `aws-lc-rs` is already in the
-      dependency graph via rustls and provides assembly-accelerated X25519 with
-      runtime CPU detection (especially for ARM); keep ed25519-dalek for batched
-      verification. Matching a ratchet per message would require a session layer
-      (protocol decision).
+- [x] Faster crypto backend: X25519 and ChaCha20-Poly1305 now use `aws-lc-rs`
+      (assembly + runtime CPU detection; already linked via rustls) with the
+      dalek/RustCrypto fallback when TLS/aws-lc is disabled. Table-driven
+      base64url and a canonical-string fast path removed the remaining
+      per-message overhead. Keep ed25519-dalek for batched verification.
+      Matching a ratchet per message would require a session layer.
 - [ ] Future cross-protocol coverage: measured IRC/XMPP serialization (no
       per-message crypto), and MLS/OpenMLS as the room-commit analogue.
 

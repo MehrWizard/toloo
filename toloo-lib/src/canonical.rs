@@ -211,6 +211,17 @@ fn write_object_bytes(map: &Map<String, Value>, out: &mut Vec<u8>) -> Result<()>
 fn write_string_bytes(input: &str, out: &mut Vec<u8>) {
     out.push(b'"');
     let bytes = input.as_bytes();
+
+    // Fast path: no escaping needed (typical message bodies).
+    if bytes
+        .iter()
+        .all(|&b| b >= 0x20 && b != b'"' && b != b'\\')
+    {
+        out.extend_from_slice(bytes);
+        out.push(b'"');
+        return;
+    }
+
     let mut last = 0;
     for (i, &b) in bytes.iter().enumerate() {
         let escape: Option<&[u8]> = match b {
