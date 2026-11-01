@@ -277,20 +277,21 @@ cargo bench -p toloo-protocol-bench --features protocols --bench protocols
 
 ### Throughput vs IRC/XMPP/Matrix
 
-Measured on CI (commit d458c09, linux-x86):
+Measured on CI (commit 6d8c313, linux-x86):
 
 | Category | Toloo (ns) | IRC (ns) | Ratio |
 |----------|-----------|----------|-------|
-| ed25519 verify (single-sig) | 35,084 | 45,000 | 1.28x slower |
-| ed25519 verify (batch-10, per-sig) | 19,474 | 45,000 | **2.31x faster** ✅ |
-| Envelope verify (depth-1) | 35,785 | 50,000 | 1.40x slower |
-| Canonical encode (medium) | 1,605 | 150,000 | 93x faster ✅ |
+| ed25519 verify (single-sig) | 35,134 | 45,000 | 1.28x slower |
+| ed25519 verify (batch-10, per-sig) | 18,791 | 45,000 | **2.39x faster** ✅ |
+| Envelope verify (depth-1) | 35,972 | 50,000 | 1.39x slower |
+| Canonical encode (medium) | 1,596 | 150,000 | 94x faster ✅ |
 
 **2x is achievable with batch verification** on all five platforms in this run:
-linux-x86 2.31x, linux-arm 2.10x, windows 3.85x, macOS-x86 2.25x, macOS-arm
-2.50x. Single-signature verification does not reach 2x on any platform.
-GitHub-runner variance is significant between runs (absolute numbers can move
-20–50%), so use same-run ratios; the dashboard keeps the per-commit history.
+linux-x86 2.39x, linux-arm 2.09x, windows 2.81x, macOS-x86 2.56x, macOS-arm
+2.54x. Single-signature verification does not reach 2x on any platform.
+AWS-LC Ed25519 signing also cut event-build cost roughly in half. GitHub-runner
+variance is significant between runs (absolute numbers can move 20–50%), so use
+same-run ratios; the dashboard keeps the per-commit history.
 
 ### Cross-protocol benchmarks (Signal, Matrix, Nostr)
 
@@ -319,9 +320,9 @@ computation per peer and can be cached; v1 ephemeral-key messages remain
 decryptable. This is stateless and asynchronous, but it provides **no forward
 secrecy**: a leaked static encryption key decrypts stored messages.
 
-With the AWS-LC backend, the 1:1 card now shows Toloo ahead of Nostr on pair
-setup, decrypt, and round-trip latency; encrypt remains slightly behind because
-Toloo canonicalizes the JSON content while NIP-44 encrypts raw bytes.
+With the AWS-LC backend, the 1:1 card shows Toloo ahead of Nostr on pair setup,
+encrypt, decrypt, and round-trip latency. The remaining gap in public-envelope
+cost is Ed25519 single verification and canonicalization, not private messages.
 
 ```sh
 cargo test -p toloo-protocol-bench --features protocols   # round-trip smoke tests

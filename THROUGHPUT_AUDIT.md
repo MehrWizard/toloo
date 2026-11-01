@@ -694,12 +694,15 @@ implementations and feeds measured rows into the same latency cards plus a new
   measures the ECDH + pair-key HKDF; `toloo_encrypt`/`toloo_decrypt` use a
   precomputed pair key, so they are steady-state symmetric operations. v1
   ephemeral messages remain decryptable.
-- The `aws-lc` feature (implied by `tls`, enabled by default) backs X25519 and
-  ChaCha20-Poly1305 with AWS-LC assembly and runtime CPU detection; builds
-  without it use `x25519-dalek` and RustCrypto ChaCha20-Poly1305. The base64url
-  codec is table-driven and canonical string writing has a no-escape fast path;
-  these removed the data-dependent decoder cost and most of the per-message
-  symmetric overhead.
+- The `aws-lc` feature (implied by `tls`, enabled by default) backs X25519,
+  ChaCha20-Poly1305, and Ed25519 **signing** with AWS-LC assembly and runtime
+  CPU detection; builds without it use `x25519-dalek`, RustCrypto
+  ChaCha20-Poly1305, and dalek signing. Ed25519 verification stays on dalek:
+  it is faster than AWS-LC for single verification on the measured x86 runner
+  and provides Pippenger batch verification. The base64url codec is
+  table-driven, canonical string writing has a no-escape fast path, and private
+  AEAD operates in place; these removed the data-dependent decoder cost and the
+  remaining per-message copies.
 - Nostr is benchmarked the same way: `nostr_pair_setup` derives the NIP-44
   conversation key once, and `nostr_encrypt`/`nostr_decrypt` use the cached key
   (the library's per-call API otherwise recomputes the ECDH every time).
@@ -747,36 +750,35 @@ Matrix estimate row and omits the 1:1 card, so local generation from
   canonical JSON, Nostr event JSON. The rows compare the closest equivalent
   operation, not byte-identical work.
 
-### CI results (commit d458c09, linux-x86)
+### CI results (commit 6d8c313, linux-x86)
 
-Fourth `bench-protocols` run, with AWS-LC X25519/AEAD and the base64url/canonical
-fast paths (24 benchmarks):
+Fifth `bench-protocols` run, after AWS-LC Ed25519 signing and in-place AEAD
+(24 benchmarks):
 
 | Benchmark | Mean |
 |---|---|
-| `protocol_canonical/matrix` | 1.23 µs |
-| `protocol_canonical/nostr` | 1.29 µs |
-| `protocol_verify/matrix` | 46.9 µs |
-| `protocol_verify/nostr` | 43.3 µs |
-| `protocol_parse/matrix` | 1.14 µs |
-| `protocol_parse/signal` | 332 ns |
-| `protocol_parse/nostr` | 729 ns |
-| `protocol_build/matrix` | 27.2 µs |
-| `protocol_build/nostr` | 73.0 µs |
-| `protocol_crypto/matrix_verify` | 45.5 µs |
-| `protocol_private/toloo_pair_setup` | 33.4 µs |
-| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 5.12 / 4.22 µs |
-| `protocol_private/nostr_pair_setup` | 44.8 µs |
-| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 4.83 / 4.83 µs |
-| `protocol_private/signal_setup` / `signal_inbound` | 420 / 407 µs |
-| `protocol_private/signal_encrypt` / `signal_decrypt` | 12.8 / 132 µs |
-| `protocol_private/olm_setup` / `olm_inbound` | 163 / 156 µs |
-| `protocol_private/olm_encrypt` / `olm_decrypt` | 21.0 / 5.06 µs |
+| `protocol_canonical/matrix` | 616 ns |
+| `protocol_canonical/nostr` | 1.20 µs |
+| `protocol_verify/matrix` | 30.2 µs |
+| `protocol_verify/nostr` | 27.9 µs |
+| `protocol_parse/matrix` | 733 ns |
+| `protocol_parse/signal` | 231 ns |
+| `protocol_parse/nostr` | 468 ns |
+| `protocol_build/matrix` | 17.2 µs |
+| `protocol_build/nostr` | 49.0 µs |
+| `protocol_crypto/matrix_verify` | 29.9 µs |
+| `protocol_private/toloo_pair_setup` | 20.8 µs |
+| `protocol_private/toloo_encrypt` / `toloo_decrypt` | 3.31 / 2.87 µs |
+| `protocol_private/nostr_pair_setup` | 26.7 µs |
+| `protocol_private/nostr_encrypt` / `nostr_decrypt` | 3.59 / 3.70 µs |
+| `protocol_private/signal_setup` / `signal_inbound` | 282 / 265 µs |
+| `protocol_private/signal_encrypt` / `signal_decrypt` | 8.93 / 86.3 µs |
+| `protocol_private/olm_setup` / `olm_inbound` | 110 / 100 µs |
+| `protocol_private/olm_encrypt` / `olm_decrypt` | 14.8 / 2.98 µs |
 
-Against the same run's Toloo relay numbers (canonical 1.61 µs, verify 35.8 µs,
-parse 2.20 µs, event build 38.5 µs, raw ed25519 verify 35.1 µs), Matrix ranges
-from 0.52× (parse) to 1.31× (raw ed25519 verify); Nostr from 0.33× (parse) to
-1.90× (event build).
+Same-run Toloo relay numbers: canonical 1.60 µs, verify 36.0 µs, parse 2.17 µs,
+event build 19.8 µs, raw ed25519 verify 35.1 µs. Matrix ranges from 0.34×
+(parse) to 0.87× (event build); Nostr from 0.22× (parse) to 2.48× (event build).
 
 **First-message economics.** Pair/session setup included for the first message;
 steady state uses cached keys for Toloo/Nostr and established sessions for
@@ -784,17 +786,17 @@ Signal/Olm:
 
 | Protocol | first send | first receive | steady enc / dec |
 |---|---|---|---|
-| Toloo | 38.5 µs | 37.6 µs | 5.12 / 4.22 µs |
-| Olm | 183.7 µs | 155.5 µs | 21.0 / 5.06 µs |
-| Signal | 433.2 µs | 407.0 µs | 12.8 / 132 µs |
-| Nostr | 49.6 µs | 49.6 µs | 4.83 / 4.83 µs |
+| Toloo | 24.1 µs | 23.6 µs | 3.31 / 2.87 µs |
+| Olm | 124.5 µs | 100.3 µs | 14.8 / 2.98 µs |
+| Signal | 290.8 µs | 264.9 µs | 8.93 / 86.3 µs |
+| Nostr | 30.3 µs | 30.4 µs | 3.59 / 3.70 µs |
 
-AWS-LC's X25519 cut Toloo's pair setup from 58.5 µs (previous run) to 33.4 µs,
-now faster than Nostr's 44.8 µs. In this same run Toloo also beats Nostr on
-decrypt (4.22 vs 4.83 µs) and on a steady round trip (9.34 vs 9.66 µs); encrypt
-is ~6% slower, the remaining cost of canonical-JSON encoding. The base64url
-decoder fix alone removed a data-dependent decoder penalty that had made fresh
-ciphertexts ~12 µs more expensive than reused ones.
+Toloo now wins every private-message metric against Nostr in the same run:
+pair setup 20.8 vs 26.7 µs, encrypt 3.31 vs 3.59 µs, decrypt 2.87 vs 3.70 µs,
+and steady round trip 6.18 vs 7.30 µs. AWS-LC Ed25519 signing also dropped
+`event_build/make_room_message` from ~38 µs to 19.8 µs; the public envelope
+verify path remains dominated by Ed25519 single verification (dalek is faster
+than AWS-LC for single verify on this runner, and batch stays on dalek).
 
 **Runner variance.** Hosted-runner hardware changes between runs; absolute
 values moved 20–50% across Phase 9 runs. Treat each run's ratios as the signal
