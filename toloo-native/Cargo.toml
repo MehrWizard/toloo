@@ -58,5 +58,8 @@ label = "Toloo"
 icon = "@mipmap/ic_launcher"
 theme = "@style/TolooTheme"
 
+[package.metadata.android.application.activity]
+config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode|density|fontScale|layoutDirection"
+
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"

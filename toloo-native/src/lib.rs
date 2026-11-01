@@ -47,6 +47,7 @@ pub fn default_data_dir() -> PathBuf {
 }
 
 fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
+    ui.set_launching(false);
     ui.set_has_identity(snapshot.has_identity);
     ui.set_identity_label(snapshot.identity_label.into());
     ui.set_status(snapshot.status.into());
