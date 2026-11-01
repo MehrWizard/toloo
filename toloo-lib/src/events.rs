@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 
 use crate::base64url;
 use crate::envelope::{innermost, make_envelope, now_ms, sign_envelope, wrap_commit, DatumBodyExtra};
-use crate::private::encrypt_private_v2;
+use crate::private::{derive_pair_key, encrypt_private_v2_with_key};
 use crate::types::{DatumBody, EndpointDescriptor, Envelope, LocalNode, LocalRoom};
 
 const MAX_MESSAGE_BODY: usize = 4096;
@@ -266,12 +266,28 @@ pub fn make_private_message(
     body: &str,
     blobs: Vec<String>,
 ) -> Result<Envelope> {
+    let mut pair_key = derive_pair_key(&sender.enc.priv_key, to_enc_pub)?;
+    let result =
+        make_private_message_with_pair_key(sender, to, to_enc_pub, &pair_key, body, blobs);
+    pair_key.fill(0);
+    result
+}
+
+/// Build a v2 private message using a cached pair key for `to_enc_pub`.
+pub fn make_private_message_with_pair_key(
+    sender: &LocalNode,
+    to: &str,
+    to_enc_pub: &str,
+    pair_key: &[u8; 32],
+    body: &str,
+    blobs: Vec<String>,
+) -> Result<Envelope> {
     let content_obj = json!({ "body": body, "blobs": blobs });
-    let ct = encrypt_private_v2(
+    let ct = encrypt_private_v2_with_key(
         &content_obj,
-        &sender.enc.priv_key,
         &sender.enc.pub_key,
         to_enc_pub,
+        pair_key,
     )?;
     let content = ct.to_content();
 
@@ -782,10 +798,14 @@ fn ensure_base64url_key(v: &str, label: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        make_node_meta, make_private_message, make_room_announcement, make_room_blob,
-        make_room_create, make_room_message, validate_event_content, BlobManifest,
+        make_node_meta, make_private_message, make_private_message_with_pair_key,
+        make_room_announcement, make_room_blob, make_room_create, make_room_message,
+        validate_event_content, BlobManifest,
     };
     use crate::fixtures::*;
+    use crate::private::{
+        decrypt_private_v2_with_key, derive_pair_key, PrivateCiphertextV2,
+    };
 
     use crate::envelope::{depth, sign_envelope, verify_chain};
     use crate::types::DatumBody;
@@ -908,6 +928,38 @@ mod tests {
             decoded.len() > 16,
             "ciphertext must be longer than AEAD tag alone"
         );
+    }
+
+    #[test]
+    fn private_message_cached_builder_roundtrips() {
+        let sender = mk_node();
+        let recipient = mk_node();
+        let send_key = derive_pair_key(&sender.enc.priv_key, &recipient.enc.pub_key).unwrap();
+        let env = make_private_message_with_pair_key(
+            &sender,
+            &recipient.sig.pub_key,
+            &recipient.enc.pub_key,
+            &send_key,
+            "cached hello",
+            vec![],
+        )
+        .expect("builder");
+
+        let c = env.d.c.as_ref().unwrap();
+        let cipher = PrivateCiphertextV2 {
+            from: c.get("from").and_then(Value::as_str).unwrap().to_owned(),
+            salt: c.get("salt").and_then(Value::as_str).unwrap().to_owned(),
+            encrypted: c
+                .get("encrypted")
+                .and_then(Value::as_str)
+                .unwrap()
+                .to_owned(),
+        };
+        let recv_key = derive_pair_key(&recipient.enc.priv_key, &sender.enc.pub_key).unwrap();
+        assert_eq!(send_key, recv_key);
+        let plain =
+            decrypt_private_v2_with_key(&cipher, &recipient.enc.pub_key, &recv_key).unwrap();
+        assert_eq!(plain["body"], "cached hello");
     }
 
     #[test]
