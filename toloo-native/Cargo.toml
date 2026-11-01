@@ -44,7 +44,7 @@ slint = { version = "1.18.0", default-features = false, features = [
 ] }
 
 [package.metadata.android]
-package = "app.toloo.native"
+package = "com.irandawn.toloo"
 apk_name = "toloo-native"
 build_targets = ["aarch64-linux-android", "armv7-linux-androideabi"]
 
