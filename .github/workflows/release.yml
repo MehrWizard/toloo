@@ -96,7 +96,7 @@ jobs:
       - name: Package universal APK
         run: |
           mkdir -p dist/android
-          mapfile -t apks < <(find target -name '*.apk' -type f)
+          mapfile -t apks < <(find target -name '*.apk' -type f ! -name '*-unaligned.apk')
           if [ "${#apks[@]}" -ne 1 ]; then
             echo "expected one universal APK, found ${#apks[@]}" >&2
             exit 1
