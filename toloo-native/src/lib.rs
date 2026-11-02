@@ -31,7 +31,10 @@ fn notify_native_ready() {
         }
         // SAFETY: the VM pointer comes from AndroidApp and remains valid for
         // the lifetime of the process.
-        let vm = unsafe { jni::JavaVM::from_raw(vm.cast::<jni::sys::JavaVM>()) };
+        let Ok(vm) = (unsafe { jni::JavaVM::from_raw(vm.cast::<jni::sys::JavaVM>()) })
+        else {
+            return;
+        };
         if let Ok(mut env) = vm.attach_current_thread() {
             let _ = env.call_static_method(
                 "com/irandawn/toloo/TolooActivity",
