@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="TolooTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
-        <item name="android:windowBackground">@drawable/launch_background</item>
+    <style name="Theme.Toloo" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/toloo_background</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowShowWallpaper">false</item>
         <item name="android:statusBarColor">@color/toloo_background</item>
         <item name="android:navigationBarColor">@color/toloo_background</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:colorAccent">#f5a623</item>
+    </style>
+
+    <style name="Theme.Toloo.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/toloo_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/toloo_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.Toloo</item>
     </style>
 </resources>

@@ -35,6 +35,7 @@ slint = { version = "1.18.0", default-features = false, features = [
 ] }
 
 [target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
 slint = { version = "1.18.0", default-features = false, features = [
     "std",
     "compat-1-2",
@@ -42,24 +43,3 @@ slint = { version = "1.18.0", default-features = false, features = [
     "renderer-skia-opengl",
     "accessibility",
 ] }
-
-[package.metadata.android]
-package = "com.irandawn.toloo"
-apk_name = "toloo-native"
-build_targets = ["aarch64-linux-android", "armv7-linux-androideabi"]
-resources = "android-res"
-
-[package.metadata.android.sdk]
-min_sdk_version = 26
-target_sdk_version = 35
-
-[package.metadata.android.application]
-label = "Toloo"
-icon = "@mipmap/ic_launcher"
-theme = "@style/TolooTheme"
-
-[package.metadata.android.application.activity]
-config_changes = "orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode|density|fontScale|layoutDirection"
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.INTERNET"

@@ -89,11 +89,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: native-android
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
       - uses: cargo-bins/cargo-binstall@v1.17.5
         env:
           BINSTALL_VERSION: "1.17.5"
-      - name: Install cargo-apk
-        run: cargo binstall --no-confirm cargo-apk || cargo install cargo-apk --locked
+      - name: Install cargo-ndk
+        run: cargo binstall --no-confirm cargo-ndk@4.1.2 || cargo install cargo-ndk --version 4.1.2 --locked
       - name: Decode release signing keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -101,21 +104,24 @@ jobs:
           mkdir -p "$RUNNER_TEMP/android"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d \
             > "$RUNNER_TEMP/android/toloo-release.jks"
-      - name: Build per-ABI APKs
+      - name: Build Android native libraries
+        run: ./toloo-native/android/build-native.sh
+      - name: Build signed APKs
         env:
-          CARGO_APK_RELEASE_KEYSTORE: ${{ runner.temp }}/android/toloo-release.jks
-          CARGO_APK_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/android/toloo-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_ALIAS: toloo
+        run: gradle -p toloo-native/android --no-daemon assembleRelease
+      - name: Package APKs
         run: |
           mkdir -p dist/android
-          cargo apk build -p toloo-native --release --lib
-          cp target/release/apk/toloo-native.apk \
-            dist/android/toloo-native-universal.apk
-          cargo apk build -p toloo-native --release --lib --target aarch64-linux-android
-          cp target/release/apk/toloo-native.apk \
+          apkdir=toloo-native/android/app/build/outputs/apk/release
+          cp "$apkdir/app-arm64-v8a-release.apk" \
             dist/android/toloo-native-arm64-v8a.apk
-          cargo apk build -p toloo-native --release --lib --target armv7-linux-androideabi
-          cp target/release/apk/toloo-native.apk \
+          cp "$apkdir/app-armeabi-v7a-release.apk" \
             dist/android/toloo-native-armeabi-v7a.apk
+          cp "$apkdir/app-universal-release.apk" \
+            dist/android/toloo-native-universal.apk
           ls -lh dist/android
       - uses: actions/upload-artifact@v4
         with:

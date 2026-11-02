@@ -244,10 +244,14 @@ export ANDROID_HOME=$HOME/Android/Sdk
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
 rustup target add aarch64-linux-android armv7-linux-androideabi
 
-# cargo-apk packaging (lib crate; API 26 metadata in toloo-native/Cargo.toml)
-cargo install cargo-apk --locked
-cargo apk build -p toloo-native --release --lib
+# Gradle + cargo-ndk packaging (Java NativeActivity + AndroidX splash)
+cargo install cargo-ndk --version 4.1.2 --locked
+./toloo-native/android/build-native.sh
+(cd toloo-native/android && gradle assembleRelease)
 ```
+
+Set `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, and
+`ANDROID_KEYSTORE_ALIAS` to sign release APKs.
 
 The `Native` GitHub workflow builds both ABIs. It is marked experimental until
 an APK has been validated on a real API 26 device. Slint uses Skia with
@@ -514,7 +518,7 @@ The commit can happen directly (relay holds the room key) or via a relay chain
 ## Mobile
 
 Mobile uses the native Slint app: Android APKs are built in the `Native`
-GitHub workflow with cargo-apk for arm64 and armv7. Slint requires Android
-API 26+, so API 24–25 devices are out of scope for this UI. The Android build
-is experimental until validated on a real device. iOS is not shipped; Slint
+GitHub workflow with Gradle + cargo-ndk for arm64 and armv7. Slint requires
+Android API 26+, so API 24–25 devices are out of scope for this UI. The Android
+build is experimental until validated on a real device. iOS is not shipped; Slint
 iOS support is version-dependent and requires a macOS/Xcode build.

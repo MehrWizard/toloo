@@ -54,11 +54,11 @@ independent of the protocol crate licenses.
 ## Android
 
 Slint Android requires **API 26 minimum**, Skia/OpenGL ES (or Vulkan), Java 17,
-and the Android SDK/NDK (CI uses NDK 27.0.12077973). arm64 and armv7 targets
-are configured in `Cargo.toml`; `.github/workflows/native.yml` builds an
-experimental release-mode APK with cargo-apk. CI signs it with the project's
-release keystore from the `ANDROID_KEYSTORE_BASE64` and
-`ANDROID_KEYSTORE_PASSWORD` Actions secrets:
+and the Android SDK/NDK (CI uses NDK 27.0.12077973). Android packaging uses
+Gradle (`toloo-native/android/`) with a Java `NativeActivity` and AndroidX
+SplashScreen; `.github/workflows/native.yml` builds signed release APKs. CI
+signs with the project's release keystore from the `ANDROID_KEYSTORE_BASE64`
+and `ANDROID_KEYSTORE_PASSWORD` Actions secrets:
 
 ```sh
 # Download the toloo-native-android artifact from the Native workflow, then:
@@ -70,7 +70,6 @@ adb install -r toloo-native-universal.apk
 
 The APK has not yet been validated on a physical device. Slint has no
 documented Android software renderer, which is why the `SLINT_BACKEND=software`
-plan is not applicable here. The only splash is Android's native launch window:
-the Toloo mark on `#070b0a` via `launch_background.xml` on older releases and
-the system SplashScreen icon on Android 12+. Prefer the per-ABI APKs for the
-shortest install.
+plan is not applicable here. The Java activity holds Android's native
+SplashScreen until Rust reports the first engine snapshot, with a 1.5-second
+safety release. Prefer the per-ABI APKs for the shortest install.

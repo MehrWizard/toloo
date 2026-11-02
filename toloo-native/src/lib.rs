@@ -12,6 +12,38 @@ mod engine;
 
 slint::include_modules!();
 
+#[cfg(target_os = "android")]
+static JAVA_VM: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+fn notify_native_ready() {
+    #[cfg(target_os = "android")]
+    {
+        use std::sync::atomic::Ordering;
+        static NOTIFIED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if NOTIFIED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let vm = JAVA_VM.load(Ordering::Acquire);
+        if vm.is_null() {
+            return;
+        }
+        // SAFETY: the VM pointer comes from AndroidApp and remains valid for
+        // the lifetime of the process.
+        let vm = unsafe { jni::JavaVM::from_raw(vm.cast::<jni::sys::JavaVM>()) };
+        if let Ok(mut env) = vm.attach_current_thread() {
+            let _ = env.call_static_method(
+                "com/irandawn/toloo/TolooActivity",
+                "nativeReady",
+                "()V",
+                &[],
+            );
+        }
+    }
+}
+
+
 pub fn default_data_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("TOLOO_NATIVE_DATA_DIR") {
         return PathBuf::from(path);
@@ -47,6 +79,7 @@ pub fn default_data_dir() -> PathBuf {
 }
 
 fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
+    notify_native_ready();
     ui.set_has_identity(snapshot.has_identity);
     ui.set_identity_label(snapshot.identity_label.into());
     ui.set_status(snapshot.status.into());
@@ -148,6 +181,10 @@ pub fn run(data_dir: PathBuf) -> Result<()> {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
+    JAVA_VM.store(
+        app.vm_as_ptr(),
+        std::sync::atomic::Ordering::Release,
+    );
     let data_dir = app
         .internal_data_path()
         .unwrap_or_else(|| PathBuf::from("."));
