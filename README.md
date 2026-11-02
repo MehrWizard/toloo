@@ -244,7 +244,7 @@ export ANDROID_HOME=$HOME/Android/Sdk
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973
 rustup target add aarch64-linux-android armv7-linux-androideabi
 
-# Gradle + cargo-ndk packaging (Java NativeActivity + AndroidX splash)
+# Gradle + cargo-ndk packaging (Kotlin NativeActivity + AndroidX splash)
 cargo install cargo-ndk --version 4.1.2 --locked
 ./toloo-native/android/build-native.sh
 (cd toloo-native/android && gradle assembleRelease)
