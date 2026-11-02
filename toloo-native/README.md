@@ -70,7 +70,6 @@ adb install -r toloo-native-universal.apk
 
 The APK has not yet been validated on a physical device. Slint has no
 documented Android software renderer, which is why the `SLINT_BACKEND=software`
-plan is not applicable here. Android 12+ shows its mandatory system splash
-with the Toloo icon on the app background; pre-12 devices use the same artwork
-through `launch_background.xml`. Prefer the per-ABI APKs for the shortest
-install.
+plan is not applicable here. The Android system splash is a plain app-colored
+frame; the single visible Toloo splash is the in-app launch frame shown until
+the first engine snapshot. Prefer the per-ABI APKs for the shortest install.
