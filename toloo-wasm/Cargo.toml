@@ -1,6 +1,6 @@
 [package]
 name = "toloo-wasm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Toloo Protocol v0.2 — WebAssembly bindings for the portable core"
 
