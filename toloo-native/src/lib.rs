@@ -42,7 +42,7 @@ fn notify_native_ready() {
                 "()V",
                 &[],
             );
-        }
+        };
     }
 }
 
