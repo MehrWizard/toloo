@@ -12,6 +12,10 @@ fi
 : "${ANDROID_HOME:?set ANDROID_HOME}"
 : "${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME}"
 
+# Slint's build script compiles and embeds its Java helper.
+export ANDROID_JAR="${ANDROID_JAR:-$ANDROID_HOME/platforms/android-35/android.jar}"
+export ANDROID_BUILD_TOOLS_VERSION="${ANDROID_BUILD_TOOLS_VERSION:-35.0.0}"
+
 rm -rf "$JNI_DIR"
 mkdir -p "$JNI_DIR"
 
