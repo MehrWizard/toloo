@@ -4,11 +4,11 @@ import android.app.NativeActivity
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import androidx.core.splashscreen.SplashScreen
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
 class TolooActivity : NativeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splash = SplashScreen.installSplashScreen(this)
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
         splash.setKeepOnScreenCondition { !ready }
         Handler(Looper.getMainLooper()).postDelayed(
