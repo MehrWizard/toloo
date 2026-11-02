@@ -28,7 +28,6 @@ export component AppWindow inherits Window {
     in property <string> members-label: "";
     in property <[RoomRow]> rooms;
     in property <[MessageRow]> messages;
-    in property <bool> launching: true;
 
     in-out property <string> relay-input: "";
     in-out property <string> create-room-name: "";
@@ -332,16 +331,4 @@ export component AppWindow inherits Window {
         }
     }
 
-    if root.launching : Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #070b0a;
-        Image {
-            source: @image-url("../android-res/mipmap-xxxhdpi/ic_launcher_foreground.png");
-            width: 160px;
-            height: 160px;
-            x: (parent.width - 160px) / 2;
-            y: (parent.height - 160px) / 2;
-        }
-    }
 }

@@ -126,20 +126,6 @@ pub fn run(data_dir: PathBuf) -> Result<()> {
 
     let updates = Arc::new(Mutex::new(update_rx));
     let ui_weak = ui.as_weak();
-    let launch_timer = slint::Timer::default();
-    let launch_ui = ui.as_weak();
-    #[cfg(target_os = "android")]
-    launch_timer.start(TimerMode::SingleShot, Duration::from_millis(500), move || {
-        if let Some(ui) = launch_ui.upgrade() {
-            ui.set_launching(false);
-        }
-    });
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = launch_ui;
-        ui.set_launching(false);
-    }
-
     let update_timer = slint::Timer::default();
     let timer_updates = Arc::clone(&updates);
     update_timer.start(TimerMode::Repeated, Duration::from_millis(80), move || {
@@ -156,7 +142,6 @@ pub fn run(data_dir: PathBuf) -> Result<()> {
 
     ui.run()?;
     drop(update_timer);
-    drop(launch_timer);
     Ok(())
 }
 
