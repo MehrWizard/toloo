@@ -104,6 +104,22 @@ export async function saveIdentity(identity: Identity): Promise<void> {
     await transactionDone(tx);
 }
 
+export async function getSetting<T>(key: string): Promise<T | undefined> {
+    const db = await openDb();
+    const tx = db.transaction(KV, "readonly");
+    const result = await requestResult<{ key: string; value: T } | undefined>(
+        tx.objectStore(KV).get(key),
+    );
+    return result?.value;
+}
+
+export async function saveSetting<T>(key: string, value: T): Promise<void> {
+    const db = await openDb();
+    const tx = db.transaction(KV, "readwrite");
+    tx.objectStore(KV).put({ key, value });
+    await transactionDone(tx);
+}
+
 export async function listRooms(): Promise<RoomRecord[]> {
     const db = await openDb();
     const tx = db.transaction(ROOMS, "readonly");

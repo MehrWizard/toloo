@@ -1,0 +1,281 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { AppIcon, Avatar, IconButton, TextField } from "components.slint";
+import { MessageRow } from "models.slint";
+
+export component ChatPane inherits Rectangle {
+    in property <[MessageRow]> messages;
+    in property <string> room-name;
+    in property <string> room-id;
+    in property <string> room-initial: "?";
+    in property <int> room-hue: 0;
+    in property <string> members-label: "";
+    in property <string> status: "";
+    in property <bool> has-room: false;
+    in property <bool> show-back: false;
+    in property <bool> rtl: false;
+    in-out property <string> message-input: "";
+    callback back();
+    callback sync-room();
+    callback share-room();
+    callback export-room();
+    callback room-menu();
+    callback message-menu(string, string, string, string, bool);
+    callback send-message(string);
+    callback open-settings();
+
+    background: Theme.bg;
+    height: 100%;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: Theme.header-height;
+            background: Theme.bg;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                cross-axis-alignment: center;
+
+                if root.show-back : IconButton {
+                    icon: @image-url("icons/back.svg");
+                    tint: Theme.text-2;
+                    layout-order: root.rtl ? 10 : 0;
+                    clicked => { root.back(); }
+                }
+                if root.has-room : Avatar {
+                    avatar-size: 34px;
+                    label: root.room-initial;
+                    hue: root.room-hue;
+                }
+                if root.has-room : VerticalLayout {
+                    vertical-stretch: 1;
+                    spacing: 1px;
+                    cross-axis-alignment: center;
+                    Text {
+                        text: root.room-name;
+                        color: Theme.text;
+                        font-size: Theme.font-ui;
+                        font-weight: 650;
+                        horizontal-alignment: root.rtl ? right : left;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.room-id == "" ? root.members-label
+                            : root.members-label == "" ? root.room-id
+                            : root.room-id + " · " + root.members-label;
+                        color: Theme.muted;
+                        font-size: Theme.font-xs;
+                        font-family: "monospace";
+                        horizontal-alignment: root.rtl ? right : left;
+                        overflow: elide;
+                    }
+                }
+                if !root.has-room : Text {
+                    text: "Select a room";
+                    color: Theme.text;
+                    font-size: Theme.font-title;
+                    font-weight: 650;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Rectangle { horizontal-stretch: 1; min-width: 1px; }
+                if root.has-room && !root.show-back : IconButton {
+                    icon: @image-url("icons/sync.svg");
+                    tint: Theme.text-2;
+                    clicked => { root.sync-room(); }
+                }
+                if root.has-room && !root.show-back : IconButton {
+                    icon: @image-url("icons/share.svg");
+                    tint: Theme.text-2;
+                    clicked => { root.share-room(); }
+                }
+                if root.has-room && !root.show-back : IconButton {
+                    icon: @image-url("icons/export.svg");
+                    tint: Theme.text-2;
+                    clicked => { root.export-room(); }
+                }
+                if root.has-room : IconButton {
+                    icon: @image-url("icons/more.svg");
+                    tint: Theme.text-2;
+                    clicked => { root.room-menu(); }
+                }
+                IconButton {
+                    icon: @image-url("icons/settings.svg");
+                    tint: Theme.muted;
+                    clicked => { root.open-settings(); }
+                }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.border; }
+
+        if !root.has-room : Rectangle {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: center;
+                cross-axis-alignment: center;
+                spacing: 10px;
+                AppIcon {
+                    source: @image-url("icons/user.svg");
+                    icon-size: 48px;
+                    tint: Theme.border;
+                }
+                Text {
+                    text: "Select a room to start chatting";
+                    color: Theme.text-2;
+                    font-size: Theme.font-ui;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        if root.has-room : ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 12px;
+                spacing: 9px;
+
+                if root.messages.length == 0 : Rectangle {
+                    height: 170px;
+                    Text {
+                        text: "No messages yet.\nSay hello.";
+                        color: Theme.muted;
+                        font-size: Theme.font-ui;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                }
+
+                for message in root.messages : HorizontalLayout {
+                    spacing: 8px;
+                    alignment: message.mine
+                        ? (root.rtl ? start : end)
+                        : (root.rtl ? end : start);
+
+                    if !message.mine && !message.grouped : Avatar {
+                        avatar-size: 26px;
+                        label: message.author-initial;
+                        hue: message.avatar-hue;
+                    }
+                    if !message.mine && message.grouped : Rectangle {
+                        width: 26px;
+                        height: 26px;
+                    }
+                    VerticalLayout {
+                        max-width: 520px;
+                        spacing: 3px;
+                        if !message.grouped && !message.mine : Text {
+                            text: message.author;
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            font-family: "monospace";
+                        }
+                        Rectangle {
+                            border-radius: Theme.radius;
+                            background: message.mine ? #2b1711 : Theme.surface;
+                            border-width: 1px;
+                            border-color: message.mine ? #5a2a1b : Theme.border;
+                            VerticalLayout {
+                                padding: 9px;
+                                spacing: 3px;
+                                Text {
+                                    text: message.body;
+                                    color: Theme.text;
+                                    font-size: Theme.font-ui;
+                                    horizontal-alignment: root.rtl ? right : left;
+                                    wrap: word-wrap;
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    cross-axis-alignment: center;
+                                    Rectangle { horizontal-stretch: 1; min-width: 1px; }
+                                    Text {
+                                        text: message.new-day ? message.day-label + " · " + message.clock : message.clock;
+                                        color: Theme.muted;
+                                        font-size: Theme.font-xs;
+                                    }
+                                    Text {
+                                        text: message.status;
+                                        color: message.status == "failed" ? Theme.danger
+                                            : message.status == "sent" ? Theme.success : Theme.warn;
+                                        font-size: Theme.font-xs;
+                                    }
+                                    IconButton {
+                                        icon: @image-url("icons/more.svg");
+                                        tint: Theme.muted;
+                                        button-size: 22px;
+                                        clicked => { root.message-menu(message.eid, message.author, message.author-id, message.body, message.mine); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if message.mine && !message.grouped : Avatar {
+                        avatar-size: 26px;
+                        label: message.author-initial;
+                        hue: message.avatar-hue;
+                    }
+                    if message.mine && message.grouped : Rectangle {
+                        width: 26px;
+                        height: 26px;
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.border; }
+        Rectangle {
+            background: Theme.bg;
+            VerticalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    TextField {
+                        text <=> root.message-input;
+                        placeholder: root.has-room ? "Message…" : "Select a room first";
+                        enabled: root.has-room;
+                        rtl: root.rtl;
+                        layout-order: root.rtl ? 1 : 0;
+                        field-height: 40px;
+                        accepted => {
+                            if (root.has-room && root.message-input != "") {
+                                root.send-message(root.message-input);
+                                root.message-input = "";
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: 44px;
+                        height: 40px;
+                        layout-order: root.rtl ? 0 : 1;
+                        border-radius: Theme.radius-sm;
+                        background: root.has-room && root.message-input != ""
+                            ? Theme.accent : Theme.surface-2;
+                        AppIcon {
+                            source: @image-url("icons/send.svg");
+                            width: 19px;
+                            height: 19px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            tint: root.has-room && root.message-input != "" ? #1a0d08 : Theme.muted;
+                        }
+                        TouchArea {
+                            enabled: root.has-room && root.message-input != "";
+                            clicked => {
+                                root.send-message(root.message-input);
+                                root.message-input = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

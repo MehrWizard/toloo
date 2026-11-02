@@ -1,0 +1,239 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Avatar, Divider, IconButton, TextField, AppIcon } from "components.slint";
+import { RoomRow } from "models.slint";
+
+export component RoomsPane inherits Rectangle {
+    in property <[RoomRow]> rooms;
+    in property <string> identity-label;
+    in property <string> identity-initial: "?";
+    in property <int> identity-hue: 0;
+    in property <string> status: "";
+    in property <string> network-label: "No relays";
+    in property <bool> compact: false;
+    in property <bool> rtl: false;
+    in-out property <string> search: "";
+    callback select-room(string);
+    callback room-menu(string, string, bool);
+    callback add-room();
+    callback import-room();
+    callback open-settings();
+    callback open-relays();
+    callback search-changed(string);
+
+    background: Theme.surface;
+    height: 100%;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: Theme.header-height;
+            background: Theme.surface;
+            HorizontalLayout {
+                padding-left: 11px;
+                padding-right: 8px;
+                spacing: 9px;
+                cross-axis-alignment: center;
+
+                Avatar {
+                    avatar-size: 36px;
+                    label: root.identity-initial;
+                    hue: root.identity-hue;
+                    layout-order: root.rtl ? 4 : 0;
+                    TouchArea {
+                        clicked => { root.open-settings(); }
+                    }
+                }
+                Text {
+                    text: "Toloo";
+                    color: Theme.accent;
+                    font-size: Theme.font-brand;
+                    font-weight: 700;
+                    letter-spacing: 1px;
+                    vertical-alignment: center;
+                    layout-order: root.rtl ? 3 : 1;
+                }
+                Rectangle { horizontal-stretch: 1; min-width: 1px; layout-order: 2; }
+                IconButton {
+                    icon: @image-url("icons/inbox.svg");
+                    tint: Theme.text-2;
+                    layout-order: root.rtl ? 1 : 3;
+                    clicked => { root.import-room(); }
+                }
+                IconButton {
+                    icon: @image-url("icons/plus.svg");
+                    tint: Theme.accent;
+                    layout-order: root.rtl ? 0 : 4;
+                    clicked => { root.add-room(); }
+                }
+            }
+        }
+        Divider {}
+
+        Rectangle {
+            height: 48px;
+            background: Theme.surface;
+            VerticalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                padding-top: 7px;
+                padding-bottom: 7px;
+                TextField {
+                    text <=> root.search;
+                    placeholder: "Search rooms…";
+                    rtl: root.rtl;
+                    field-height: 34px;
+                    edited => { root.search-changed(root.search); }
+                }
+            }
+        }
+        Divider {}
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 0px;
+
+                if root.rooms.length == 0 : Rectangle {
+                    height: 150px;
+                    Text {
+                        text: "No rooms yet.\nAdd a room with +.";
+                        color: Theme.muted;
+                        font-size: Theme.font-ui;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                }
+
+                for room in root.rooms : Rectangle {
+                    height: 66px;
+                    background: room.selected ? Theme.surface-2 : transparent;
+
+                    if room.selected : Rectangle {
+                        x: root.rtl ? parent.width - self.width : 0px;
+                        width: 3px;
+                        height: 100%;
+                        background: Theme.accent;
+                    }
+                    HorizontalLayout {
+                        padding-left: 11px;
+                        padding-right: 10px;
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+
+                        Avatar {
+                            avatar-size: 40px;
+                            label: room.initial;
+                            hue: room.avatar-hue;
+                            layout-order: root.rtl ? 3 : 0;
+                        }
+                        VerticalLayout {
+                            vertical-stretch: 1;
+                            horizontal-stretch: 1;
+                            layout-order: root.rtl ? 2 : 1;
+                            spacing: 2px;
+                            cross-axis-alignment: center;
+                            Text {
+                                text: room.display-name;
+                                color: Theme.text;
+                                font-size: Theme.font-ui;
+                                font-weight: 600;
+                                horizontal-alignment: root.rtl ? right : left;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: room.preview;
+                                color: Theme.muted;
+                                font-size: Theme.font-sm;
+                                horizontal-alignment: root.rtl ? right : left;
+                                overflow: elide;
+                            }
+                        }
+                        VerticalLayout {
+                            layout-order: root.rtl ? 1 : 2;
+                            spacing: 4px;
+                            cross-axis-alignment: center;
+                            Text {
+                                text: room.time-label;
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                horizontal-alignment: right;
+                            }
+                            if room.unread > 0 : Rectangle {
+                                height: 16px;
+                                border-radius: 8px;
+                                background: Theme.accent;
+                                Text {
+                                    text: "\{room.unread}";
+                                    color: #fff;
+                                    font-size: 9px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                            }
+                        }
+                        IconButton {
+                            icon: @image-url("icons/more.svg");
+                            tint: Theme.muted;
+                            button-size: 30px;
+                            layout-order: root.rtl ? 0 : 3;
+                            clicked => { root.room-menu(room.room-id, room.display-name, room.has-key); }
+                        }
+                    }
+                    TouchArea {
+                        x: root.rtl ? 42px : 0px;
+                        width: parent.width - 42px;
+                        height: parent.height;
+                        clicked => { root.select-room(room.room-id); }
+                    }
+                }
+            }
+        }
+        if root.status != "" : Rectangle {
+            height: 24px;
+            background: Theme.surface-2;
+            Text {
+                x: 11px;
+                width: parent.width - 22px;
+                text: root.status;
+                color: Theme.text-2;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        Divider {}
+
+        Rectangle {
+            height: 44px;
+            background: Theme.surface;
+            HorizontalLayout {
+                padding-left: 11px;
+                padding-right: 8px;
+                spacing: 7px;
+                cross-axis-alignment: center;
+                Text {
+                    text: root.network-label;
+                    color: Theme.text-2;
+                    font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                    layout-order: root.rtl ? 2 : 0;
+                    overflow: elide;
+                }
+                Rectangle { horizontal-stretch: 1; min-width: 1px; layout-order: 1; }
+                IconButton {
+                    icon: @image-url("icons/relay.svg");
+                    tint: Theme.muted;
+                    layout-order: root.rtl ? 0 : 2;
+                    clicked => { root.open-relays(); }
+                }
+            }
+        }
+    }
+}

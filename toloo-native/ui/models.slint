@@ -1,0 +1,39 @@
+export struct RoomRow {
+    room-id: string,
+    display-name: string,
+    initial: string,
+    avatar-hue: int,
+    selected: bool,
+    has-key: bool,
+    preview: string,
+    time-label: string,
+    unread: int,
+    member-count: int,
+}
+
+export struct MessageRow {
+    eid: string,
+    author: string,
+    author-id: string,
+    author-initial: string,
+    avatar-hue: int,
+    body: string,
+    clock: string,
+    mine: bool,
+    committed: bool,
+    status: string,
+    day-label: string,
+    new-day: bool,
+    grouped: bool,
+}
+
+export struct RelayRow {
+    url: string,
+}
+
+export struct BlockedRow {
+    node-id: string,
+    short: string,
+    kind: string,
+    reason: string,
+}

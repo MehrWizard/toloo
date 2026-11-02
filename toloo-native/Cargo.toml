@@ -18,13 +18,14 @@ path = "src/main.rs"
 slint-build = "1.18.0"
 
 [dependencies]
-toloo-lib = { path = "../toloo-lib", default-features = false, features = ["tls"] }
+toloo-lib = { path = "../toloo-lib", default-features = false, features = ["tls", "argon2"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "time"] }
+tokio = { version = "1", features = ["rt", "time", "sync"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = "3"
 slint = { version = "1.18.0", default-features = false, features = [
     "std",
     "compat-1-2",

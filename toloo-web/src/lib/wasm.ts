@@ -4,14 +4,20 @@ import init, {
     canonicalize as wasmCanonicalize,
     coreVersion as wasmCoreVersion,
     decodeDiscovery as wasmDecodeDiscovery,
+    encodeFile as wasmEncodeFile,
     encodeUri as wasmEncodeUri,
     envelopeInfo as wasmEnvelopeInfo,
     generateIdentity as wasmGenerateIdentity,
     generateRoomIdentity as wasmGenerateRoomIdentity,
     importIdentity as wasmImportIdentity,
     makeRoomCreate as wasmMakeRoomCreate,
+    makeRoomDelete as wasmMakeRoomDelete,
+    makeRoomFlag as wasmMakeRoomFlag,
     makeRoomJoin as wasmMakeRoomJoin,
+    makeRoomLeave as wasmMakeRoomLeave,
     makeRoomMessage as wasmMakeRoomMessage,
+    makeRoomUpdate as wasmMakeRoomUpdate,
+    makeSideAttestation as wasmMakeSideAttestation,
     requestPoolExchange as wasmRequestPoolExchange,
     verifyChain as wasmVerifyChain,
     verifyChains as wasmVerifyChains,
@@ -178,8 +184,71 @@ export function encodeInvite(envelopes: Envelope[]): string {
     return wasmEncodeUri(JSON.stringify(envelopes));
 }
 
+export function encodeFile(envelopes: Envelope[]): string {
+    return wasmEncodeFile(JSON.stringify(envelopes));
+}
+
 export function decodeInvite(input: string): Envelope[] {
     return JSON.parse(wasmDecodeDiscovery(input)) as Envelope[];
+}
+
+export function roomLeave(identity: Identity, roomPub: string): Envelope {
+    return JSON.parse(
+        wasmMakeRoomLeave(JSON.stringify(identity), roomPub),
+    ) as Envelope;
+}
+
+export function roomUpdate(
+    identity: Identity,
+    room: RoomIdentity,
+    name: string,
+): Envelope {
+    return JSON.parse(
+        wasmMakeRoomUpdate(
+            JSON.stringify(identity),
+            JSON.stringify({ sigPub: room.sigPub, sigSeed: room.sigSeed }),
+            name,
+            null,
+        ),
+    ) as Envelope;
+}
+
+export function roomDelete(
+    identity: Identity,
+    roomPub: string,
+    channel: number,
+    targetEid: string,
+): Envelope {
+    return JSON.parse(
+        wasmMakeRoomDelete(JSON.stringify(identity), roomPub, channel, targetEid),
+    ) as Envelope;
+}
+
+export function roomFlag(
+    identity: Identity,
+    roomPub: string,
+    targetEid: string,
+    category: string,
+): Envelope {
+    return JSON.parse(
+        wasmMakeRoomFlag(
+            JSON.stringify(identity),
+            roomPub,
+            targetEid,
+            category,
+            null,
+        ),
+    ) as Envelope;
+}
+
+export function sideAttestation(
+    identity: Identity,
+    target: string,
+    level: "positive" | "negative" | "neutral",
+): Envelope {
+    return JSON.parse(
+        wasmMakeSideAttestation(JSON.stringify(identity), target, level, null),
+    ) as Envelope;
 }
 
 export function membership(

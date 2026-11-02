@@ -8,7 +8,12 @@ import {
 import { createTolooClient } from "./lib/client";
 import type { RoomRecord } from "./lib/db";
 import { Chat } from "./components/Chat";
-import { AddRoomModal, InviteModal, SettingsModal } from "./components/Modals";
+import {
+    AddRoomModal,
+    InviteModal,
+    RoomActionsModal,
+    SettingsModal,
+} from "./components/Modals";
 import { Onboarding } from "./components/Onboarding";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Modal";
@@ -19,9 +24,12 @@ export default function App(): JSX.Element {
     const [sidebarOpen, setSidebarOpen] = createSignal(false);
     const [settingsOpen, setSettingsOpen] = createSignal(false);
     const [addRoomOpen, setAddRoomOpen] = createSignal(false);
+    const [roomMenuOpen, setRoomMenuOpen] = createSignal(false);
     const [inviteRoom, setInviteRoom] = createSignal<RoomRecord | null>(null);
 
     onMount(() => {
+        document.documentElement.dir =
+            localStorage.getItem("toloo-rtl") === "1" ? "rtl" : "ltr";
         client
             .load()
             .then(() => {
@@ -95,6 +103,7 @@ export default function App(): JSX.Element {
                             const room = client.activeRoom();
                             if (room) setInviteRoom(room);
                         }}
+                        onRoomMenu={() => setRoomMenuOpen(true)}
                         onSettings={() => setSettingsOpen(true)}
                     />
                 </div>
@@ -111,6 +120,15 @@ export default function App(): JSX.Element {
                         onClose={() => setAddRoomOpen(false)}
                         onCreated={openInvite}
                     />
+                </Show>
+                <Show when={roomMenuOpen() && client.activeRoom()}>
+                    {(room) => (
+                        <RoomActionsModal
+                            client={client}
+                            room={room()}
+                            onClose={() => setRoomMenuOpen(false)}
+                        />
+                    )}
                 </Show>
                 <Show when={inviteRoom()}>
                     {(room) => (

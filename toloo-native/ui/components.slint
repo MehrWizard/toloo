@@ -1,0 +1,199 @@
+import { Theme } from "theme.slint";
+
+export component AppIcon inherits Image {
+    in property <length> icon-size: 18px;
+    in property <brush> tint: Theme.text;
+    width: icon-size;
+    height: icon-size;
+    colorize: tint;
+}
+
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <brush> tint: Theme.text-2;
+    in property <length> button-size: 36px;
+    callback clicked();
+
+    width: button-size;
+    height: button-size;
+    border-radius: Theme.radius-sm;
+    background: touch.pressed ? Theme.surface-2 : transparent;
+
+    AppIcon {
+        source: root.icon;
+        width: root.button-size * 0.5;
+        height: root.button-size * 0.5;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        tint: root.tint;
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: Theme.touch-target;
+    border-radius: Theme.radius-sm;
+    background: !root.enabled ? Theme.surface-2
+        : touch.pressed ? Theme.accent-strong : Theme.accent;
+
+    Text {
+        text: root.text;
+        color: root.enabled ? #1a0d08 : Theme.muted;
+        font-size: Theme.font-ui;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component SecondaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <brush> tint: Theme.text;
+    callback clicked();
+
+    height: Theme.touch-target;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: touch.pressed ? Theme.surface-2 : transparent;
+
+    Text {
+        text: root.text;
+        color: root.tint;
+        font-size: Theme.font-ui;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Avatar inherits Rectangle {
+    in property <string> label;
+    in property <int> hue: 0;
+    in property <length> avatar-size: 40px;
+
+    width: avatar-size;
+    height: avatar-size;
+    border-radius: avatar-size / 2;
+    background: Theme.avatars[root.hue];
+
+    Text {
+        text: root.label;
+        color: #fff;
+        font-size: root.avatar-size * 0.34;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}
+
+export component TextField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    in property <bool> rtl: false;
+    in property <length> field-height: 40px;
+    callback edited();
+    callback accepted();
+
+    height: field-height;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: root.enabled ? Theme.border : Theme.surface-2;
+    background: Theme.bg;
+
+    TextInput {
+        x: 11px;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - 22px;
+        height: parent.height - 8px;
+        text <=> root.text;
+        enabled: root.enabled;
+        color: Theme.text;
+        font-size: Theme.font-ui;
+        single-line: true;
+        horizontal-alignment: root.rtl ? right : left;
+        vertical-alignment: center;
+        selection-background-color: Theme.accent;
+        selection-foreground-color: #1a0d08;
+        edited => { root.edited(); }
+        accepted => { root.accepted(); }
+    }
+    if root.text == "" : Text {
+        x: 11px;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - 22px;
+        text: root.placeholder;
+        color: Theme.muted;
+        font-size: Theme.font-ui;
+        horizontal-alignment: root.rtl ? right : left;
+        vertical-alignment: center;
+    }
+}
+
+export component FieldLabel inherits Text {
+    height: 14px;
+    color: Theme.muted;
+    font-size: Theme.font-xs;
+    letter-spacing: 1px;
+    vertical-alignment: center;
+}
+
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Theme.border;
+}
+
+export component StatusPill inherits Rectangle {
+    in property <string> label;
+    in property <brush> dot: Theme.success;
+    height: 24px;
+    border-radius: 12px;
+    background: Theme.surface-2;
+
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 10px;
+        spacing: 6px;
+        cross-axis-alignment: center;
+        Rectangle {
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: root.dot;
+        }
+        Text {
+            text: root.label;
+            color: Theme.text-2;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component SheetHandle inherits Rectangle {
+    width: 38px;
+    height: 4px;
+    border-radius: 2px;
+    background: Theme.border;
+}

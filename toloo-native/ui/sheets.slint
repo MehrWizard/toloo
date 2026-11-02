@@ -1,0 +1,737 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Avatar, Divider, FieldLabel, IconButton, PrimaryButton, SecondaryButton, SheetHandle, TextField } from "components.slint";
+import { BlockedRow, RelayRow } from "models.slint";
+
+export component AddRoomSheet inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in-out property <string> create-name: "";
+    in-out property <string> join-input: "";
+    callback close();
+    callback create-room(string);
+    callback join-room(string);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Text {
+                text: "New Room";
+                color: Theme.text;
+                font-size: Theme.font-title;
+                font-weight: 700;
+                horizontal-stretch: 1;
+            }
+            IconButton {
+                icon: @image-url("icons/close.svg");
+                clicked => { root.close(); }
+            }
+        }
+        Divider {}
+
+        FieldLabel { text: "CREATE"; }
+        TextField {
+            text <=> root.create-name;
+            placeholder: "Room name (optional)";
+            accepted => { root.create-room(root.create-name); }
+        }
+        PrimaryButton {
+            text: "Create Room";
+            clicked => { root.create-room(root.create-name); }
+        }
+
+        Divider {}
+        FieldLabel { text: "JOIN"; }
+        TextField {
+            text <=> root.join-input;
+            placeholder: "toloo:// invite or room key";
+            accepted => { root.join-room(root.join-input); }
+        }
+        SecondaryButton {
+            text: "Join Room";
+            enabled: root.join-input != "";
+            clicked => { root.join-room(root.join-input); }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
+export component SettingsSheet inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in property <bool> has-identity;
+    in property <string> identity-label;
+    in property <string> identity-initial: "?";
+    in property <int> identity-hue: 0;
+    in property <string> sig-pub: "";
+    in property <string> enc-pub: "";
+    in property <bool> rtl: false;
+    in property <bool> notifications-enabled: false;
+    in property <string> network-label: "";
+    in property <bool> host-running: false;
+    in property <string> host-address: "";
+    in property <int> host-connections: 0;
+    in property <[RelayRow]> relays;
+    in property <[BlockedRow]> blocked;
+    in-out property <string> host-port: "17701";
+    in-out property <string> host-proto: "ws";
+    in-out property <string> relay-input: "";
+    in-out property <string> sig-seed: "";
+    in-out property <string> enc-priv: "";
+    in-out property <string> passphrase: "";
+    in-out property <string> identity-input: "";
+    in-out property <string> encrypted-input: "";
+    callback close();
+    callback create-identity();
+    callback restore-identity(string, string);
+    callback add-relay(string);
+    callback remove-relay(string);
+    callback export-identity();
+    callback export-encrypted(string);
+    callback load-identity-json(string);
+    callback load-encrypted(string, string);
+    callback remove-identity();
+    callback unblock-node(string);
+    callback set-rtl(bool);
+    callback set-notifications(bool);
+    callback start-host(string, string);
+    callback stop-host();
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Text {
+                text: "Identity & Settings";
+                color: Theme.text;
+                font-size: Theme.font-title;
+                font-weight: 700;
+                horizontal-stretch: 1;
+            }
+            IconButton {
+                icon: @image-url("icons/close.svg");
+                clicked => { root.close(); }
+            }
+        }
+        Divider {}
+
+        ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 10px;
+
+                FieldLabel { text: "THIS DEVICE"; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    cross-axis-alignment: center;
+                    Avatar {
+                        avatar-size: 44px;
+                        label: root.identity-initial;
+                        hue: root.identity-hue;
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+                        Text {
+                            text: root.has-identity ? "Identity loaded" : "No identity";
+                            color: Theme.text;
+                            font-size: Theme.font-ui;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: root.identity-label;
+                            color: Theme.muted;
+                            font-size: Theme.font-xs;
+                            font-family: "monospace";
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                if root.has-identity : VerticalLayout {
+                    spacing: 4px;
+                    FieldLabel { text: "SIGNING KEY"; }
+                    Text {
+                        text: root.sig-pub;
+                        color: Theme.text-2;
+                        font-size: Theme.font-xs;
+                        font-family: "monospace";
+                        wrap: word-wrap;
+                    }
+                    FieldLabel { text: "ENCRYPTION KEY"; }
+                    Text {
+                        text: root.enc-pub;
+                        color: Theme.text-2;
+                        font-size: Theme.font-xs;
+                        font-family: "monospace";
+                        wrap: word-wrap;
+                    }
+                    TextField {
+                        text <=> root.passphrase;
+                        placeholder: "Passphrase for encrypted export";
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        SecondaryButton {
+                            text: "Export JSON";
+                            clicked => { root.export-identity(); }
+                        }
+                        PrimaryButton {
+                            text: "Encrypted export";
+                            enabled: root.passphrase != "";
+                            clicked => { root.export-encrypted(root.passphrase); }
+                        }
+                    }
+                    SecondaryButton {
+                        text: "Remove identity from this device";
+                        tint: Theme.danger;
+                        clicked => { root.remove-identity(); }
+                    }
+                }
+
+                if !root.has-identity : VerticalLayout {
+                    spacing: 8px;
+                    TextField {
+                        text <=> root.sig-seed;
+                        placeholder: "Signing seed";
+                    }
+                    TextField {
+                        text <=> root.enc-priv;
+                        placeholder: "Encryption private key";
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        PrimaryButton {
+                            text: "Create identity";
+                            clicked => { root.create-identity(); }
+                        }
+                        SecondaryButton {
+                            text: "Restore";
+                            enabled: root.sig-seed != "" && root.enc-priv != "";
+                            clicked => { root.restore-identity(root.sig-seed, root.enc-priv); }
+                        }
+                    }
+                    TextField {
+                        text <=> root.identity-input;
+                        placeholder: "Paste identity JSON to import";
+                    }
+                    SecondaryButton {
+                        text: "Import identity JSON";
+                        enabled: root.identity-input != "";
+                        clicked => { root.load-identity-json(root.identity-input); }
+                    }
+                    TextField {
+                        text <=> root.encrypted-input;
+                        placeholder: "Encrypted identity blob";
+                    }
+                    TextField {
+                        text <=> root.passphrase;
+                        placeholder: "Passphrase";
+                    }
+                    SecondaryButton {
+                        text: "Unlock encrypted identity";
+                        enabled: root.encrypted-input != "" && root.passphrase != "";
+                        clicked => { root.load-encrypted(root.encrypted-input, root.passphrase); }
+                    }
+                }
+
+                Divider {}
+                FieldLabel { text: "RELAYS"; }
+                Text {
+                    text: root.network-label;
+                    color: Theme.text-2;
+                    font-size: Theme.font-sm;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    TextField {
+                        text <=> root.relay-input;
+                        placeholder: "wss://relay.example";
+                        accepted => {
+                            if (root.relay-input != "") {
+                                root.add-relay(root.relay-input);
+                                root.relay-input = "";
+                            }
+                        }
+                    }
+                    SecondaryButton {
+                        text: "Add";
+                        enabled: root.relay-input != "";
+                        clicked => {
+                            root.add-relay(root.relay-input);
+                            root.relay-input = "";
+                        }
+                    }
+                }
+                for relay in root.relays : Rectangle {
+                    height: 42px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 6px;
+                        spacing: 6px;
+                        cross-axis-alignment: center;
+                        Text {
+                            text: relay.url;
+                            color: Theme.text-2;
+                            font-size: Theme.font-xs;
+                            font-family: "monospace";
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                        }
+                        IconButton {
+                            icon: @image-url("icons/trash.svg");
+                            tint: Theme.danger;
+                            button-size: 32px;
+                            clicked => { root.remove-relay(relay.url); }
+                        }
+                    }
+                }
+
+                Divider {}
+                FieldLabel { text: "NOTIFICATIONS"; }
+                SecondaryButton {
+                    text: root.notifications-enabled ? "Notifications: on" : "Notifications: off";
+                    clicked => { root.set-notifications(!root.notifications-enabled); }
+                }
+
+                FieldLabel { text: "LAYOUT"; }
+                SecondaryButton {
+                    text: root.rtl ? "Right-to-left: on" : "Right-to-left: off";
+                    clicked => { root.set-rtl(!root.rtl); }
+                }
+
+                FieldLabel { text: "BLOCKED NODES"; }
+                if root.blocked.length == 0 : Text {
+                    text: "No blocked nodes.";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                }
+                for blocked in root.blocked : Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 6px;
+                        spacing: 6px;
+                        cross-axis-alignment: center;
+                        VerticalLayout {
+                            spacing: 1px;
+                            horizontal-stretch: 1;
+                            cross-axis-alignment: center;
+                            Text {
+                                text: blocked.short;
+                                color: Theme.text;
+                                font-size: Theme.font-sm;
+                                font-family: "monospace";
+                                overflow: elide;
+                            }
+                            Text {
+                                text: blocked.kind + (blocked.reason == "" ? "" : " · " + blocked.reason);
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                overflow: elide;
+                            }
+                        }
+                        SecondaryButton {
+                            text: "Unblock";
+                            clicked => { root.unblock-node(blocked.node-id); }
+                        }
+                    }
+                }
+
+                Divider {}
+                FieldLabel { text: "LOCAL RELAY HOST"; }
+                if root.host-running : VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: "Listening · " + root.host-connections + " connection(s)";
+                        color: Theme.success;
+                        font-size: Theme.font-sm;
+                    }
+                    Text {
+                        text: root.host-address;
+                        color: Theme.text-2;
+                        font-size: Theme.font-xs;
+                        font-family: "monospace";
+                        wrap: word-wrap;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    TextField {
+                        text <=> root.host-port;
+                        placeholder: "17701";
+                        enabled: !root.host-running;
+                    }
+                    SecondaryButton {
+                        text: root.host-proto;
+                        enabled: !root.host-running;
+                        clicked => { root.host-proto = root.host-proto == "ws" ? "http" : "ws"; }
+                    }
+                }
+                if root.host-running : SecondaryButton {
+                    text: "Stop relay host";
+                    tint: Theme.danger;
+                    clicked => { root.stop-host(); }
+                }
+                if !root.host-running : PrimaryButton {
+                    text: "Start relay host";
+                    clicked => { root.start-host(root.host-port, root.host-proto); }
+                }
+                Text {
+                    text: "The host serves the same pool this client uses. Keep the app open while hosting; use a reverse proxy or TLS tunnel for wss/https.";
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+export component RoomActionsSheet inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in property <string> room-name;
+    in property <string> room-key;
+    in property <bool> has-key;
+    in-out property <string> rename-name: "";
+    callback close();
+    callback rename(string);
+    callback sync();
+    callback share();
+    callback export();
+    callback copy(string);
+    callback leave();
+    callback remove();
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Text {
+                text: root.room-name;
+                color: Theme.text;
+                font-size: Theme.font-title;
+                font-weight: 700;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            IconButton {
+                icon: @image-url("icons/close.svg");
+                clicked => { root.close(); }
+            }
+        }
+        Text {
+            text: root.room-key;
+            color: Theme.muted;
+            font-size: Theme.font-xs;
+            font-family: "monospace";
+            overflow: elide;
+        }
+        Divider {}
+        FieldLabel { text: "ROOM ACTIONS"; }
+        SecondaryButton {
+            text: "Sync now";
+            clicked => { root.sync(); }
+        }
+        PrimaryButton {
+            text: "Share invite link";
+            clicked => { root.share(); }
+        }
+        SecondaryButton {
+            text: "Export messages";
+            clicked => { root.export(); }
+        }
+        SecondaryButton {
+            text: "Copy room key";
+            clicked => { root.copy(root.room-key); }
+        }
+        if root.has-key : HorizontalLayout {
+            spacing: 8px;
+            TextField {
+                text <=> root.rename-name;
+                placeholder: "New room name";
+            }
+            SecondaryButton {
+                text: "Rename";
+                enabled: root.rename-name != "";
+                clicked => { root.rename(root.rename-name); }
+            }
+        }
+        if !root.has-key : Text {
+            text: "You joined this room, so only its owner can rename it.";
+            color: Theme.muted;
+            font-size: Theme.font-xs;
+            wrap: word-wrap;
+        }
+        Divider {}
+        SecondaryButton {
+            text: "Leave room";
+            tint: Theme.warn;
+            clicked => { root.leave(); }
+        }
+        SecondaryButton {
+            text: "Remove from this device";
+            tint: Theme.danger;
+            clicked => { root.remove(); }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
+export component MessageActionsSheet inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in property <string> author;
+    in property <string> author-id;
+    in property <string> body;
+    in property <string> eid;
+    in property <bool> mine;
+    callback close();
+    callback copy(string);
+    callback flag(string);
+    callback block(string);
+    callback attest(string, string);
+    callback delete();
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Text {
+                text: "Message";
+                color: Theme.text;
+                font-size: Theme.font-title;
+                font-weight: 700;
+                horizontal-stretch: 1;
+            }
+            IconButton {
+                icon: @image-url("icons/close.svg");
+                clicked => { root.close(); }
+            }
+        }
+        Text {
+            text: root.author + " · " + root.eid;
+            color: Theme.muted;
+            font-size: Theme.font-xs;
+            font-family: "monospace";
+            overflow: elide;
+        }
+        Rectangle {
+            height: 110px;
+            border-radius: Theme.radius-sm;
+            background: Theme.bg;
+            clip: true;
+            TextInput {
+                x: 10px;
+                y: 8px;
+                width: parent.width - 20px;
+                height: parent.height - 16px;
+                text: root.body;
+                read-only: true;
+                color: Theme.text;
+                font-size: Theme.font-sm;
+                wrap: word-wrap;
+                selection-background-color: Theme.accent;
+            }
+        }
+        SecondaryButton {
+            text: "Copy message text";
+            clicked => { root.copy(root.body); }
+        }
+        Divider {}
+        FieldLabel { text: "MODERATION"; }
+        SecondaryButton {
+            text: "Flag as spam";
+            tint: Theme.warn;
+            clicked => { root.flag("spam"); }
+        }
+        SecondaryButton {
+            text: "Block author";
+            tint: Theme.danger;
+            clicked => { root.block(root.author-id); }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            SecondaryButton {
+                text: "Attest +";
+                tint: Theme.success;
+                clicked => { root.attest(root.author-id, "positive"); }
+            }
+            SecondaryButton {
+                text: "Attest −";
+                tint: Theme.danger;
+                clicked => { root.attest(root.author-id, "negative"); }
+            }
+        }
+        if root.mine : SecondaryButton {
+            text: "Delete message";
+            tint: Theme.danger;
+            clicked => { root.delete(); }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}
+
+export component ExportSheet inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in property <string> export-text;
+    in property <string> export-kind;
+    in property <string> room-key;
+    callback close();
+    callback copy(string);
+    callback share(string);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Text {
+                text: root.export-kind == "invite" ? "Share invite"
+                    : root.export-kind == "messages" ? "Export messages"
+                    : root.export-kind == "identity" || root.export-kind == "encrypted-identity"
+                        ? "Export identity"
+                        : "Export";
+                color: Theme.text;
+                font-size: Theme.font-title;
+                font-weight: 700;
+                horizontal-stretch: 1;
+            }
+            IconButton {
+                icon: @image-url("icons/close.svg");
+                clicked => { root.close(); }
+            }
+        }
+        Text {
+            text: "Keep this text secret. Select it below to copy.";
+            color: Theme.muted;
+            font-size: Theme.font-xs;
+            wrap: word-wrap;
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-sm;
+            background: Theme.bg;
+            clip: true;
+            TextInput {
+                x: 10px;
+                y: 8px;
+                width: parent.width - 20px;
+                height: parent.height - 16px;
+                text: root.export-text;
+                read-only: true;
+                color: Theme.text-2;
+                font-size: Theme.font-xs;
+                font-family: "monospace";
+                wrap: word-wrap;
+                selection-background-color: Theme.accent;
+            }
+        }
+        Text {
+            text: root.room-key;
+            color: Theme.muted;
+            font-size: Theme.font-xs;
+            font-family: "monospace";
+            overflow: elide;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            SecondaryButton {
+                text: "Copy";
+                clicked => { root.copy(root.export-text); }
+            }
+            PrimaryButton {
+                text: "Share";
+                clicked => { root.share(root.export-text); }
+            }
+        }
+        SecondaryButton {
+            text: "Done";
+            clicked => { root.close(); }
+        }
+    }
+}
+
+export component ImportSheet inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in-out property <string> import-input: "";
+    callback close();
+    callback decode(string);
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Text {
+                text: "Import";
+                color: Theme.text;
+                font-size: Theme.font-title;
+                font-weight: 700;
+                horizontal-stretch: 1;
+            }
+            IconButton {
+                icon: @image-url("icons/close.svg");
+                clicked => { root.close(); }
+            }
+        }
+        Divider {}
+        Text {
+            text: "Paste a toloo:// link or open a .toloo file. Rooms, messages, and relay endpoints are detected automatically.";
+            color: Theme.text-2;
+            font-size: Theme.font-sm;
+            wrap: word-wrap;
+        }
+        TextField {
+            text <=> root.import-input;
+            placeholder: "toloo://BASE64URL…";
+            field-height: Theme.touch-target;
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            PrimaryButton {
+                text: "Decode";
+                enabled: root.import-input != "";
+                clicked => { root.decode(root.import-input); }
+            }
+            SecondaryButton {
+                text: "Close";
+                clicked => { root.close(); }
+            }
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

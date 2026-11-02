@@ -2,12 +2,14 @@ export function shortKey(key: string, size = 7): string {
     return key.length <= size * 2 ? key : `${key.slice(0, size)}…${key.slice(-4)}`;
 }
 
+const AVATAR_HUES = [14, 103, 270, 33, 194, 340, 83, 237];
+
 export function avatarHue(key: string): number {
     let hash = 0;
     for (let index = 0; index < key.length; index += 1) {
         hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
     }
-    return hash % 360;
+    return AVATAR_HUES[hash % AVATAR_HUES.length];
 }
 
 export function formatTime(timestamp: number): string {

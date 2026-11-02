@@ -100,6 +100,14 @@ export const TrashIcon: Component<IconProps> = (props) => (
     </IconBase>
 );
 
+export const MoreIcon: Component<IconProps> = (props) => (
+    <IconBase {...props}>
+        <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+        <circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    </IconBase>
+);
+
 export const ShieldIcon: Component<IconProps> = (props) => (
     <IconBase {...props}>
         <path d="M12 3 5 6v5c0 4.5 2.8 8 7 10 4.2-2 7-5.5 7-10V6l-7-3Z" />

@@ -34,6 +34,22 @@ export function Onboarding(props: { client: TolooClient }): JSX.Element {
         }
     }
 
+    async function importFile(event: Event): Promise<void> {
+        const input = event.currentTarget as HTMLInputElement;
+        const file = input.files?.[0];
+        if (!file) return;
+        setBusy(true);
+        setError("");
+        try {
+            await props.client.restoreIdentityJson(await file.text());
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setBusy(false);
+            input.value = "";
+        }
+    }
+
     return (
         <main class="onboarding">
             <div class="onboarding-glow" aria-hidden="true" />
@@ -129,6 +145,15 @@ export function Onboarding(props: { client: TolooClient }): JSX.Element {
 
                 <Show when={mode() === "restore"}>
                     <form class="stack" onSubmit={(event) => void restore(event)}>
+                        <label class="ghost-button file-button">
+                            Open identity JSON
+                            <input
+                                type="file"
+                                accept=".json,application/json"
+                                hidden
+                                onChange={(event) => void importFile(event)}
+                            />
+                        </label>
                         <label class="field">
                             <span>Signing seed</span>
                             <input

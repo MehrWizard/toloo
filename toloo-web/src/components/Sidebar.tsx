@@ -1,6 +1,6 @@
-import { For, Show, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import type { TolooClient } from "../lib/client";
-import { avatarHue, shortKey } from "../lib/ui";
+import { avatarHue, formatTime, shortKey } from "../lib/ui";
 import { PlusIcon, SettingsIcon, ShieldIcon } from "./Icons";
 
 export function Sidebar(props: {
@@ -11,6 +11,16 @@ export function Sidebar(props: {
     onSettings: () => void;
 }): JSX.Element {
     const identity = () => props.client.identity();
+    const [query, setQuery] = createSignal("");
+    const filteredRooms = createMemo(() => {
+        const needle = query().trim().toLowerCase();
+        if (!needle) return props.client.rooms();
+        return props.client.rooms().filter(
+            (room) =>
+                room.name.toLowerCase().includes(needle) ||
+                room.pub.toLowerCase().includes(needle),
+        );
+    });
 
     function statusLabel(): string {
         if (props.client.relays().length === 0) return "No relay";
@@ -45,6 +55,18 @@ export function Sidebar(props: {
                     </div>
                 </header>
 
+                <div class="sidebar-search">
+                    <input
+                        type="search"
+                        placeholder="Search rooms…"
+                        aria-label="Search rooms"
+                        autocomplete="off"
+                        spellcheck={false}
+                        value={query()}
+                        onInput={(event) => setQuery(event.currentTarget.value)}
+                    />
+                </div>
+
                 <div class="sidebar-section-head">
                     <span>Rooms</span>
                     <button
@@ -59,21 +81,27 @@ export function Sidebar(props: {
 
                 <nav class="room-list" aria-label="Rooms">
                     <Show
-                        when={props.client.rooms().length > 0}
+                        when={filteredRooms().length > 0}
                         fallback={
                             <div class="room-list-empty">
-                                <p>No rooms yet.</p>
-                                <button
-                                    class="ghost-button"
-                                    type="button"
-                                    onClick={props.onAddRoom}
-                                >
-                                    Create or join one
-                                </button>
+                                <p>
+                                    {props.client.rooms().length > 0
+                                        ? "No rooms match this search."
+                                        : "No rooms yet."}
+                                </p>
+                                <Show when={!query()}>
+                                    <button
+                                        class="ghost-button"
+                                        type="button"
+                                        onClick={props.onAddRoom}
+                                    >
+                                        Create or join one
+                                    </button>
+                                </Show>
                             </div>
                         }
                     >
-                        <For each={props.client.rooms()}>
+                        <For each={filteredRooms()}>
                             {(room) => (
                                 <button
                                     type="button"
@@ -96,15 +124,29 @@ export function Sidebar(props: {
                                     </span>
                                     <span class="room-copy">
                                         <span class="room-name">{room.name}</span>
-                                        <span class="room-pub">{shortKey(room.pub, 6)}</span>
+                                        <span class="room-preview">
+                                            {props.client.roomSummaries()[room.pub]
+                                                ?.preview || shortKey(room.pub, 6)}
+                                        </span>
                                     </span>
-                                    <Show when={room.roomIdentity}>
-                                        <ShieldIcon
-                                            size={14}
-                                            class="room-key-icon"
-                                            aria-label="You hold this room key"
-                                        />
-                                    </Show>
+                                    <span class="room-meta">
+                                        <span class="room-time">
+                                            {props.client.roomSummaries()[room.pub]?.ts
+                                                ? formatTime(
+                                                      props.client.roomSummaries()[
+                                                          room.pub
+                                                      ].ts,
+                                                  )
+                                                : ""}
+                                        </span>
+                                        <Show when={room.roomIdentity}>
+                                            <ShieldIcon
+                                                size={13}
+                                                class="room-key-icon"
+                                                aria-label="You hold this room key"
+                                            />
+                                        </Show>
+                                    </span>
                                 </button>
                             )}
                         </For>

@@ -5,7 +5,7 @@ import {
     createSignal,
     type JSX,
 } from "solid-js";
-import type { TolooClient } from "../lib/client";
+import type { Message, TolooClient } from "../lib/client";
 import {
     avatarHue,
     copyText,
@@ -17,20 +17,25 @@ import {
 import {
     CheckIcon,
     ClockIcon,
+    MoreIcon,
     PeopleIcon,
     SendIcon,
+    SettingsIcon,
     ShieldIcon,
     SyncIcon,
 } from "./Icons";
+import { MessageActionsModal } from "./Modals";
 
 export function Chat(props: {
     client: TolooClient;
     onMenu: () => void;
     onInvite: () => void;
+    onRoomMenu: () => void;
     onSettings: () => void;
 }): JSX.Element {
     const [draft, setDraft] = createSignal("");
     const [sending, setSending] = createSignal(false);
+    const [selectedMessage, setSelectedMessage] = createSignal<Message | null>(null);
     let scrollArea: HTMLDivElement | undefined;
     let composer: HTMLTextAreaElement | undefined;
 
@@ -161,6 +166,24 @@ export function Chat(props: {
                             >
                                 <SyncIcon />
                             </button>
+                            <button
+                                type="button"
+                                class="icon-button"
+                                aria-label="Room actions"
+                                title="Room actions"
+                                onClick={props.onRoomMenu}
+                            >
+                                <MoreIcon />
+                            </button>
+                            <button
+                                type="button"
+                                class="icon-button"
+                                aria-label="Settings"
+                                title="Settings"
+                                onClick={props.onSettings}
+                            >
+                                <SettingsIcon />
+                            </button>
                         </div>
                     </header>
 
@@ -282,6 +305,16 @@ export function Chat(props: {
                                                                     : "pending"}
                                                             </span>
                                                         </Show>
+                                                        <button
+                                                            type="button"
+                                                            class="icon-button subtle message-more"
+                                                            aria-label="Message actions"
+                                                            onClick={() =>
+                                                                setSelectedMessage(message)
+                                                            }
+                                                        >
+                                                            <MoreIcon size={14} />
+                                                        </button>
                                                     </div>
                                                 </div>
                                             </article>
@@ -318,6 +351,15 @@ export function Chat(props: {
                         Envelopes are signed locally. Enter to send, Shift+Enter
                         for a new line.
                     </p>
+                    <Show when={selectedMessage()}>
+                        {(message) => (
+                            <MessageActionsModal
+                                client={props.client}
+                                message={message()}
+                                onClose={() => setSelectedMessage(null)}
+                            />
+                        )}
+                    </Show>
                 </section>
             )}
         </Show>

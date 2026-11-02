@@ -6,6 +6,7 @@ import {
     parseEndpoint,
     type RelayEndpoint,
 } from "./transport";
+import { downloadText } from "./ui";
 import * as protocol from "./wasm";
 import type { Envelope, Identity, RoomIdentity } from "./wasm";
 
@@ -20,6 +21,11 @@ export interface Message {
     tc: number | null;
     envelopeJson: string;
     mine: boolean;
+}
+
+export interface RoomSummary {
+    preview: string;
+    ts: number;
 }
 
 export interface Toast {
@@ -49,11 +55,19 @@ function shortRoomName(pub: string): string {
     return `Room ${pub.slice(0, 6)}`;
 }
 
+function previewOf(body: string): string {
+    const text = body.replace(/\s+/g, " ").trim();
+    return text.length > 60 ? `${text.slice(0, 60)}…` : text;
+}
+
 export function createTolooClient() {
     const [initialized, setInitialized] = createSignal(false);
     const [identity, setIdentity] = createSignal<Identity | null>(null);
     const [relays, setRelays] = createSignal<RelayRecord[]>([]);
     const [rooms, setRooms] = createSignal<RoomRecord[]>([]);
+    const [roomSummaries, setRoomSummaries] = createSignal<
+        Record<string, RoomSummary>
+    >({});
     const [activePub, setActivePub] = createSignal<string | null>(null);
     const [messages, setMessages] = createSignal<Message[]>([]);
     const [members, setMembers] = createSignal<string[]>([]);
@@ -61,6 +75,7 @@ export function createTolooClient() {
     const [syncState, setSyncState] = createSignal<SyncState>("idle");
     const [syncing, setSyncing] = createSignal(false);
     const [lastSync, setLastSync] = createSignal<number | null>(null);
+    const [blocked, setBlocked] = createSignal<string[]>([]);
     const [toasts, setToasts] = createSignal<Toast[]>([]);
 
     const activeRoom = createMemo(
@@ -75,7 +90,11 @@ export function createTolooClient() {
         timeoutMs = 4200,
     ): void {
         const id = randomId();
-        setToasts((current) => [...current, { id, text, kind }]);
+        setToasts((current) =>
+            [...current.filter((toast) => toast.text !== text), { id, text, kind }].slice(
+                -3,
+            ),
+        );
         window.setTimeout(() => {
             setToasts((current) => current.filter((toast) => toast.id !== id));
         }, timeoutMs);
@@ -99,15 +118,34 @@ export function createTolooClient() {
         connections.delete(id);
     }
 
+    async function refreshSummary(roomPub: string): Promise<void> {
+        const records = await db.roomEnvelopes(roomPub);
+        let latest: EnvelopeRecord | null = null;
+        for (const record of records) {
+            if (record.type !== "room.message" || !record.body) continue;
+            if (!latest || record.ts > latest.ts) latest = record;
+        }
+        setRoomSummaries((current) => ({
+            ...current,
+            [roomPub]: latest
+                ? { preview: previewOf(latest.body ?? ""), ts: latest.ts }
+                : { preview: "", ts: 0 },
+        }));
+    }
+
     async function load(): Promise<void> {
-        const [savedIdentity, savedRelays, savedRooms] = await Promise.all([
-            db.getIdentity(),
-            db.listRelays(),
-            db.listRooms(),
-        ]);
+        const [savedIdentity, savedRelays, savedRooms, savedBlocklist] =
+            await Promise.all([
+                db.getIdentity(),
+                db.listRelays(),
+                db.listRooms(),
+                db.getSetting<string[]>("blocklist"),
+            ]);
         setIdentity(savedIdentity ?? null);
         setRelays(savedRelays);
         setRooms(savedRooms);
+        setBlocked(savedBlocklist ?? []);
+        await Promise.all(savedRooms.map((room) => refreshSummary(room.pub)));
         if (savedIdentity && savedRooms.length > 0) {
             setActivePub(savedRooms[0].pub);
             await refreshRoom(savedRooms[0].pub);
@@ -130,6 +168,29 @@ export function createTolooClient() {
         await db.saveIdentity(restored);
         setIdentity(restored);
         return restored;
+    }
+
+    async function restoreIdentityJson(raw: string): Promise<Identity> {
+        let value: Record<string, unknown>;
+        try {
+            value = JSON.parse(raw) as Record<string, unknown>;
+        } catch {
+            throw new Error("Identity file is not valid JSON.");
+        }
+        const sig = value.sig as Record<string, unknown> | undefined;
+        const enc = value.enc as Record<string, unknown> | undefined;
+        const sigSeed =
+            (value.sigSeed as string | undefined) ??
+            (sig?.priv_key as string | undefined) ??
+            (value.sig_priv as string | undefined);
+        const encPriv =
+            (value.encPriv as string | undefined) ??
+            (enc?.priv_key as string | undefined) ??
+            (value.enc_priv as string | undefined);
+        if (!sigSeed || !encPriv) {
+            throw new Error("Identity file is missing private keys.");
+        }
+        return restoreIdentity(sigSeed, encPriv);
     }
 
     async function addRelay(raw: string): Promise<RelayRecord> {
@@ -272,10 +333,23 @@ export function createTolooClient() {
         const records = await db.roomEnvelopes(roomPub);
         const currentIdentity = identity();
 
+        const deleted = new Set<string>();
+        for (const record of records) {
+            if (record.type !== "room.delete") continue;
+            try {
+                const content = protocol.info(record.envelope).content;
+                const target = content?.target;
+                if (typeof target === "string") deleted.add(target);
+            } catch {
+                // Ignore malformed deletion records.
+            }
+        }
         const best = new Map<string, EnvelopeRecord>();
         for (const record of records) {
             if (record.type !== "room.message") continue;
             if (!record.body) continue;
+            if (deleted.has(record.eid)) continue;
+            if (blocked().includes(record.signer)) continue;
             const previous = best.get(record.eid);
             if (!previous || record.depth > previous.depth) {
                 best.set(record.eid, record);
@@ -293,7 +367,31 @@ export function createTolooClient() {
                 mine: record.signer === currentIdentity?.sigPub,
             }))
             .sort((a, b) => a.ts - b.ts || a.eid.localeCompare(b.eid));
+        const previous = messages();
+        if (
+            document.hidden &&
+            previous.length > 0 &&
+            "Notification" in window &&
+            Notification.permission === "granted"
+        ) {
+            const known = new Set(previous.map((message) => message.eid));
+            const roomName =
+                rooms().find((room) => room.pub === roomPub)?.name ?? "Toloo";
+            for (const message of list) {
+                if (known.has(message.eid) || message.mine) continue;
+                new Notification(`Toloo · ${roomName}`, {
+                    body: message.body.slice(0, 140),
+                });
+            }
+        }
         setMessages(list);
+        const latestMessage = list.at(-1);
+        setRoomSummaries((current) => ({
+            ...current,
+            [roomPub]: latestMessage
+                ? { preview: previewOf(latestMessage.body), ts: latestMessage.ts }
+                : { preview: "", ts: 0 },
+        }));
 
         const membershipEvents = records
             .filter(
@@ -529,6 +627,80 @@ export function createTolooClient() {
         return room;
     }
 
+    async function importDiscovery(raw: string): Promise<RoomRecord | null> {
+        const text = raw.trim();
+        if (!text) throw new Error("Paste a toloo:// link or .toloo file.");
+        const envelopes = protocol.decodeInvite(text);
+        const knownRooms = new Set(rooms().map((room) => room.pub));
+        const knownRelays = new Set(relays().map((relay) => relay.url));
+        const additions: RoomRecord[] = [];
+        const newRelays: RelayRecord[] = [];
+        for (const envelope of envelopes) {
+            const info = protocol.info(envelope);
+            await storeEnvelopeJson(JSON.stringify(envelope));
+            if (
+                info.type === "room.create" &&
+                info.room &&
+                !knownRooms.has(info.room)
+            ) {
+                const content = info.content;
+                const name =
+                    typeof content?.name === "string" && content.name.trim()
+                        ? content.name
+                        : shortRoomName(info.room);
+                knownRooms.add(info.room);
+                additions.push({
+                    pub: info.room,
+                    name,
+                    createdAt: Date.now(),
+                    inviteUri: protocol.encodeInvite([envelope]),
+                    roomCreate: JSON.stringify(envelope),
+                });
+            }
+            const endpoints = Array.isArray(info.content?.endpoints)
+                ? (info.content?.endpoints as Array<Record<string, unknown>>)
+                : [];
+            for (const endpoint of endpoints) {
+                const proto = typeof endpoint.proto === "string" ? endpoint.proto : "";
+                const host = typeof endpoint.host === "string" ? endpoint.host : "";
+                if (!proto || !host) continue;
+                const port = typeof endpoint.port === "number" ? endpoint.port : null;
+                const path =
+                    typeof endpoint.path === "string" && endpoint.path !== "/"
+                        ? endpoint.path
+                        : "";
+                const url = `${proto}://${host}${port ? `:${port}` : ""}${path}`;
+                if (knownRelays.has(url)) continue;
+                try {
+                    const parsed = parseEndpoint(url);
+                    knownRelays.add(parsed.url);
+                    newRelays.push({
+                        id: randomId(),
+                        url: parsed.url,
+                        proto: parsed.proto,
+                        createdAt: Date.now(),
+                    });
+                } catch {
+                    // Endpoint protocols unsupported by this browser are skipped.
+                }
+            }
+        }
+        for (const room of additions) await db.saveRoom(room);
+        for (const relay of newRelays) await db.saveRelay(relay);
+        if (additions.length > 0) setRooms((current) => [...current, ...additions]);
+        if (newRelays.length > 0) setRelays((current) => [...current, ...newRelays]);
+        const first = additions[0];
+        if (first) {
+            setActivePub(first.pub);
+            await refreshRoom(first.pub);
+        }
+        notify(
+            `Imported ${envelopes.length} envelope(s), ${additions.length} room(s), ${newRelays.length} relay(s).`,
+            "success",
+        );
+        return first ?? null;
+    }
+
     async function sendMessage(bodyInput: string): Promise<void> {
         const currentIdentity = identity();
         const room = activeRoom();
@@ -570,8 +742,150 @@ export function createTolooClient() {
         }
     }
 
+    async function renameRoom(nameInput: string): Promise<void> {
+        const currentIdentity = identity();
+        const room = activeRoom();
+        const name = nameInput.trim();
+        if (!currentIdentity) throw new Error("Create an identity first.");
+        if (!room) throw new Error("Select a room first.");
+        if (!name) throw new Error("Room name cannot be empty.");
+        if (!room.roomIdentity) {
+            throw new Error("Only the room owner can rename this room.");
+        }
+        const update = protocol.roomUpdate(currentIdentity, room.roomIdentity, name);
+        const info = protocol.info(update);
+        const outgoing = protocol.commitEnvelope(
+            update,
+            room.roomIdentity,
+            Math.max(Date.now(), info.ts),
+        );
+        await storeEnvelopeJson(JSON.stringify(outgoing));
+        await updateRoomRecord({ ...room, name });
+        await publishEnvelopes(room, [outgoing]);
+        await refreshRoom(room.pub);
+        notify("Room renamed.", "success");
+    }
+
+    async function leaveRoom(): Promise<void> {
+        const currentIdentity = identity();
+        const room = activeRoom();
+        if (!currentIdentity) throw new Error("Create an identity first.");
+        if (!room) throw new Error("Select a room first.");
+        const leave = protocol.roomLeave(currentIdentity, room.pub);
+        const outgoing = room.roomIdentity
+            ? protocol.commitEnvelope(
+                  leave,
+                  room.roomIdentity,
+                  Math.max(Date.now(), protocol.info(leave).ts),
+              )
+            : leave;
+        await storeEnvelopeJson(JSON.stringify(outgoing));
+        await publishEnvelopes(room, [outgoing]);
+        await removeRoom(room.pub);
+        notify("Left the room.", "success");
+    }
+
+    async function exportRoomMessages(roomPub = activePub()): Promise<void> {
+        if (!roomPub) throw new Error("Select a room first.");
+        const records = await db.roomEnvelopes(roomPub);
+        if (records.length === 0) throw new Error("No messages to export yet.");
+        const envelopes = records.map(
+            (record) => JSON.parse(record.envelope) as Envelope,
+        );
+        const text = protocol.encodeFile(envelopes);
+        downloadText(text, `toloo-${roomPub.slice(0, 8)}.toloo`, "text/plain");
+        notify(`Exported ${records.length} envelope(s).`, "success");
+    }
+
+    async function deleteMessage(targetEid: string): Promise<void> {
+        const currentIdentity = identity();
+        const room = activeRoom();
+        if (!currentIdentity) throw new Error("Create an identity first.");
+        if (!room) throw new Error("Select a room first.");
+        const deletion = protocol.roomDelete(
+            currentIdentity,
+            room.pub,
+            CHAT_CHANNEL,
+            targetEid,
+        );
+        const outgoing = room.roomIdentity
+            ? protocol.commitEnvelope(
+                  deletion,
+                  room.roomIdentity,
+                  Math.max(Date.now(), protocol.info(deletion).ts),
+              )
+            : deletion;
+        await storeEnvelopeJson(JSON.stringify(outgoing));
+        await publishEnvelopes(room, [outgoing]);
+        await refreshRoom(room.pub);
+        notify("Message deleted.", "success");
+    }
+
+    async function flagMessage(
+        targetEid: string,
+        category = "spam",
+    ): Promise<void> {
+        const currentIdentity = identity();
+        const room = activeRoom();
+        if (!currentIdentity) throw new Error("Create an identity first.");
+        if (!room) throw new Error("Select a room first.");
+        const flag = protocol.roomFlag(
+            currentIdentity,
+            room.pub,
+            targetEid,
+            category,
+        );
+        const outgoing = room.roomIdentity
+            ? protocol.commitEnvelope(
+                  flag,
+                  room.roomIdentity,
+                  Math.max(Date.now(), protocol.info(flag).ts),
+              )
+            : flag;
+        await storeEnvelopeJson(JSON.stringify(outgoing));
+        await publishEnvelopes(room, [outgoing]);
+        notify(`Message flagged as ${category}.`, "success");
+    }
+
+    async function blockAuthor(nodePub: string): Promise<void> {
+        if (blocked().includes(nodePub)) return;
+        const next = [...blocked(), nodePub];
+        await db.saveSetting("blocklist", next);
+        setBlocked(next);
+        if (activePub()) await refreshRoom(activePub() as string);
+        notify("Author blocked on this device.", "success");
+    }
+
+    async function unblockAuthor(nodePub: string): Promise<void> {
+        const next = blocked().filter((item) => item !== nodePub);
+        await db.saveSetting("blocklist", next);
+        setBlocked(next);
+        if (activePub()) await refreshRoom(activePub() as string);
+        notify("Author unblocked.", "success");
+    }
+
+    async function publishEnvelopes(
+        room: RoomRecord,
+        envelopes: Envelope[],
+    ): Promise<void> {
+        if (relays().length === 0) return;
+        const offers = room.roomCreate
+            ? [(JSON.parse(room.roomCreate) as Envelope), ...envelopes]
+            : envelopes;
+        try {
+            await requestFromRelays(offers, [room.pub], 0, 200);
+        } catch (error) {
+            notify(`Saved locally; relay publish failed: ${errorText(error)}`, "error");
+        }
+    }
+
     async function removeRoom(roomPub: string): Promise<void> {
         await db.deleteRoom(roomPub);
+        setRoomSummaries((current) => {
+            const next = { ...current };
+            delete next[roomPub];
+            return next;
+        });
         setRooms((current) => {
             const remaining = current.filter((room) => room.pub !== roomPub);
             if (activePub() === roomPub) {
@@ -598,10 +912,12 @@ export function createTolooClient() {
         await db.clearLocalData();
         setIdentity(null);
         setRooms([]);
+        setRoomSummaries({});
         setRelays([]);
         setActivePub(null);
         setMessages([]);
         setMembers([]);
+        setBlocked([]);
         setSyncState("idle");
         setLastSync(null);
     }
@@ -620,11 +936,15 @@ export function createTolooClient() {
         identity,
         relays,
         rooms,
+        roomSummaries,
         activePub,
         activeRoom,
         messages,
         members,
         banned,
+        blocked,
+        blockAuthor,
+        unblockAuthor,
         syncState,
         syncing,
         lastSync,
@@ -632,13 +952,20 @@ export function createTolooClient() {
         load,
         createIdentity,
         restoreIdentity,
+        restoreIdentityJson,
         addRelay,
         removeRelay,
         createRoom,
         joinRoom,
+        importDiscovery,
         selectRoom,
         syncRoom,
         sendMessage,
+        renameRoom,
+        leaveRoom,
+        exportRoomMessages,
+        deleteMessage,
+        flagMessage,
         removeRoom,
         exportIdentity,
         reset,

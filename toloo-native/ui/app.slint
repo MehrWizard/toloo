@@ -1,334 +1,407 @@
-import { Button, LineEdit, ScrollView } from "std-widgets.slint";
-
-export struct RoomRow {
-    room-id: string,
-    display-name: string,
-    selected: bool,
-    has-key: bool,
-}
-
-export struct MessageRow {
-    author: string,
-    body: string,
-    clock: string,
-    mine: bool,
-    committed: bool,
-}
+import { Theme } from "theme.slint";
+import { BlockedRow, MessageRow, RelayRow, RoomRow } from "models.slint";
+import { RoomsPane } from "rooms.slint";
+import { ChatPane } from "chat.slint";
+import { AddRoomSheet, ExportSheet, ImportSheet, MessageActionsSheet, RoomActionsSheet, SettingsSheet } from "sheets.slint";
 
 export component AppWindow inherits Window {
     title: "Toloo";
     preferred-width: 1120px;
     preferred-height: 760px;
-    background: #070b0a;
+    min-width: 320px;
+    min-height: 480px;
+    background: Theme.bg;
 
     in property <bool> has-identity: false;
     in property <string> identity-label: "No identity";
+    in property <string> identity-initial: "?";
+    in property <int> identity-hue: 0;
+    in property <string> identity-sig-pub: "";
+    in property <string> identity-enc-pub: "";
     in property <string> status: "Starting…";
+    in property <string> network-label: "No relays";
     in property <string> active-room: "";
+    in property <string> active-room-id: "";
+    in property <string> room-key: "";
+    in property <string> room-initial: "?";
+    in property <int> room-hue: 0;
+    in property <bool> room-has-key: false;
     in property <string> members-label: "";
+    in property <bool> rtl: false;
+    in property <bool> notifications-enabled: false;
+    in property <bool> warming: false;
+    in property <string> export-text: "";
+    in property <string> export-kind: "";
+    in property <bool> host-running: false;
+    in property <string> host-address: "";
+    in property <int> host-connections: 0;
+    in property <[RelayRow]> relays;
+    in property <[BlockedRow]> blocked;
     in property <[RoomRow]> rooms;
     in property <[MessageRow]> messages;
+
+    in-out property <string> search: "";
+    in-out property <int> page: 0;
+    in-out property <int> sheet: 0;
 
     in-out property <string> relay-input: "";
     in-out property <string> create-room-name: "";
     in-out property <string> join-input: "";
     in-out property <string> sig-seed: "";
     in-out property <string> enc-priv: "";
+    in-out property <string> import-input: "";
     in-out property <string> message-input: "";
+    in-out property <string> passphrase: "";
+    in-out property <string> identity-input: "";
+    in-out property <string> encrypted-input: "";
+    in-out property <string> rename-input: "";
+    in-out property <string> host-port: "17701";
+    in-out property <string> host-proto: "ws";
+
+    in-out property <string> selected-room-id: "";
+    in-out property <string> selected-room-name: "";
+    in-out property <bool> selected-room-has-key: false;
+    in-out property <string> selected-message-eid: "";
+    in-out property <string> selected-message-author: "";
+    in-out property <string> selected-message-author-id: "";
+    in-out property <string> selected-message-body: "";
+    in-out property <bool> selected-message-mine: false;
 
     callback create-identity();
     callback restore-identity(string, string);
+    callback load-identity-json(string);
+    callback export-identity();
+    callback export-encrypted-identity(string);
+    callback load-encrypted-identity(string, string);
+    callback remove-identity();
     callback add-relay(string);
+    callback remove-relay(string);
     callback create-room(string);
     callback join-room(string);
     callback select-room(string);
+    callback search-changed(string);
     callback sync-now();
     callback send-message(string);
+    callback import-discovery(string);
+    callback export-invite(string);
+    callback export-messages(string);
+    callback rename-room(string, string);
+    callback leave-room(string);
+    callback remove-room(string);
+    callback delete-message(string, string);
+    callback flag-message(string, string, string);
+    callback block-node(string, string, string);
+    callback unblock-node(string);
+    callback attest-node(string, string);
+    callback set-rtl(bool);
+    callback set-notifications(bool);
+    callback start-host(string, string);
+    callback stop-host();
+    callback copy-text(string);
+    callback share-text(string);
 
-    HorizontalLayout {
+    private property <bool> phone: root.width < 700px;
+    private property <bool> tablet: root.width >= 700px && root.width < 1024px;
+
+    if root.phone && root.page == 0 : RoomsPane {
+        width: 100%;
+        height: 100%;
+        rooms: root.rooms;
+        identity-label: root.identity-label;
+        identity-initial: root.identity-initial;
+        identity-hue: root.identity-hue;
+        status: root.status;
+        network-label: root.network-label;
+        compact: true;
+        rtl: root.rtl;
+        search <=> root.search;
+        select-room(id) => {
+            root.select-room(id);
+            root.page = 1;
+        }
+        room-menu(id, name, has-key) => {
+            root.selected-room-id = id;
+            root.selected-room-name = name;
+            root.selected-room-has-key = has-key;
+            root.sheet = 6;
+        }
+        search-changed(query) => { root.search-changed(query); }
+        add-room => { root.sheet = 1; }
+        import-room => { root.sheet = 2; }
+        open-settings => { root.sheet = 3; }
+        open-relays => { root.sheet = 3; }
+    }
+
+    if root.phone && root.page == 1 : ChatPane {
+        width: 100%;
+        height: 100%;
+        messages: root.messages;
+        room-name: root.active-room;
+        room-id: root.room-key;
+        room-initial: root.room-initial;
+        room-hue: root.room-hue;
+        members-label: root.members-label;
+        status: root.status;
+        has-room: root.active-room-id != "";
+        show-back: true;
+        rtl: root.rtl;
+        message-input <=> root.message-input;
+        back => { root.page = 0; }
+        sync-room => { root.sync-now(); }
+        share-room => {
+            root.export-invite(root.active-room-id);
+            root.sheet = 4;
+        }
+        export-room => {
+            root.export-messages(root.active-room-id);
+            root.sheet = 4;
+        }
+        room-menu => {
+            root.selected-room-id = root.active-room-id;
+            root.selected-room-name = root.active-room;
+            root.selected-room-has-key = root.room-has-key;
+            root.sheet = 6;
+        }
+        message-menu(eid, author, author-id, body, mine) => {
+            root.selected-message-eid = eid;
+            root.selected-message-author = author;
+            root.selected-message-author-id = author-id;
+            root.selected-message-body = body;
+            root.selected-message-mine = mine;
+            root.sheet = 7;
+        }
+        open-settings => { root.sheet = 3; }
+        send-message(body) => { root.send-message(body); }
+    }
+
+    if !root.phone : HorizontalLayout {
         width: 100%;
         height: 100%;
         spacing: 0px;
-
-        Rectangle {
-            width: 328px;
-            background: #0d1311;
-            border-width: 1px;
-            border-color: #1f2c27;
-            border-radius: 0px;
-
-            VerticalLayout {
-                padding: 16px;
-                spacing: 10px;
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text {
-                        text: "toloo";
-                        color: #7de2b3;
-                        font-size: 23px;
-                        font-weight: 800;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: "native";
-                        color: #52685f;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                }
-                Text {
-                    text: root.status;
-                    color: #8da49b;
-                    font-size: 11px;
-                    wrap: word-wrap;
-                }
-                Rectangle { height: 1px; background: #1f2c27; }
-
-                Text {
-                    text: "THIS DEVICE";
-                    color: #617a70;
-                    font-size: 10px;
-                    letter-spacing: 1px;
-                }
-                Text {
-                    text: root.identity-label;
-                    color: #dcebe5;
-                    font-size: 12px;
-                    font-family: "monospace";
-                }
-
-                if !root.has-identity : VerticalLayout {
-                    spacing: 7px;
-                    LineEdit {
-                        placeholder-text: "Signing seed";
-                        text <=> root.sig-seed;
-                    }
-                    LineEdit {
-                        placeholder-text: "Encryption private key";
-                        text <=> root.enc-priv;
-                    }
-                    HorizontalLayout {
-                        spacing: 7px;
-                        Button {
-                            text: "Restore";
-                            clicked => { root.restore-identity(root.sig-seed, root.enc-priv); }
-                        }
-                        Button {
-                            text: "Create identity";
-                            clicked => { root.create-identity(); }
-                        }
-                    }
-                }
-
-                if root.has-identity : VerticalLayout {
-                    spacing: 7px;
-
-                    Text { text: "RELAY"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
-                    HorizontalLayout {
-                        spacing: 7px;
-                        LineEdit {
-                            placeholder-text: "wss://relay.example";
-                            text <=> root.relay-input;
-                        }
-                        Button {
-                            text: "Add";
-                            clicked => {
-                                if (root.relay-input != "") {
-                                    root.add-relay(root.relay-input);
-                                    root.relay-input = "";
-                                }
-                            }
-                        }
-                    }
-
-                    Text { text: "NEW ROOM"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
-                    HorizontalLayout {
-                        spacing: 7px;
-                        LineEdit {
-                            placeholder-text: "Room name";
-                            text <=> root.create-room-name;
-                        }
-                        Button {
-                            text: "Create";
-                            clicked => {
-                                if (root.create-room-name != "") {
-                                    root.create-room(root.create-room-name);
-                                    root.create-room-name = "";
-                                }
-                            }
-                        }
-                    }
-
-                    Text { text: "JOIN"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
-                    HorizontalLayout {
-                        spacing: 7px;
-                        LineEdit {
-                            placeholder-text: "toloo://… or room key";
-                            text <=> root.join-input;
-                        }
-                        Button {
-                            text: "Join";
-                            clicked => {
-                                if (root.join-input != "") {
-                                    root.join-room(root.join-input);
-                                    root.join-input = "";
-                                }
-                            }
-                        }
-                    }
-
-                    Text { text: "ROOMS"; color: #617a70; font-size: 10px; letter-spacing: 1px; }
-                    ScrollView {
-                        min-height: 120px;
-                        VerticalLayout {
-                            spacing: 3px;
-                            for room in root.rooms : Rectangle {
-                                height: 48px;
-                                border-radius: 8px;
-                                background: room.selected ? #16231e : transparent;
-
-                                VerticalLayout {
-                                    padding: 7px;
-                                    spacing: 1px;
-                                    Text {
-                                        text: room.display-name;
-                                        color: room.selected ? #eaf3ef : #c3d4cd;
-                                        font-size: 13px;
-                                        font-weight: 600;
-                                    }
-                                    Text {
-                                        text: room.room-id;
-                                        color: #617a70;
-                                        font-size: 9px;
-                                        font-family: "monospace";
-                                    }
-                                }
-                                TouchArea {
-                                    clicked => { root.select-room(room.room-id); }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Rectangle { vertical-stretch: 1; }
-                Text {
-                    text: "Native engine · Slint · no WebView";
-                    color: #52685f;
-                    font-size: 9px;
-                }
+        RoomsPane {
+            width: root.tablet ? Theme.rail-width : Theme.sidebar-width;
+            height: 100%;
+            rooms: root.rooms;
+            identity-label: root.identity-label;
+            identity-initial: root.identity-initial;
+            identity-hue: root.identity-hue;
+            status: root.status;
+            network-label: root.network-label;
+            compact: root.tablet;
+            rtl: root.rtl;
+            search <=> root.search;
+            select-room(id) => { root.select-room(id); }
+            room-menu(id, name, has-key) => {
+                root.selected-room-id = id;
+                root.selected-room-name = name;
+                root.selected-room-has-key = has-key;
+                root.sheet = 6;
             }
+            search-changed(query) => { root.search-changed(query); }
+            add-room => { root.sheet = 1; }
+            import-room => { root.sheet = 2; }
+            open-settings => { root.sheet = 3; }
+            open-relays => { root.sheet = 3; }
+        }
+        Rectangle { width: 1px; height: 100%; background: Theme.border; }
+        ChatPane {
+            width: root.width - (root.tablet ? Theme.rail-width : Theme.sidebar-width) - 1px;
+            height: 100%;
+            messages: root.messages;
+            room-name: root.active-room;
+            room-id: root.room-key;
+            room-initial: root.room-initial;
+            room-hue: root.room-hue;
+            members-label: root.members-label;
+            status: root.status;
+            has-room: root.active-room-id != "";
+            show-back: false;
+            rtl: root.rtl;
+            message-input <=> root.message-input;
+            back => { }
+            sync-room => { root.sync-now(); }
+            share-room => {
+                root.export-invite(root.active-room-id);
+                root.sheet = 4;
+            }
+            export-room => {
+                root.export-messages(root.active-room-id);
+                root.sheet = 4;
+            }
+            room-menu => {
+                root.selected-room-id = root.active-room-id;
+                root.selected-room-name = root.active-room;
+                root.selected-room-has-key = root.room-has-key;
+                root.sheet = 6;
+            }
+            message-menu(eid, author, author-id, body, mine) => {
+                root.selected-message-eid = eid;
+                root.selected-message-author = author;
+                root.selected-message-author-id = author-id;
+                root.selected-message-body = body;
+                root.selected-message-mine = mine;
+                root.sheet = 7;
+            }
+            open-settings => { root.sheet = 3; }
+            send-message(body) => { root.send-message(body); }
+        }
+    }
+
+    if root.sheet != 0 : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000099;
+
+        TouchArea {
+            clicked => { root.sheet = 0; }
         }
 
         Rectangle {
-            background: #070b0a;
-            VerticalLayout {
-                padding: 18px;
-                spacing: 11px;
+            width: root.phone ? root.width : 480px;
+            height: root.phone ? root.height * 0.74 : 620px;
+            x: root.phone ? 0px : (root.width - self.width) / 2;
+            y: root.phone ? root.height - self.height : (root.height - self.height) / 2;
+            border-radius: root.phone ? 16px : Theme.radius;
+            background: Theme.surface;
+            clip: true;
 
-                HorizontalLayout {
-                    spacing: 12px;
-                    Text {
-                        text: root.active-room == "" ? "Select a room" : root.active-room;
-                        color: #eaf3ef;
-                        font-size: 18px;
-                        font-weight: 650;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: root.members-label;
-                        color: #617a70;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    Button {
-                        text: "Sync";
-                        enabled: root.has-identity && root.active-room != "";
-                        clicked => { root.sync-now(); }
-                    }
+            if root.sheet == 1 : AddRoomSheet {
+                create-name <=> root.create-room-name;
+                join-input <=> root.join-input;
+                close => { root.sheet = 0; }
+                create-room(name) => {
+                    root.create-room(name);
+                    root.sheet = 0;
                 }
-                Rectangle { height: 1px; background: #1f2c27; }
-
-                if root.active-room == "" : Rectangle {
-                    vertical-stretch: 1;
-                    Text {
-                        text: "Create or join a room to start.";
-                        color: #8da49b;
-                        font-size: 14px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
+                join-room(value) => {
+                    root.join-room(value);
+                    root.sheet = 0;
                 }
+            }
 
-                if root.active-room != "" : ScrollView {
-                    vertical-stretch: 1;
-                    VerticalLayout {
-                        spacing: 8px;
-                        padding: 2px;
-                        for message in root.messages : HorizontalLayout {
-                            alignment: message.mine ? end : start;
-                            Rectangle {
-                                max-width: 580px;
-                                background: message.mine ? #142a21 : #111a17;
-                                border-width: 1px;
-                                border-color: message.mine ? #24513d : #22312c;
-                                border-radius: 12px;
-                                VerticalLayout {
-                                    padding: 9px;
-                                    spacing: 3px;
-                                    Text {
-                                        text: message.author;
-                                        color: #617a70;
-                                        font-size: 9px;
-                                        font-family: "monospace";
-                                    }
-                                    Text {
-                                        text: message.body;
-                                        color: #dcebe5;
-                                        font-size: 14px;
-                                        wrap: word-wrap;
-                                    }
-                                    HorizontalLayout {
-                                        spacing: 6px;
-                                        Text {
-                                            text: message.clock;
-                                            color: #52685f;
-                                            font-size: 9px;
-                                        }
-                                        Text {
-                                            text: message.committed ? "sent" : "pending";
-                                            color: message.committed ? #7de2b3 : #efbe78;
-                                            font-size: 9px;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+            if root.sheet == 2 : ImportSheet {
+                import-input <=> root.import-input;
+                close => { root.sheet = 0; }
+                decode(value) => {
+                    root.import-discovery(value);
+                    root.sheet = 0;
                 }
+            }
 
-                HorizontalLayout {
-                    spacing: 8px;
-                    LineEdit {
-                        placeholder-text: "Message";
-                        text <=> root.message-input;
-                        enabled: root.active-room != "";
-                    }
-                    Button {
-                        text: "Send";
-                        enabled: root.active-room != "" && root.message-input != "";
-                        clicked => {
-                            if (root.message-input != "") {
-                                root.send-message(root.message-input);
-                                root.message-input = "";
-                            }
-                        }
-                    }
+            if root.sheet == 3 : SettingsSheet {
+                has-identity: root.has-identity;
+                identity-label: root.identity-label;
+                identity-initial: root.identity-initial;
+                identity-hue: root.identity-hue;
+                sig-pub: root.identity-sig-pub;
+                enc-pub: root.identity-enc-pub;
+                rtl: root.rtl;
+                notifications-enabled: root.notifications-enabled;
+                network-label: root.network-label;
+                host-running: root.host-running;
+                host-address: root.host-address;
+                host-connections: root.host-connections;
+                relays: root.relays;
+                blocked: root.blocked;
+                host-port <=> root.host-port;
+                host-proto <=> root.host-proto;
+                relay-input <=> root.relay-input;
+                sig-seed <=> root.sig-seed;
+                enc-priv <=> root.enc-priv;
+                passphrase <=> root.passphrase;
+                identity-input <=> root.identity-input;
+                encrypted-input <=> root.encrypted-input;
+                close => { root.sheet = 0; }
+                create-identity => { root.create-identity(); }
+                restore-identity(seed, key) => { root.restore-identity(seed, key); }
+                add-relay(url) => { root.add-relay(url); }
+                remove-relay(url) => { root.remove-relay(url); }
+                export-identity => {
+                    root.export-identity();
+                    root.sheet = 4;
+                }
+                export-encrypted(passphrase) => {
+                    root.export-encrypted-identity(passphrase);
+                    root.sheet = 4;
+                }
+                load-identity-json(json) => { root.load-identity-json(json); }
+                load-encrypted(blob, passphrase) => { root.load-encrypted-identity(blob, passphrase); }
+                remove-identity => { root.remove-identity(); }
+                unblock-node(node) => { root.unblock-node(node); }
+                set-rtl(enabled) => { root.set-rtl(enabled); }
+                set-notifications(enabled) => { root.set-notifications(enabled); }
+                start-host(port, proto) => { root.start-host(port, proto); }
+                stop-host => { root.stop-host(); }
+            }
+
+            if root.sheet == 4 : ExportSheet {
+                export-text: root.export-text;
+                export-kind: root.export-kind;
+                room-key: root.room-key;
+                close => { root.sheet = 0; }
+                copy(value) => { root.copy-text(value); }
+                share(value) => { root.share-text(value); }
+            }
+
+            if root.sheet == 6 : RoomActionsSheet {
+                room-name: root.selected-room-name;
+                room-key: root.selected-room-id;
+                has-key: root.selected-room-has-key;
+                rename-name <=> root.rename-input;
+                close => { root.sheet = 0; }
+                rename(name) => {
+                    root.rename-room(root.selected-room-id, name);
+                    root.rename-input = "";
+                    root.sheet = 0;
+                }
+                sync => {
+                    root.sync-now();
+                    root.sheet = 0;
+                }
+                share => {
+                    root.export-invite(root.selected-room-id);
+                    root.sheet = 4;
+                }
+                export => {
+                    root.export-messages(root.selected-room-id);
+                    root.sheet = 4;
+                }
+                copy(value) => { root.copy-text(value); }
+                leave => {
+                    root.leave-room(root.selected-room-id);
+                    root.sheet = 0;
+                }
+                remove => {
+                    root.remove-room(root.selected-room-id);
+                    root.sheet = 0;
+                }
+            }
+
+            if root.sheet == 7 : MessageActionsSheet {
+                author: root.selected-message-author;
+                author-id: root.selected-message-author-id;
+                body: root.selected-message-body;
+                eid: root.selected-message-eid;
+                mine: root.selected-message-mine;
+                close => { root.sheet = 0; }
+                copy(value) => { root.copy-text(value); }
+                flag(category) => {
+                    root.flag-message(root.active-room-id, root.selected-message-eid, category);
+                    root.sheet = 0;
+                }
+                block(author) => {
+                    root.block-node(author, "block", "");
+                    root.sheet = 0;
+                }
+                attest(author, level) => {
+                    root.attest-node(author, level);
+                    root.sheet = 0;
+                }
+                delete => {
+                    root.delete-message(root.active-room-id, root.selected-message-eid);
+                    root.sheet = 0;
                 }
             }
         }
     }
-
 }
