@@ -56,7 +56,7 @@ fn android_call_string(method: &str, value: &str) {
                 &[JValue::Object(&value)],
             );
         }
-    }
+    };
 }
 
 #[cfg(target_os = "android")]
@@ -81,7 +81,7 @@ fn android_call_strings(method: &str, first: &str, second: &str) {
                 &[JValue::Object(&first), JValue::Object(&second)],
             );
         }
-    }
+    };
 }
 
 #[cfg(target_os = "android")]
