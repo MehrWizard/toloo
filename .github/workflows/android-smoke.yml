@@ -1,0 +1,113 @@
+name: Android smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    name: Reproduce Android crash on emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
+
+      - name: Install Android SDK and NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-android-x86_64-smoke
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - uses: cargo-bins/cargo-binstall@v1.17.5
+        env:
+          BINSTALL_VERSION: "1.17.5"
+
+      - name: Install cargo-ndk
+        run: cargo binstall --no-confirm cargo-ndk@4.1.2 || cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Build x86_64 native libraries
+        run: ./toloo-native/android/build-native.sh x86_64
+
+      - name: Build x86_64 debug APK
+        env:
+          TOLOO_ANDROID_EMULATOR_ABI: x86_64
+        run: gradle -p toloo-native/android --no-daemon assembleDebug
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run app and capture logcat
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+          script: |
+            set -x
+            apk=$(ls toloo-native/android/app/build/outputs/apk/debug/*x86_64*debug*.apk | head -1)
+            adb install -r "$apk"
+            adb logcat -c
+            adb shell am start -W -n com.irandawn.toloo/.TolooActivity | tee start.txt
+            sleep 2
+            adb exec-out screencap -p > screen-2s.png || true
+            sleep 8
+            adb exec-out screencap -p > screen-10s.png || true
+            {
+              echo "=== pid ==="
+              adb shell pidof com.irandawn.toloo || echo "APP_NOT_RUNNING"
+              echo "=== crash buffer ==="
+              adb logcat -b crash -d || true
+              echo "=== filtered logcat ==="
+              adb logcat -d -v threadtime | grep -Ei \
+                'AndroidRuntime|FATAL|DEBUG|signal|toloo|libc|backtrace' || true
+            } | tee smoke.log
+            adb logcat -b crash -d > crash.txt || true
+            adb logcat -d -v threadtime > full-logcat.txt || true
+            adb shell am force-stop com.irandawn.toloo || true
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-smoke-logs
+          path: |
+            start.txt
+            smoke.log
+            crash.txt
+            full-logcat.txt
+            screen-2s.png
+            screen-10s.png
+          if-no-files-found: warn

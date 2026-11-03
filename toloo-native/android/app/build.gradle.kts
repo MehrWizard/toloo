@@ -50,12 +50,16 @@ android {
         }
     }
 
+    val emulatorAbi = System.getenv("TOLOO_ANDROID_EMULATOR_ABI")
     splits {
         abi {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = true
+            if (!emulatorAbi.isNullOrBlank()) {
+                include(emulatorAbi)
+            }
+            isUniversalApk = emulatorAbi.isNullOrBlank()
         }
     }
 
