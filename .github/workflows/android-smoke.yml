@@ -96,6 +96,8 @@ jobs:
             grep -Ei 'AndroidRuntime|FATAL|DEBUG|signal|toloo|libc|backtrace' full-logcat.txt > filtered.txt || true
             cat crash.txt || true
             cat filtered.txt || true
+            test -s pid-10s.txt
+            ! grep -q 'com.irandawn.toloo' crash.txt
             adb shell am force-stop com.irandawn.toloo || true
 
       - name: Upload smoke logs
