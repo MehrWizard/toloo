@@ -18,7 +18,11 @@ static JAVA_VM: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
 #[cfg(target_os = "android")]
-fn call_activity(method: &str) {
+static ACTIVITY_CLASS: Mutex<Option<jni::objects::GlobalRef>> = Mutex::new(None);
+
+#[cfg(target_os = "android")]
+fn cache_activity_class(app: &slint::android::AndroidApp) {
+    use jni::objects::JObject;
     use std::sync::atomic::Ordering;
     let vm = JAVA_VM.load(Ordering::Acquire);
     if vm.is_null() {
@@ -29,59 +33,125 @@ fn call_activity(method: &str) {
     let Ok(vm) = (unsafe { jni::JavaVM::from_raw(vm.cast::<jni::sys::JavaVM>()) }) else {
         return;
     };
-    if let Ok(mut env) = vm.attach_current_thread() {
-        let _ = env.call_static_method("com/irandawn/toloo/TolooActivity", method, "()V", &[]);
+    let Ok(mut env) = vm.attach_current_thread() else {
+        return;
     };
+    // SAFETY: activity_as_ptr is a valid JNI local reference for this call.
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    let Ok(class) = env.get_object_class(&activity) else {
+        return;
+    };
+    let Ok(global) = env.new_global_ref(&class) else {
+        return;
+    };
+    if let Ok(mut slot) = ACTIVITY_CLASS.lock() {
+        *slot = Some(global);
+    }
+}
+
+#[cfg(target_os = "android")]
+fn with_activity<R>(f: impl FnOnce(&mut jni::JNIEnv, &jni::objects::JClass) -> R) -> Option<R> {
+    use jni::objects::JClass;
+    use std::sync::atomic::Ordering;
+    let vm = JAVA_VM.load(Ordering::Acquire);
+    if vm.is_null() {
+        return None;
+    }
+    // SAFETY: the VM pointer comes from AndroidApp and remains valid for the
+    // lifetime of the process.
+    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(vm.cast::<jni::sys::JavaVM>()) }) else {
+        return None;
+    };
+    let Ok(mut env) = vm.attach_current_thread() else {
+        return None;
+    };
+    let guard = ACTIVITY_CLASS.lock().ok()?;
+    let global = guard.as_ref()?;
+    // SAFETY: the global reference keeps the class alive for this call.
+    let class = unsafe { JClass::from_raw(global.as_obj().as_raw() as jni::sys::jclass) };
+    let result = f(&mut env, &class);
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    Some(result)
+}
+
+#[cfg(target_os = "android")]
+fn call_activity(method: &str) {
+    use jni::signature::{Primitive, ReturnType};
+    let _ = with_activity(|env, class| {
+        let Ok(method_id) = env.get_static_method_id(class, method, "()V") else {
+            return;
+        };
+        // SAFETY: method_id was resolved from this exact jclass.
+        let _ = unsafe {
+            env.call_static_method_unchecked(
+                class,
+                method_id,
+                ReturnType::Primitive(Primitive::Void),
+                &[],
+            )
+        };
+    });
 }
 
 #[cfg(target_os = "android")]
 fn android_call_string(method: &str, value: &str) {
     use jni::objects::JValue;
-    use std::sync::atomic::Ordering;
-    let vm = JAVA_VM.load(Ordering::Acquire);
-    if vm.is_null() {
-        return;
-    }
-    // SAFETY: the VM pointer comes from AndroidApp and remains valid for the
-    // lifetime of the process.
-    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(vm.cast::<jni::sys::JavaVM>()) }) else {
-        return;
-    };
-    if let Ok(mut env) = vm.attach_current_thread() {
-        if let Ok(value) = env.new_string(value) {
-            let _ = env.call_static_method(
-                "com/irandawn/toloo/TolooActivity",
-                method,
-                "(Ljava/lang/String;)V",
-                &[JValue::Object(&value)],
-            );
-        }
-    };
+    use jni::signature::{Primitive, ReturnType};
+    let _ = with_activity(|env, class| {
+        let Ok(value) = env.new_string(value) else {
+            return;
+        };
+        let Ok(method_id) =
+            env.get_static_method_id(class, method, "(Ljava/lang/String;)V")
+        else {
+            return;
+        };
+        let args = [JValue::Object(&value).as_jni()];
+        // SAFETY: method_id was resolved from this exact jclass.
+        let _ = unsafe {
+            env.call_static_method_unchecked(
+                class,
+                method_id,
+                ReturnType::Primitive(Primitive::Void),
+                &args,
+            )
+        };
+        let _ = env.delete_local_ref(value);
+    });
 }
 
 #[cfg(target_os = "android")]
 fn android_call_strings(method: &str, first: &str, second: &str) {
     use jni::objects::JValue;
-    use std::sync::atomic::Ordering;
-    let vm = JAVA_VM.load(Ordering::Acquire);
-    if vm.is_null() {
-        return;
-    }
-    // SAFETY: the VM pointer comes from AndroidApp and remains valid for the
-    // lifetime of the process.
-    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(vm.cast::<jni::sys::JavaVM>()) }) else {
-        return;
-    };
-    if let Ok(mut env) = vm.attach_current_thread() {
-        if let (Ok(first), Ok(second)) = (env.new_string(first), env.new_string(second)) {
-            let _ = env.call_static_method(
-                "com/irandawn/toloo/TolooActivity",
-                method,
-                "(Ljava/lang/String;Ljava/lang/String;)V",
-                &[JValue::Object(&first), JValue::Object(&second)],
-            );
-        }
-    };
+    use jni::signature::{Primitive, ReturnType};
+    let _ = with_activity(|env, class| {
+        let (Ok(first), Ok(second)) = (env.new_string(first), env.new_string(second)) else {
+            return;
+        };
+        let Ok(method_id) =
+            env.get_static_method_id(class, method, "(Ljava/lang/String;Ljava/lang/String;)V")
+        else {
+            return;
+        };
+        let args = [
+            JValue::Object(&first).as_jni(),
+            JValue::Object(&second).as_jni(),
+        ];
+        // SAFETY: method_id was resolved from this exact jclass.
+        let _ = unsafe {
+            env.call_static_method_unchecked(
+                class,
+                method_id,
+                ReturnType::Primitive(Primitive::Void),
+                &args,
+            )
+        };
+        let _ = env.delete_local_ref(first);
+        let _ = env.delete_local_ref(second);
+    });
 }
 
 #[cfg(target_os = "android")]
@@ -534,6 +604,7 @@ pub fn run(data_dir: PathBuf) -> Result<()> {
 #[unsafe(no_mangle)]
 fn android_main(app: slint::android::AndroidApp) {
     JAVA_VM.store(app.vm_as_ptr(), std::sync::atomic::Ordering::Release);
+    cache_activity_class(&app);
     let data_dir = app
         .internal_data_path()
         .unwrap_or_else(|| PathBuf::from("."));
