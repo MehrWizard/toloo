@@ -102,10 +102,16 @@ export component AppWindow inherits Window {
 
     private property <bool> phone: root.width < 700px;
     private property <bool> tablet: root.width >= 700px && root.width < 1024px;
+    private property <length> inset-left: root.safe-area-insets.left;
+    private property <length> inset-top: root.safe-area-insets.top;
+    private property <length> inset-right: root.safe-area-insets.right;
+    private property <length> inset-bottom: root.safe-area-insets.bottom;
 
     if root.phone && root.page == 0 : RoomsPane {
-        width: 100%;
-        height: 100%;
+        x: root.inset-left;
+        y: root.inset-top;
+        width: root.width - root.inset-left - root.inset-right;
+        height: root.height - root.inset-top - root.inset-bottom;
         rooms: root.rooms;
         identity-label: root.identity-label;
         identity-initial: root.identity-initial;
@@ -133,8 +139,10 @@ export component AppWindow inherits Window {
     }
 
     if root.phone && root.page == 1 : ChatPane {
-        width: 100%;
-        height: 100%;
+        x: root.inset-left;
+        y: root.inset-top;
+        width: root.width - root.inset-left - root.inset-right;
+        height: root.height - root.inset-top - root.inset-bottom;
         messages: root.messages;
         room-name: root.active-room;
         room-id: root.room-key;
@@ -175,8 +183,10 @@ export component AppWindow inherits Window {
     }
 
     if !root.phone : HorizontalLayout {
-        width: 100%;
-        height: 100%;
+        x: root.inset-left;
+        y: root.inset-top;
+        width: root.width - root.inset-left - root.inset-right;
+        height: root.height - root.inset-top - root.inset-bottom;
         spacing: 0px;
         RoomsPane {
             width: root.tablet ? Theme.rail-width : Theme.sidebar-width;
@@ -257,10 +267,18 @@ export component AppWindow inherits Window {
         }
 
         Rectangle {
-            width: root.phone ? root.width : 480px;
-            height: root.phone ? root.height * 0.74 : 620px;
-            x: root.phone ? 0px : (root.width - self.width) / 2;
-            y: root.phone ? root.height - self.height : (root.height - self.height) / 2;
+            width: root.phone
+                ? root.width - root.inset-left - root.inset-right
+                : 480px;
+            height: root.phone
+                ? (root.height - root.inset-top - root.inset-bottom) * 0.74
+                : 620px;
+            x: root.phone
+                ? root.inset-left
+                : root.inset-left + (root.width - root.inset-left - root.inset-right - self.width) / 2;
+            y: root.phone
+                ? root.height - root.inset-bottom - self.height
+                : root.inset-top + (root.height - root.inset-top - root.inset-bottom - self.height) / 2;
             border-radius: root.phone ? 16px : Theme.radius;
             background: Theme.surface;
             clip: true;

@@ -105,5 +105,5 @@ jobs:
           name: android-smoke-logs
           path: |
             *.txt
-            *.png
+            screen-*.png
           if-no-files-found: warn
