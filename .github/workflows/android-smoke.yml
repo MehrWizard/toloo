@@ -57,6 +57,11 @@ jobs:
           TOLOO_ANDROID_EMULATOR_ABI: x86_64
         run: gradle -p toloo-native/android --no-daemon assembleDebug
 
+      - name: Inspect debug APK
+        run: |
+          find toloo-native/android/app/build/outputs/apk/debug -type f | sort
+          unzip -l toloo-native/android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/'
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -77,8 +82,7 @@ jobs:
             -camera-back none -camera-front none
           script: |
             set -x
-            apk=$(ls toloo-native/android/app/build/outputs/apk/debug/*x86_64*debug*.apk | head -1)
-            adb install -r "$apk"
+            adb install -r toloo-native/android/app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c
             adb shell am start -W -n com.irandawn.toloo/.TolooActivity | tee start.txt
             sleep 2

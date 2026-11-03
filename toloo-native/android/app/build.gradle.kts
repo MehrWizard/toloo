@@ -50,16 +50,15 @@ android {
         }
     }
 
-    val emulatorAbi = System.getenv("TOLOO_ANDROID_EMULATOR_ABI")
+    // Emulator smoke builds disable ABI splits so the debug APK is a single
+    // universal package containing the x86_64 jniLibs built for testing.
+    val emulatorBuild = !System.getenv("TOLOO_ANDROID_EMULATOR_ABI").isNullOrBlank()
     splits {
         abi {
-            isEnable = true
+            isEnable = !emulatorBuild
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            if (!emulatorAbi.isNullOrBlank()) {
-                include(emulatorAbi)
-            }
-            isUniversalApk = emulatorAbi.isNullOrBlank()
+            isUniversalApk = true
         }
     }
 
