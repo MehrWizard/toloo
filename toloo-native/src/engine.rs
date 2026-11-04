@@ -93,7 +93,6 @@ pub struct Snapshot {
     pub has_identity: bool,
     pub identity_label: String,
     pub identity_initial: String,
-    pub identity_hue: i32,
     pub identity_sig_pub: String,
     pub identity_enc_pub: String,
     pub status: String,
@@ -102,7 +101,6 @@ pub struct Snapshot {
     pub active_room_id: String,
     pub room_key: String,
     pub room_initial: String,
-    pub room_hue: i32,
     pub room_has_key: bool,
     pub members_label: String,
     pub rtl: bool,
@@ -138,7 +136,6 @@ pub struct RoomView {
     pub room_id: String,
     pub display_name: String,
     pub initial: String,
-    pub avatar_hue: i32,
     pub selected: bool,
     pub has_key: bool,
     pub preview: String,
@@ -153,7 +150,6 @@ pub struct MessageView {
     pub author: String,
     pub author_id: String,
     pub author_initial: String,
-    pub avatar_hue: i32,
     pub body: String,
     pub clock: String,
     pub mine: bool,
@@ -170,7 +166,6 @@ impl Default for Snapshot {
             has_identity: false,
             identity_label: "No identity".to_owned(),
             identity_initial: "?".to_owned(),
-            identity_hue: 0,
             identity_sig_pub: String::new(),
             identity_enc_pub: String::new(),
             status: String::new(),
@@ -179,7 +174,6 @@ impl Default for Snapshot {
             active_room_id: String::new(),
             room_key: String::new(),
             room_initial: "?".to_owned(),
-            room_hue: 0,
             room_has_key: false,
             members_label: String::new(),
             rtl: false,
@@ -265,7 +259,6 @@ fn config_snapshot(config: &Config, status: &str) -> Snapshot {
             room_id: room.pub_key.clone(),
             display_name: room.name.clone(),
             initial: initial(&room.name),
-            avatar_hue: hue(&room.pub_key),
             selected: active
                 .map(|active| active.pub_key == room.pub_key)
                 .unwrap_or(false),
@@ -291,7 +284,6 @@ fn config_snapshot(config: &Config, status: &str) -> Snapshot {
             .as_deref()
             .map(initial)
             .unwrap_or_else(|| "?".to_owned()),
-        identity_hue: node_pub.as_deref().map(hue).unwrap_or(0),
         identity_sig_pub: node_pub.clone().unwrap_or_default(),
         identity_enc_pub: config
             .identity
@@ -308,7 +300,6 @@ fn config_snapshot(config: &Config, status: &str) -> Snapshot {
         room_initial: active
             .map(|room| initial(&room.name))
             .unwrap_or_else(|| "?".to_owned()),
-        room_hue: active.map(|room| hue(&room.pub_key)).unwrap_or(0),
         room_has_key: active
             .map(|room| room.room_identity.is_some())
             .unwrap_or(false),
@@ -1441,8 +1432,7 @@ impl Engine {
                     room_id: room.pub_key.clone(),
                     display_name: room.name.clone(),
                     initial: initial(&room.name),
-                    avatar_hue: hue(&room.pub_key),
-                    selected: is_active,
+                            selected: is_active,
                     has_key: room.room_identity.is_some(),
                     preview,
                     time_label,
@@ -1462,14 +1452,12 @@ impl Engine {
         let mut active_room_id = String::new();
         let mut room_key = String::new();
         let mut room_initial = "?".to_owned();
-        let mut room_hue = 0;
         let mut room_has_key = false;
         if let Some(room) = active {
             active_room = room.name.clone();
             active_room_id = room.pub_key.clone();
             room_key = short_key(&room.pub_key);
             room_initial = initial(&room.name);
-            room_hue = hue(&room.pub_key);
             room_has_key = room.room_identity.is_some();
             if let Ok(membership) = self.pool.build_membership(&room.pub_key) {
                 members_label = format!(
@@ -1517,7 +1505,6 @@ impl Engine {
                         author: short_key(&inner.d.n),
                         author_id: inner.d.n.clone(),
                         author_initial: initial(&inner.d.n),
-                        avatar_hue: hue(&inner.d.n),
                         body,
                         clock: clock(inner.d.ts),
                         mine: node_pub.as_deref() == Some(inner.d.n.as_str()),
@@ -1561,7 +1548,6 @@ impl Engine {
             }
         }
 
-        let identity_hue = node_pub.as_deref().map(hue).unwrap_or(0);
         let identity_initial = node_pub
             .as_deref()
             .map(initial)
@@ -1612,7 +1598,6 @@ impl Engine {
                 .map(|value| short_key(value))
                 .unwrap_or_else(|| "No identity".to_owned()),
             identity_initial,
-            identity_hue,
             identity_sig_pub: self
                 .config
                 .identity
@@ -1635,7 +1620,6 @@ impl Engine {
             active_room_id,
             room_key,
             room_initial,
-            room_hue,
             room_has_key,
             members_label,
             rtl: self.config.rtl,
@@ -1699,14 +1683,6 @@ pub fn run(data_dir: PathBuf, commands: Receiver<Command>, updates: Sender<Snaps
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
-}
-
-fn hue(value: &str) -> i32 {
-    let mut hash = 0u32;
-    for byte in value.bytes() {
-        hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-    }
-    (hash % 8) as i32
 }
 
 fn initial(value: &str) -> String {

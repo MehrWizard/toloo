@@ -1,6 +1,6 @@
 /target
 /toloo-wasm/pkg/
-/toloo-web/src/generated/
+/toloo-web/src/generated/toloo-wasm/
 node_modules/
 dist/
 

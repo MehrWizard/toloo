@@ -7,7 +7,8 @@ export component RoomsPane inherits Rectangle {
     in property <[RoomRow]> rooms;
     in property <string> identity-label;
     in property <string> identity-initial: "?";
-    in property <int> identity-hue: 0;
+    in property <string> identity-avatar-path;
+    in property <int> identity-avatar-palette: 0;
     in property <string> status: "";
     in property <string> network-label: "No relays";
     in property <bool> compact: false;
@@ -39,7 +40,8 @@ export component RoomsPane inherits Rectangle {
                 Avatar {
                     avatar-size: 36px;
                     label: root.identity-initial;
-                    hue: root.identity-hue;
+                    path: root.identity-avatar-path;
+                    palette: root.identity-avatar-palette;
                     layout-order: root.rtl ? 4 : 0;
                     TouchArea {
                         clicked => { root.open-settings(); }
@@ -56,13 +58,13 @@ export component RoomsPane inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; min-width: 1px; layout-order: 2; }
                 IconButton {
-                    icon: @image-url("icons/inbox.svg");
+                    icon: @image-url("../../design/icons/inbox.svg");
                     tint: Theme.text-2;
                     layout-order: root.rtl ? 1 : 3;
                     clicked => { root.import-room(); }
                 }
                 IconButton {
-                    icon: @image-url("icons/plus.svg");
+                    icon: @image-url("../../design/icons/plus.svg");
                     tint: Theme.accent;
                     layout-order: root.rtl ? 0 : 4;
                     clicked => { root.add-room(); }
@@ -127,7 +129,8 @@ export component RoomsPane inherits Rectangle {
                         Avatar {
                             avatar-size: 40px;
                             label: room.initial;
-                            hue: room.avatar-hue;
+                            path: room.avatar-path;
+                            palette: room.avatar-palette;
                             layout-order: root.rtl ? 3 : 0;
                         }
                         VerticalLayout {
@@ -179,7 +182,7 @@ export component RoomsPane inherits Rectangle {
                             }
                         }
                         IconButton {
-                            icon: @image-url("icons/more.svg");
+                            icon: @image-url("../../design/icons/more.svg");
                             tint: Theme.muted;
                             button-size: 30px;
                             layout-order: root.rtl ? 0 : 3;
@@ -228,7 +231,7 @@ export component RoomsPane inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; min-width: 1px; layout-order: 1; }
                 IconButton {
-                    icon: @image-url("icons/relay.svg");
+                    icon: @image-url("../../design/icons/relay.svg");
                     tint: Theme.muted;
                     layout-order: root.rtl ? 0 : 2;
                     clicked => { root.open-relays(); }

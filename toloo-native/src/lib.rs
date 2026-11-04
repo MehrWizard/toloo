@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use slint::{ComponentHandle, ModelRc, VecModel};
+use toloo_lib::avatar::AvatarSpec;
 
 mod engine;
 mod platform;
@@ -258,6 +259,13 @@ pub fn default_data_dir() -> PathBuf {
     PathBuf::from(".toloo-native")
 }
 
+fn avatar_for(public_key: &str) -> (String, i32) {
+    match AvatarSpec::from_pubkey_b64(public_key) {
+        Ok(spec) => (spec.to_svg_path(), spec.palette as i32),
+        Err(_) => (String::new(), 0),
+    }
+}
+
 fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
     let notify_room_id = snapshot.active_room_id.clone();
     let notify_room_name = snapshot.active_room.clone();
@@ -270,16 +278,21 @@ fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
     ui.set_has_identity(snapshot.has_identity);
     ui.set_identity_label(snapshot.identity_label.into());
     ui.set_identity_initial(snapshot.identity_initial.into());
-    ui.set_identity_hue(snapshot.identity_hue);
+    let (identity_avatar_path, identity_avatar_palette) =
+        avatar_for(&snapshot.identity_sig_pub);
+    ui.set_identity_avatar_path(identity_avatar_path.into());
+    ui.set_identity_avatar_palette(identity_avatar_palette);
     ui.set_identity_sig_pub(snapshot.identity_sig_pub.into());
     ui.set_identity_enc_pub(snapshot.identity_enc_pub.into());
     ui.set_status(snapshot.status.into());
     ui.set_network_label(snapshot.network_label.into());
+    let (room_avatar_path, room_avatar_palette) = avatar_for(&snapshot.active_room_id);
     ui.set_active_room(snapshot.active_room.into());
     ui.set_active_room_id(snapshot.active_room_id.into());
     ui.set_room_key(snapshot.room_key.into());
     ui.set_room_initial(snapshot.room_initial.into());
-    ui.set_room_hue(snapshot.room_hue);
+    ui.set_room_avatar_path(room_avatar_path.into());
+    ui.set_room_avatar_palette(room_avatar_palette);
     ui.set_room_has_key(snapshot.room_has_key);
     ui.set_members_label(snapshot.members_label.into());
     if ui.get_sheet() == 6 && ui.get_selected_room_id().is_empty() {
@@ -321,17 +334,21 @@ fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
     let rooms: Vec<RoomRow> = snapshot
         .rooms
         .into_iter()
-        .map(|room| RoomRow {
-            room_id: room.room_id.into(),
-            display_name: room.display_name.into(),
-            initial: room.initial.into(),
-            avatar_hue: room.avatar_hue,
-            selected: room.selected,
-            has_key: room.has_key,
-            preview: room.preview.into(),
-            time_label: room.time_label.into(),
-            unread: room.unread,
-            member_count: room.member_count,
+        .map(|room| {
+            let (avatar_path, avatar_palette) = avatar_for(&room.room_id);
+            RoomRow {
+                room_id: room.room_id.into(),
+                display_name: room.display_name.into(),
+                initial: room.initial.into(),
+                avatar_path: avatar_path.into(),
+                avatar_palette,
+                selected: room.selected,
+                has_key: room.has_key,
+                preview: room.preview.into(),
+                time_label: room.time_label.into(),
+                unread: room.unread,
+                member_count: room.member_count,
+            }
         })
         .collect();
     ui.set_rooms(ModelRc::new(VecModel::from(rooms)));
@@ -349,20 +366,24 @@ fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
     let messages: Vec<MessageRow> = snapshot
         .messages
         .into_iter()
-        .map(|message| MessageRow {
-            eid: message.eid.into(),
-            author: message.author.into(),
-            author_id: message.author_id.into(),
-            author_initial: message.author_initial.into(),
-            avatar_hue: message.avatar_hue,
-            body: message.body.into(),
-            clock: message.clock.into(),
-            mine: message.mine,
-            committed: message.committed,
-            status: message.status.into(),
-            day_label: message.day_label.into(),
-            new_day: message.new_day,
-            grouped: message.grouped,
+        .map(|message| {
+            let (avatar_path, avatar_palette) = avatar_for(&message.author_id);
+            MessageRow {
+                eid: message.eid.into(),
+                author: message.author.into(),
+                author_id: message.author_id.into(),
+                author_initial: message.author_initial.into(),
+                avatar_path: avatar_path.into(),
+                avatar_palette,
+                body: message.body.into(),
+                clock: message.clock.into(),
+                mine: message.mine,
+                committed: message.committed,
+                status: message.status.into(),
+                day_label: message.day_label.into(),
+                new_day: message.new_day,
+                grouped: message.grouped,
+            }
         })
         .collect();
     ui.set_messages(ModelRc::new(VecModel::from(messages)));

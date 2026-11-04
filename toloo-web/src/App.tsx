@@ -10,21 +10,25 @@ import type { RoomRecord } from "./lib/db";
 import { Chat } from "./components/Chat";
 import {
     AddRoomModal,
+    ImportModal,
     InviteModal,
     RoomActionsModal,
     SettingsModal,
 } from "./components/Modals";
-import { Onboarding } from "./components/Onboarding";
 import { Sidebar } from "./components/Sidebar";
-import { Toasts } from "./components/Modal";
 
 export default function App(): JSX.Element {
     const client = createTolooClient();
     const [bootError, setBootError] = createSignal("");
-    const [sidebarOpen, setSidebarOpen] = createSignal(false);
+    const [mobilePage, setMobilePage] = createSignal<"rooms" | "chat">(
+        "rooms",
+    );
     const [settingsOpen, setSettingsOpen] = createSignal(false);
     const [addRoomOpen, setAddRoomOpen] = createSignal(false);
-    const [roomMenuOpen, setRoomMenuOpen] = createSignal(false);
+    const [importOpen, setImportOpen] = createSignal(false);
+    const [roomMenuRoom, setRoomMenuRoom] = createSignal<RoomRecord | null>(
+        null,
+    );
     const [inviteRoom, setInviteRoom] = createSignal<RoomRecord | null>(null);
 
     onMount(() => {
@@ -53,9 +57,8 @@ export default function App(): JSX.Element {
         });
     });
 
-    function openInvite(room: RoomRecord): void {
-        setAddRoomOpen(false);
-        setInviteRoom(room);
+    function openAddRoom(): void {
+        setAddRoomOpen(true);
     }
 
     return (
@@ -84,62 +87,66 @@ export default function App(): JSX.Element {
                 </div>
             }
         >
-            <Show
-                when={client.identity()}
-                fallback={<Onboarding client={client} />}
-            >
-                <div class="app-shell">
-                    <Sidebar
-                        client={client}
-                        open={sidebarOpen()}
-                        onClose={() => setSidebarOpen(false)}
-                        onAddRoom={() => setAddRoomOpen(true)}
-                        onSettings={() => setSettingsOpen(true)}
-                    />
-                    <Chat
-                        client={client}
-                        onMenu={() => setSidebarOpen(true)}
-                        onInvite={() => {
-                            const room = client.activeRoom();
-                            if (room) setInviteRoom(room);
-                        }}
-                        onRoomMenu={() => setRoomMenuOpen(true)}
-                        onSettings={() => setSettingsOpen(true)}
-                    />
-                </div>
+            <div class="app-shell" data-page={mobilePage()}>
+                <Sidebar
+                    client={client}
+                    onAddRoom={openAddRoom}
+                    onImportRoom={() => setImportOpen(true)}
+                    onSettings={() => setSettingsOpen(true)}
+                    onRoomMenu={(room) => setRoomMenuRoom(room)}
+                    onOpenChat={() => setMobilePage("chat")}
+                />
+                <Chat
+                    client={client}
+                    onBack={() => setMobilePage("rooms")}
+                    onInvite={() => {
+                        const room = client.activeRoom();
+                        if (room) setInviteRoom(room);
+                    }}
+                    onRoomMenu={() => {
+                        const room = client.activeRoom();
+                        if (room) setRoomMenuRoom(room);
+                    }}
+                    onSettings={() => setSettingsOpen(true)}
+                />
+            </div>
 
-                <Show when={settingsOpen()}>
-                    <SettingsModal
+            <Show when={settingsOpen()}>
+                <SettingsModal
+                    client={client}
+                    onClose={() => setSettingsOpen(false)}
+                />
+            </Show>
+            <Show when={addRoomOpen()}>
+                <AddRoomModal
+                    client={client}
+                    onClose={() => setAddRoomOpen(false)}
+                    onCreated={() => setAddRoomOpen(false)}
+                />
+            </Show>
+            <Show when={importOpen()}>
+                <ImportModal
+                    client={client}
+                    onClose={() => setImportOpen(false)}
+                />
+            </Show>
+            <Show when={roomMenuRoom()}>
+                {(room) => (
+                    <RoomActionsModal
                         client={client}
-                        onClose={() => setSettingsOpen(false)}
+                        room={room()}
+                        onClose={() => setRoomMenuRoom(null)}
                     />
-                </Show>
-                <Show when={addRoomOpen()}>
-                    <AddRoomModal
+                )}
+            </Show>
+            <Show when={inviteRoom()}>
+                {(room) => (
+                    <InviteModal
                         client={client}
-                        onClose={() => setAddRoomOpen(false)}
-                        onCreated={openInvite}
+                        room={room()}
+                        onClose={() => setInviteRoom(null)}
                     />
-                </Show>
-                <Show when={roomMenuOpen() && client.activeRoom()}>
-                    {(room) => (
-                        <RoomActionsModal
-                            client={client}
-                            room={room()}
-                            onClose={() => setRoomMenuOpen(false)}
-                        />
-                    )}
-                </Show>
-                <Show when={inviteRoom()}>
-                    {(room) => (
-                        <InviteModal
-                            client={client}
-                            room={room()}
-                            onClose={() => setInviteRoom(null)}
-                        />
-                    )}
-                </Show>
-                <Toasts toasts={client.toasts()} dismiss={client.dismissToast} />
+                )}
             </Show>
         </Show>
     );

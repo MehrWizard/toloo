@@ -1,6 +1,7 @@
 import init, {
     RoomRules as WasmRoomRules,
     buildMembership as wasmBuildMembership,
+    avatarSpec as wasmAvatarSpec,
     canonicalize as wasmCanonicalize,
     coreVersion as wasmCoreVersion,
     decodeDiscovery as wasmDecodeDiscovery,
@@ -61,6 +62,14 @@ export interface Verdict {
     error?: string;
 }
 
+export interface AvatarSpec {
+    cells: number;
+    shape: number;
+    palette: number;
+    grid: boolean[];
+    svgPath: string;
+}
+
 export interface RoomCreatePair {
     created: Envelope;
     committed: Envelope;
@@ -87,6 +96,10 @@ export function initWasm(): Promise<void> {
 
 export function coreVersion(): string {
     return wasmCoreVersion();
+}
+
+export function avatarSpec(publicKey: string): AvatarSpec {
+    return JSON.parse(wasmAvatarSpec(publicKey)) as AvatarSpec;
 }
 
 export function generateIdentity(): Identity {

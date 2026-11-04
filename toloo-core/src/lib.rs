@@ -5,6 +5,7 @@
 //! shared by the native runtime (`toloo-lib`) and the browser bindings
 //! (`toloo-wasm`).
 
+pub mod avatar;
 pub mod base64url;
 pub mod canonical;
 pub mod crypto;

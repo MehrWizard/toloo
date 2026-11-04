@@ -6,8 +6,8 @@
 //! pool storage, transports, request handling, trust, and key storage.
 
 pub use toloo_core::{
-    base64url, canonical, crypto, discovery, envelope, events, hex, ids, memzero, pow, private,
-    rules, types, vectors,
+    avatar, base64url, canonical, crypto, discovery, envelope, events, hex, ids, memzero, pow,
+    private, rules, types, vectors,
 };
 
 #[cfg(test)]

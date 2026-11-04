@@ -15,6 +15,7 @@ export interface RoomRecord {
     inviteUri?: string;
     roomIdentity?: RoomIdentity;
     roomCreate?: string;
+    lastReadAt?: number;
 }
 
 export interface RelayRecord {
@@ -101,6 +102,13 @@ export async function saveIdentity(identity: Identity): Promise<void> {
     const db = await openDb();
     const tx = db.transaction(KV, "readwrite");
     tx.objectStore(KV).put({ key: "identity", value: identity });
+    await transactionDone(tx);
+}
+
+export async function deleteIdentity(): Promise<void> {
+    const db = await openDb();
+    const tx = db.transaction(KV, "readwrite");
+    tx.objectStore(KV).delete("identity");
     await transactionDone(tx);
 }
 

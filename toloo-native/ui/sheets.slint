@@ -1,5 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { SettingsCopy } from "design-copy.slint";
 import { Avatar, Divider, FieldLabel, IconButton, PrimaryButton, SecondaryButton, SheetHandle, TextField } from "components.slint";
 import { BlockedRow, RelayRow } from "models.slint";
 
@@ -29,7 +30,7 @@ export component AddRoomSheet inherits Rectangle {
                 horizontal-stretch: 1;
             }
             IconButton {
-                icon: @image-url("icons/close.svg");
+                icon: @image-url("../../design/icons/close.svg");
                 clicked => { root.close(); }
             }
         }
@@ -68,7 +69,8 @@ export component SettingsSheet inherits Rectangle {
     in property <bool> has-identity;
     in property <string> identity-label;
     in property <string> identity-initial: "?";
-    in property <int> identity-hue: 0;
+    in property <string> identity-avatar-path;
+    in property <int> identity-avatar-palette: 0;
     in property <string> sig-pub: "";
     in property <string> enc-pub: "";
     in property <bool> rtl: false;
@@ -120,7 +122,7 @@ export component SettingsSheet inherits Rectangle {
                 horizontal-stretch: 1;
             }
             IconButton {
-                icon: @image-url("icons/close.svg");
+                icon: @image-url("../../design/icons/close.svg");
                 clicked => { root.close(); }
             }
         }
@@ -131,14 +133,15 @@ export component SettingsSheet inherits Rectangle {
             VerticalLayout {
                 spacing: 10px;
 
-                FieldLabel { text: "THIS DEVICE"; }
+                FieldLabel { text: SettingsCopy.identity; }
                 HorizontalLayout {
                     spacing: 10px;
                     cross-axis-alignment: center;
                     Avatar {
                         avatar-size: 44px;
                         label: root.identity-initial;
-                        hue: root.identity-hue;
+                        path: root.identity-avatar-path;
+                        palette: root.identity-avatar-palette;
                     }
                     VerticalLayout {
                         spacing: 2px;
@@ -177,27 +180,6 @@ export component SettingsSheet inherits Rectangle {
                         font-family: "monospace";
                         wrap: word-wrap;
                     }
-                    TextField {
-                        text <=> root.passphrase;
-                        placeholder: "Passphrase for encrypted export";
-                    }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        SecondaryButton {
-                            text: "Export JSON";
-                            clicked => { root.export-identity(); }
-                        }
-                        PrimaryButton {
-                            text: "Encrypted export";
-                            enabled: root.passphrase != "";
-                            clicked => { root.export-encrypted(root.passphrase); }
-                        }
-                    }
-                    SecondaryButton {
-                        text: "Remove identity from this device";
-                        tint: Theme.danger;
-                        clicked => { root.remove-identity(); }
-                    }
                 }
 
                 if !root.has-identity : VerticalLayout {
@@ -231,23 +213,45 @@ export component SettingsSheet inherits Rectangle {
                         enabled: root.identity-input != "";
                         clicked => { root.load-identity-json(root.identity-input); }
                     }
-                    TextField {
-                        text <=> root.encrypted-input;
-                        placeholder: "Encrypted identity blob";
-                    }
-                    TextField {
-                        text <=> root.passphrase;
-                        placeholder: "Passphrase";
-                    }
-                    SecondaryButton {
-                        text: "Unlock encrypted identity";
-                        enabled: root.encrypted-input != "" && root.passphrase != "";
-                        clicked => { root.load-encrypted(root.encrypted-input, root.passphrase); }
-                    }
                 }
 
                 Divider {}
-                FieldLabel { text: "RELAYS"; }
+                FieldLabel { text: SettingsCopy.encryptedIdentity; }
+                Text {
+                    text: "Wrap both private keys with a passphrase. The passphrase is not recoverable.";
+                    color: Theme.muted;
+                    font-size: Theme.font-xs;
+                    wrap: word-wrap;
+                }
+                TextField {
+                    text <=> root.passphrase;
+                    placeholder: "Passphrase";
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    SecondaryButton {
+                        text: "Export JSON";
+                        enabled: root.has-identity;
+                        clicked => { root.export-identity(); }
+                    }
+                    PrimaryButton {
+                        text: "Encrypted export";
+                        enabled: root.has-identity && root.passphrase != "";
+                        clicked => { root.export-encrypted(root.passphrase); }
+                    }
+                }
+                TextField {
+                    text <=> root.encrypted-input;
+                    placeholder: "Encrypted identity blob";
+                }
+                SecondaryButton {
+                    text: "Unlock encrypted identity";
+                    enabled: root.encrypted-input != "" && root.passphrase != "";
+                    clicked => { root.load-encrypted(root.encrypted-input, root.passphrase); }
+                }
+
+                Divider {}
+                FieldLabel { text: SettingsCopy.relays; }
                 Text {
                     text: root.network-label;
                     color: Theme.text-2;
@@ -293,7 +297,7 @@ export component SettingsSheet inherits Rectangle {
                             vertical-alignment: center;
                         }
                         IconButton {
-                            icon: @image-url("icons/trash.svg");
+                            icon: @image-url("../../design/icons/trash.svg");
                             tint: Theme.danger;
                             button-size: 32px;
                             clicked => { root.remove-relay(relay.url); }
@@ -302,60 +306,7 @@ export component SettingsSheet inherits Rectangle {
                 }
 
                 Divider {}
-                FieldLabel { text: "NOTIFICATIONS"; }
-                SecondaryButton {
-                    text: root.notifications-enabled ? "Notifications: on" : "Notifications: off";
-                    clicked => { root.set-notifications(!root.notifications-enabled); }
-                }
-
-                FieldLabel { text: "LAYOUT"; }
-                SecondaryButton {
-                    text: root.rtl ? "Right-to-left: on" : "Right-to-left: off";
-                    clicked => { root.set-rtl(!root.rtl); }
-                }
-
-                FieldLabel { text: "BLOCKED NODES"; }
-                if root.blocked.length == 0 : Text {
-                    text: "No blocked nodes.";
-                    color: Theme.muted;
-                    font-size: Theme.font-sm;
-                }
-                for blocked in root.blocked : Rectangle {
-                    height: 52px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.bg;
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 6px;
-                        spacing: 6px;
-                        cross-axis-alignment: center;
-                        VerticalLayout {
-                            spacing: 1px;
-                            horizontal-stretch: 1;
-                            cross-axis-alignment: center;
-                            Text {
-                                text: blocked.short;
-                                color: Theme.text;
-                                font-size: Theme.font-sm;
-                                font-family: "monospace";
-                                overflow: elide;
-                            }
-                            Text {
-                                text: blocked.kind + (blocked.reason == "" ? "" : " · " + blocked.reason);
-                                color: Theme.muted;
-                                font-size: Theme.font-xs;
-                                overflow: elide;
-                            }
-                        }
-                        SecondaryButton {
-                            text: "Unblock";
-                            clicked => { root.unblock-node(blocked.node-id); }
-                        }
-                    }
-                }
-
-                Divider {}
-                FieldLabel { text: "LOCAL RELAY HOST"; }
+                FieldLabel { text: SettingsCopy.host; }
                 if root.host-running : VerticalLayout {
                     spacing: 2px;
                     Text {
@@ -399,6 +350,72 @@ export component SettingsSheet inherits Rectangle {
                     font-size: Theme.font-xs;
                     wrap: word-wrap;
                 }
+
+                Divider {}
+                FieldLabel { text: SettingsCopy.notifications; }
+                SecondaryButton {
+                    text: root.notifications-enabled ? "Notifications: on" : "Notifications: off";
+                    clicked => { root.set-notifications(!root.notifications-enabled); }
+                }
+
+                FieldLabel { text: SettingsCopy.layout; }
+                SecondaryButton {
+                    text: root.rtl ? "Right-to-left: on" : "Right-to-left: off";
+                    clicked => { root.set-rtl(!root.rtl); }
+                }
+
+                FieldLabel { text: SettingsCopy.blocked; }
+                if root.blocked.length == 0 : Text {
+                    text: "No blocked nodes.";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                }
+                for blocked in root.blocked : Rectangle {
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.bg;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 6px;
+                        spacing: 6px;
+                        cross-axis-alignment: center;
+                        VerticalLayout {
+                            spacing: 1px;
+                            horizontal-stretch: 1;
+                            cross-axis-alignment: center;
+                            Text {
+                                text: blocked.short;
+                                color: Theme.text;
+                                font-size: Theme.font-sm;
+                                font-family: "monospace";
+                                overflow: elide;
+                            }
+                            Text {
+                                text: blocked.kind + (blocked.reason == "" ? "" : " · " + blocked.reason);
+                                color: Theme.muted;
+                                font-size: Theme.font-xs;
+                                overflow: elide;
+                            }
+                        }
+                        SecondaryButton {
+                            text: "Unblock";
+                            clicked => { root.unblock-node(blocked.node-id); }
+                        }
+                    }
+                }
+
+                Divider {}
+                FieldLabel { text: SettingsCopy.device; }
+                Text {
+                    text: root.has-identity ? "This identity is stored on this device." : "No identity is stored on this device.";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                }
+                if root.has-identity : SecondaryButton {
+                    text: "Remove identity from this device";
+                    tint: Theme.danger;
+                    clicked => { root.remove-identity(); }
+                }
             }
         }
     }
@@ -437,7 +454,7 @@ export component RoomActionsSheet inherits Rectangle {
                 overflow: elide;
             }
             IconButton {
-                icon: @image-url("icons/close.svg");
+                icon: @image-url("../../design/icons/close.svg");
                 clicked => { root.close(); }
             }
         }
@@ -530,7 +547,7 @@ export component MessageActionsSheet inherits Rectangle {
                 horizontal-stretch: 1;
             }
             IconButton {
-                icon: @image-url("icons/close.svg");
+                icon: @image-url("../../design/icons/close.svg");
                 clicked => { root.close(); }
             }
         }
@@ -627,7 +644,7 @@ export component ExportSheet inherits Rectangle {
                 horizontal-stretch: 1;
             }
             IconButton {
-                icon: @image-url("icons/close.svg");
+                icon: @image-url("../../design/icons/close.svg");
                 clicked => { root.close(); }
             }
         }
@@ -704,7 +721,7 @@ export component ImportSheet inherits Rectangle {
                 horizontal-stretch: 1;
             }
             IconButton {
-                icon: @image-url("icons/close.svg");
+                icon: @image-url("../../design/icons/close.svg");
                 clicked => { root.close(); }
             }
         }

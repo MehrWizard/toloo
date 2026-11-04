@@ -29,6 +29,11 @@ pub fn core_version() -> String {
     contract::core_version().to_owned()
 }
 
+#[wasm_bindgen(js_name = avatarSpec)]
+pub fn avatar_spec(public_key: &str) -> Result<String, JsError> {
+    contract::avatar_spec(public_key).map_err(js_err)
+}
+
 #[wasm_bindgen(js_name = generateIdentity)]
 pub fn generate_identity() -> Result<String, JsError> {
     contract::generate_identity().map_err(js_err)

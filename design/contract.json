@@ -1,0 +1,127 @@
+{
+    "version": 1,
+    "breakpoints": {
+        "phoneMax": 699,
+        "tabletMax": 1023
+    },
+    "layout": {
+        "sidebarWidth": 300,
+        "railWidth": 280,
+        "headerHeight": 54,
+        "settingsWidth": 480,
+        "touchTarget": 44
+    },
+    "colors": {
+        "common": {
+            "bg": "#0d0908",
+            "bgRaised": "#14100e",
+            "surface": "#191210",
+            "surface2": "#221917",
+            "surface3": "#2a1e1a",
+            "border": "#382520",
+            "borderStrong": "#4d332b",
+            "text": "#f0ebe6",
+            "text2": "#a8958e",
+            "muted": "#6b5048",
+            "success": "#5cbe8a",
+            "warn": "#e09a3a",
+            "danger": "#e05b5b",
+            "bubbleMine": "#2b1711",
+            "bubbleMineBorder": "#5a2a1b"
+        },
+        "native": {
+            "accent": "#f05228",
+            "accentStrong": "#d43e17",
+            "accentInk": "#1a0d08"
+        },
+        "web": {
+            "accent": "#ff5d36",
+            "accentStrong": "#df4722",
+            "accentInk": "#1a0d08"
+        }
+    },
+    "radii": {
+        "radius": 12,
+        "radiusSmall": 7
+    },
+    "typography": {
+        "xs": 9,
+        "sm": 11,
+        "ui": 14,
+        "title": 18,
+        "brand": 19
+    },
+    "avatarPalette": [
+        "#8b5cf6",
+        "#38bdf8",
+        "#34d399",
+        "#fbbf24",
+        "#f43f5e",
+        "#a3e635",
+        "#fb923c",
+        "#c084fc"
+    ],
+    "settings": [
+        {
+            "id": "identity",
+            "title": "Identity"
+        },
+        {
+            "id": "encryptedIdentity",
+            "title": "Encrypted identity"
+        },
+        {
+            "id": "relays",
+            "title": "Relays"
+        },
+        {
+            "id": "host",
+            "title": "Local relay host"
+        },
+        {
+            "id": "notifications",
+            "title": "Notifications"
+        },
+        {
+            "id": "layout",
+            "title": "Layout"
+        },
+        {
+            "id": "blocked",
+            "title": "Blocked nodes"
+        },
+        {
+            "id": "device",
+            "title": "This device"
+        }
+    ],
+    "icons": [
+        "back",
+        "block",
+        "check",
+        "chevron",
+        "clock",
+        "close",
+        "copy",
+        "export",
+        "file",
+        "flag",
+        "inbox",
+        "info",
+        "lock",
+        "menu",
+        "more",
+        "plus",
+        "qr",
+        "relay",
+        "search",
+        "send",
+        "settings",
+        "share",
+        "shield",
+        "sync",
+        "trash",
+        "user",
+        "users"
+    ]
+}

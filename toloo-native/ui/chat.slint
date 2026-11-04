@@ -8,7 +8,8 @@ export component ChatPane inherits Rectangle {
     in property <string> room-name;
     in property <string> room-id;
     in property <string> room-initial: "?";
-    in property <int> room-hue: 0;
+    in property <string> room-avatar-path;
+    in property <int> room-avatar-palette: 0;
     in property <string> members-label: "";
     in property <string> status: "";
     in property <bool> has-room: false;
@@ -40,7 +41,7 @@ export component ChatPane inherits Rectangle {
                 cross-axis-alignment: center;
 
                 if root.show-back : IconButton {
-                    icon: @image-url("icons/back.svg");
+                    icon: @image-url("../../design/icons/back.svg");
                     tint: Theme.text-2;
                     layout-order: root.rtl ? 10 : 0;
                     clicked => { root.back(); }
@@ -48,7 +49,8 @@ export component ChatPane inherits Rectangle {
                 if root.has-room : Avatar {
                     avatar-size: 34px;
                     label: root.room-initial;
-                    hue: root.room-hue;
+                    path: root.room-avatar-path;
+                    palette: root.room-avatar-palette;
                 }
                 if root.has-room : VerticalLayout {
                     vertical-stretch: 1;
@@ -83,27 +85,27 @@ export component ChatPane inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; min-width: 1px; }
                 if root.has-room && !root.show-back : IconButton {
-                    icon: @image-url("icons/sync.svg");
+                    icon: @image-url("../../design/icons/sync.svg");
                     tint: Theme.text-2;
                     clicked => { root.sync-room(); }
                 }
                 if root.has-room && !root.show-back : IconButton {
-                    icon: @image-url("icons/share.svg");
+                    icon: @image-url("../../design/icons/share.svg");
                     tint: Theme.text-2;
                     clicked => { root.share-room(); }
                 }
                 if root.has-room && !root.show-back : IconButton {
-                    icon: @image-url("icons/export.svg");
+                    icon: @image-url("../../design/icons/export.svg");
                     tint: Theme.text-2;
                     clicked => { root.export-room(); }
                 }
                 if root.has-room : IconButton {
-                    icon: @image-url("icons/more.svg");
+                    icon: @image-url("../../design/icons/more.svg");
                     tint: Theme.text-2;
                     clicked => { root.room-menu(); }
                 }
                 IconButton {
-                    icon: @image-url("icons/settings.svg");
+                    icon: @image-url("../../design/icons/settings.svg");
                     tint: Theme.muted;
                     clicked => { root.open-settings(); }
                 }
@@ -118,7 +120,7 @@ export component ChatPane inherits Rectangle {
                 cross-axis-alignment: center;
                 spacing: 10px;
                 AppIcon {
-                    source: @image-url("icons/user.svg");
+                    source: @image-url("../../design/icons/user.svg");
                     icon-size: 48px;
                     tint: Theme.border;
                 }
@@ -159,7 +161,8 @@ export component ChatPane inherits Rectangle {
                     if !message.mine && !message.grouped : Avatar {
                         avatar-size: 26px;
                         label: message.author-initial;
-                        hue: message.avatar-hue;
+                        path: message.avatar-path;
+                        palette: message.avatar-palette;
                     }
                     if !message.mine && message.grouped : Rectangle {
                         width: 26px;
@@ -176,9 +179,9 @@ export component ChatPane inherits Rectangle {
                         }
                         Rectangle {
                             border-radius: Theme.radius;
-                            background: message.mine ? #2b1711 : Theme.surface;
+                            background: message.mine ? Theme.bubble-mine : Theme.surface;
                             border-width: 1px;
-                            border-color: message.mine ? #5a2a1b : Theme.border;
+                            border-color: message.mine ? Theme.bubble-mine-border : Theme.border;
                             VerticalLayout {
                                 padding: 9px;
                                 spacing: 3px;
@@ -205,7 +208,7 @@ export component ChatPane inherits Rectangle {
                                         font-size: Theme.font-xs;
                                     }
                                     IconButton {
-                                        icon: @image-url("icons/more.svg");
+                                        icon: @image-url("../../design/icons/more.svg");
                                         tint: Theme.muted;
                                         button-size: 22px;
                                         clicked => { root.message-menu(message.eid, message.author, message.author-id, message.body, message.mine); }
@@ -217,7 +220,8 @@ export component ChatPane inherits Rectangle {
                     if message.mine && !message.grouped : Avatar {
                         avatar-size: 26px;
                         label: message.author-initial;
-                        hue: message.avatar-hue;
+                        path: message.avatar-path;
+                        palette: message.avatar-palette;
                     }
                     if message.mine && message.grouped : Rectangle {
                         width: 26px;
@@ -259,7 +263,7 @@ export component ChatPane inherits Rectangle {
                         background: root.has-room && root.message-input != ""
                             ? Theme.accent : Theme.surface-2;
                         AppIcon {
-                            source: @image-url("icons/send.svg");
+                            source: @image-url("../../design/icons/send.svg");
                             width: 19px;
                             height: 19px;
                             x: (parent.width - self.width) / 2;

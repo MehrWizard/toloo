@@ -1,14 +1,17 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import type { TolooClient } from "../lib/client";
-import { avatarHue, formatTime, shortKey } from "../lib/ui";
-import { PlusIcon, SettingsIcon, ShieldIcon } from "./Icons";
+import type { RoomRecord } from "../lib/db";
+import { formatTime, shortKey } from "../lib/ui";
+import { Avatar } from "./Avatar";
+import { InboxIcon, MoreIcon, PlusIcon, RelayIcon } from "./Icons";
 
 export function Sidebar(props: {
     client: TolooClient;
-    open: boolean;
-    onClose: () => void;
     onAddRoom: () => void;
+    onImportRoom: () => void;
     onSettings: () => void;
+    onRoomMenu: (room: RoomRecord) => void;
+    onOpenChat: () => void;
 }): JSX.Element {
     const identity = () => props.client.identity();
     const [query, setQuery] = createSignal("");
@@ -22,162 +25,156 @@ export function Sidebar(props: {
         );
     });
 
-    function statusLabel(): string {
-        if (props.client.relays().length === 0) return "No relay";
-        const state = props.client.syncState();
-        if (state === "syncing") return "Syncing";
-        if (state === "error") return "Relay error";
-        if (state === "offline") return "Offline";
-        return "Connected";
+    function networkLabel(): string {
+        const count = props.client.relays().length;
+        if (count === 0) return "No relays";
+        return count === 1 ? "1 relay" : `${count} relays`;
     }
 
     return (
-        <>
-            <Show when={props.open}>
+        <aside class="sidebar">
+            <header class="sidebar-head">
                 <button
-                    class="sidebar-scrim"
                     type="button"
-                    aria-label="Close rooms"
-                    onClick={props.onClose}
-                />
-            </Show>
-            <aside class="sidebar" classList={{ open: props.open }}>
-                <header class="sidebar-head">
-                    <div class="wordmark small">
-                        <span class="wordmark-mark" aria-hidden="true">
-                            T
-                        </span>
-                        <span>toloo</span>
-                    </div>
-                    <div class="connection-pill" data-state={props.client.syncState()}>
-                        <span class="status-dot" aria-hidden="true" />
-                        <span>{statusLabel()}</span>
-                    </div>
-                </header>
-
-                <div class="sidebar-search">
-                    <input
-                        type="search"
-                        placeholder="Search rooms…"
-                        aria-label="Search rooms"
-                        autocomplete="off"
-                        spellcheck={false}
-                        value={query()}
-                        onInput={(event) => setQuery(event.currentTarget.value)}
+                    class="identity-button"
+                    aria-label="Identity and settings"
+                    onClick={props.onSettings}
+                >
+                    <Avatar
+                        publicKey={identity()?.sigPub ?? ""}
+                        size={36}
+                        label="This device"
                     />
-                </div>
+                </button>
+                <span class="sidebar-brand">Toloo</span>
+                <span class="sidebar-spacer" />
+                <button
+                    type="button"
+                    class="icon-button"
+                    aria-label="Import"
+                    title="Import"
+                    onClick={props.onImportRoom}
+                >
+                    <InboxIcon />
+                </button>
+                <button
+                    type="button"
+                    class="icon-button accent"
+                    aria-label="New room"
+                    title="New room"
+                    onClick={props.onAddRoom}
+                >
+                    <PlusIcon />
+                </button>
+            </header>
 
-                <div class="sidebar-section-head">
-                    <span>Rooms</span>
-                    <button
-                        type="button"
-                        class="text-button"
-                        onClick={props.onAddRoom}
-                    >
-                        <PlusIcon size={15} />
-                        Add
-                    </button>
-                </div>
+            <div class="sidebar-search">
+                <input
+                    type="search"
+                    placeholder="Search rooms…"
+                    aria-label="Search rooms"
+                    autocomplete="off"
+                    spellcheck={false}
+                    value={query()}
+                    onInput={(event) => setQuery(event.currentTarget.value)}
+                />
+            </div>
 
-                <nav class="room-list" aria-label="Rooms">
-                    <Show
-                        when={filteredRooms().length > 0}
-                        fallback={
-                            <div class="room-list-empty">
-                                <p>
-                                    {props.client.rooms().length > 0
-                                        ? "No rooms match this search."
-                                        : "No rooms yet."}
-                                </p>
-                                <Show when={!query()}>
-                                    <button
-                                        class="ghost-button"
-                                        type="button"
-                                        onClick={props.onAddRoom}
-                                    >
-                                        Create or join one
-                                    </button>
-                                </Show>
-                            </div>
-                        }
-                    >
-                        <For each={filteredRooms()}>
-                            {(room) => (
+            <nav class="room-list" aria-label="Rooms">
+                <For
+                    each={filteredRooms()}
+                    fallback={
+                        <div class="room-list-empty">
+                            <p>
+                                No rooms yet.
+                                <br />
+                                Add a room with +.
+                            </p>
+                        </div>
+                    }
+                >
+                    {(room) => {
+                        const summary = () =>
+                            props.client.roomSummaries()[room.pub];
+                        return (
+                            <div
+                                class="room-row"
+                                classList={{
+                                    active:
+                                        props.client.activePub() === room.pub,
+                                }}
+                            >
                                 <button
                                     type="button"
-                                    class="room-item"
-                                    classList={{
-                                        active: props.client.activePub() === room.pub,
-                                    }}
+                                    class="room-row-main"
                                     onClick={() => {
                                         void props.client.selectRoom(room.pub);
-                                        props.onClose();
+                                        props.onOpenChat();
                                     }}
                                 >
-                                    <span
-                                        class="room-avatar"
-                                        style={{
-                                            "--hue": `${avatarHue(room.pub)}`,
-                                        }}
-                                    >
-                                        {room.name.slice(0, 1).toUpperCase()}
-                                    </span>
-                                    <span class="room-copy">
-                                        <span class="room-name">{room.name}</span>
-                                        <span class="room-preview">
-                                            {props.client.roomSummaries()[room.pub]
-                                                ?.preview || shortKey(room.pub, 6)}
+                                    <Avatar
+                                        publicKey={room.pub}
+                                        size={40}
+                                        label={room.name}
+                                    />
+                                    <span class="room-row-copy">
+                                        <span class="room-row-name">
+                                            {room.name}
+                                        </span>
+                                        <span class="room-row-preview">
+                                            {summary()?.preview ?? ""}
                                         </span>
                                     </span>
-                                    <span class="room-meta">
-                                        <span class="room-time">
-                                            {props.client.roomSummaries()[room.pub]?.ts
-                                                ? formatTime(
-                                                      props.client.roomSummaries()[
-                                                          room.pub
-                                                      ].ts,
-                                                  )
+                                    <span class="room-row-meta">
+                                        <span class="room-row-time">
+                                            {summary()?.ts
+                                                ? formatTime(summary().ts)
                                                 : ""}
                                         </span>
-                                        <Show when={room.roomIdentity}>
-                                            <ShieldIcon
-                                                size={13}
-                                                class="room-key-icon"
-                                                aria-label="You hold this room key"
-                                            />
+                                        <Show
+                                            when={
+                                                (summary()?.unread ?? 0) > 0
+                                            }
+                                        >
+                                            <span class="room-row-unread">
+                                                {summary()?.unread}
+                                            </span>
                                         </Show>
                                     </span>
                                 </button>
-                            )}
-                        </For>
-                    </Show>
-                </nav>
+                                <button
+                                    type="button"
+                                    class="icon-button subtle room-row-menu"
+                                    aria-label={`Actions for ${room.name}`}
+                                    onClick={() => props.onRoomMenu(room)}
+                                >
+                                    <MoreIcon size={16} />
+                                </button>
+                            </div>
+                        );
+                    }}
+                </For>
+            </nav>
 
-                <footer class="sidebar-foot">
-                    <div class="identity-chip">
-                        <span
-                            class="identity-avatar"
-                            style={{ "--hue": `${avatarHue(identity()?.sigPub ?? "")}` }}
-                        >
-                            {(identity()?.sigPub ?? "?").slice(0, 1).toUpperCase()}
-                        </span>
-                        <span class="identity-copy">
-                            <span class="identity-label">This device</span>
-                            <span class="identity-key">
-                                {shortKey(identity()?.sigPub ?? "", 8)}
-                            </span>
-                        </span>
-                    </div>
-                    <button
-                        type="button"
-                        class="icon-button"
-                        aria-label="Settings"
-                        onClick={props.onSettings}
-                    >
-                        <SettingsIcon />
-                    </button>
-                </footer>
-            </aside>
-        </>
+            <Show when={props.client.status()}>
+                <div class="sidebar-status" title={props.client.status()}>
+                    {props.client.status()}
+                </div>
+            </Show>
+
+            <footer class="sidebar-foot">
+                <span class="sidebar-network">{networkLabel()}</span>
+                <span class="sidebar-spacer" />
+                <button
+                    type="button"
+                    class="icon-button"
+                    aria-label="Relays"
+                    title="Relays"
+                    onClick={props.onSettings}
+                >
+                    <RelayIcon />
+                </button>
+            </footer>
+        </aside>
     );
 }

@@ -6,14 +6,13 @@ import {
 } from "solid-js";
 import type { RoomRecord } from "../lib/db";
 import type { Message, TolooClient } from "../lib/client";
-import {
-    allowedProtocols,
-    defaultEndpointScheme,
-} from "../lib/transport";
+import { defaultEndpointScheme } from "../lib/transport";
 import { decryptIdentity, encryptIdentity } from "../lib/identity";
-import { copyText, downloadText, formatTime, shortKey } from "../lib/ui";
+import { copyText, downloadText, shortKey } from "../lib/ui";
 import * as protocol from "../lib/wasm";
+import { SETTINGS_SECTIONS } from "../generated/design";
 import { CopyIcon, TrashIcon } from "./Icons";
+import { Avatar } from "./Avatar";
 import { Modal } from "./Modal";
 
 export function SettingsModal(props: {
@@ -26,62 +25,73 @@ export function SettingsModal(props: {
     const [rtl, setRtl] = createSignal(
         localStorage.getItem("toloo-rtl") === "1",
     );
-    const [notifyPermission, setNotifyPermission] = createSignal(
-        typeof Notification === "undefined"
-            ? "denied"
-            : Notification.permission,
+    const [notificationsEnabled, setNotificationsEnabled] = createSignal(
+        localStorage.getItem("toloo-notifications") === "1" ||
+            (typeof Notification !== "undefined" &&
+                Notification.permission === "granted" &&
+                localStorage.getItem("toloo-notifications") !== "0"),
     );
-
     const [passphrase, setPassphrase] = createSignal("");
+    const [sigSeed, setSigSeed] = createSignal("");
+    const [encPriv, setEncPriv] = createSignal("");
+    const [identityJson, setIdentityJson] = createSignal("");
+    const [encryptedBlob, setEncryptedBlob] = createSignal("");
 
-    async function downloadEncryptedIdentity(): Promise<void> {
+    function sectionTitle(id: string): string {
+        return (
+            SETTINGS_SECTIONS.find((section) => section.id === id)?.title ?? id
+        );
+    }
+
+    async function run(action: () => Promise<void>): Promise<void> {
         setError("");
         setBusy(true);
         try {
+            await action();
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function downloadEncryptedIdentity(): Promise<void> {
+        await run(async () => {
             const blob = await encryptIdentity(
                 props.client.exportIdentity(),
                 passphrase(),
             );
             downloadText(blob, "toloo-identity.toloo-key", "text/plain");
             props.client.notify("Encrypted identity downloaded.", "success");
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            setBusy(false);
-        }
+        });
     }
 
-    async function unlockIdentityFile(event: Event): Promise<void> {
-        const input = event.currentTarget as HTMLInputElement;
-        const file = input.files?.[0];
-        if (!file) return;
-        setError("");
-        setBusy(true);
-        try {
+    async function unlockEncryptedIdentity(): Promise<void> {
+        await run(async () => {
             const identityJson = await decryptIdentity(
-                await file.text(),
+                encryptedBlob(),
                 passphrase(),
             );
             await props.client.restoreIdentityJson(identityJson);
             props.client.notify("Encrypted identity unlocked.", "success");
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            setBusy(false);
-            input.value = "";
-        }
+        });
     }
 
-    async function enableNotifications(): Promise<void> {
+    async function toggleNotifications(): Promise<void> {
+        if (notificationsEnabled()) {
+            setNotificationsEnabled(false);
+            localStorage.setItem("toloo-notifications", "0");
+            return;
+        }
         if (typeof Notification === "undefined") {
             props.client.notify("Notifications are unavailable here.", "error");
             return;
         }
         const permission = await Notification.requestPermission();
-        setNotifyPermission(permission);
-        if (permission === "granted") {
-            props.client.notify("Notifications enabled.", "success");
-        } else {
+        const enabled = permission === "granted";
+        setNotificationsEnabled(enabled);
+        localStorage.setItem("toloo-notifications", enabled ? "1" : "0");
+        if (!enabled) {
             props.client.notify("Notification permission was not granted.", "error");
         }
     }
@@ -93,42 +103,21 @@ export function SettingsModal(props: {
         document.documentElement.dir = next ? "rtl" : "ltr";
     }
 
-    const protocols = () => allowedProtocols().join(" / ");
     const placeholder = () =>
         `${defaultEndpointScheme()}://relay.example/toloo`;
 
     async function addRelay(event: SubmitEvent): Promise<void> {
         event.preventDefault();
-        setError("");
-        setBusy(true);
-        try {
+        await run(async () => {
             await props.client.addRelay(relayUrl());
             setRelayUrl("");
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            setBusy(false);
-        }
+        });
     }
 
-    async function copyIdentity(): Promise<void> {
-        try {
-            await copyText(props.client.exportIdentity());
-            props.client.notify("Recovery JSON copied.", "success");
-        } catch {
-            props.client.notify("Could not copy to the clipboard.", "error");
-        }
-    }
 
-    async function reset(): Promise<void> {
-        if (
-            !window.confirm(
-                "Clear the identity, rooms, relays, and cached envelopes in this browser?",
-            )
-        ) {
-            return;
-        }
-        await props.client.reset();
+    async function removeIdentity(): Promise<void> {
+        if (!window.confirm("Remove the identity from this device?")) return;
+        await props.client.removeIdentity();
         props.onClose();
     }
 
@@ -136,38 +125,145 @@ export function SettingsModal(props: {
 
     return (
         <Modal
-            title="Settings"
-            subtitle="Identity, relays, and this browser"
+            title="Identity & Settings"
             onClose={props.onClose}
             wide
         >
             <div class="settings-grid">
                 <section class="settings-section">
-                    <h3>Identity</h3>
-                    <div class="key-row">
-                        <span>Signing</span>
-                        <code>{shortKey(identity()?.sigPub ?? "", 10)}</code>
+                    <h3>{sectionTitle("identity")}</h3>
+                    <div class="identity-summary">
+                        <Avatar
+                            publicKey={identity()?.sigPub ?? ""}
+                            size={44}
+                            label="This device"
+                        />
+                        <div class="identity-summary-copy">
+                            <span class="identity-summary-title">
+                                {identity() ? "Identity loaded" : "No identity"}
+                            </span>
+                            <span class="identity-summary-key">
+                                {identity()
+                                    ? shortKey(identity()!.sigPub, 8)
+                                    : "No identity"}
+                            </span>
+                        </div>
                     </div>
-                    <div class="key-row">
-                        <span>Encryption</span>
-                        <code>{shortKey(identity()?.encPub ?? "", 10)}</code>
-                    </div>
+                    <Show
+                        when={identity()}
+                        fallback={
+                            <>
+                                <input
+                                    type="password"
+                                    autocomplete="off"
+                                    placeholder="Signing seed"
+                                    value={sigSeed()}
+                                    onInput={(event) =>
+                                        setSigSeed(event.currentTarget.value)
+                                    }
+                                />
+                                <input
+                                    type="password"
+                                    autocomplete="off"
+                                    placeholder="Encryption private key"
+                                    value={encPriv()}
+                                    onInput={(event) =>
+                                        setEncPriv(event.currentTarget.value)
+                                    }
+                                />
+                                <div class="button-row">
+                                    <button
+                                        type="button"
+                                        class="primary-button"
+                                        disabled={busy()}
+                                        onClick={() =>
+                                            void run(async () => {
+                                                await props.client.createIdentity();
+                                            })
+                                        }
+                                    >
+                                        Create identity
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="ghost-button"
+                                        disabled={
+                                            busy() ||
+                                            !sigSeed() ||
+                                            !encPriv()
+                                        }
+                                        onClick={() =>
+                                            void run(async () => {
+                                                await props.client.restoreIdentity(
+                                                    sigSeed(),
+                                                    encPriv(),
+                                                );
+                                            })
+                                        }
+                                    >
+                                        Restore
+                                    </button>
+                                </div>
+                                <input
+                                    type="text"
+                                    spellcheck={false}
+                                    placeholder="Paste identity JSON to import"
+                                    value={identityJson()}
+                                    onInput={(event) =>
+                                        setIdentityJson(
+                                            event.currentTarget.value,
+                                        )
+                                    }
+                                />
+                                <button
+                                    type="button"
+                                    class="ghost-button wide"
+                                    disabled={busy() || !identityJson()}
+                                    onClick={() =>
+                                        void run(async () => {
+                                            await props.client.restoreIdentityJson(
+                                                identityJson(),
+                                            );
+                                        })
+                                    }
+                                >
+                                    Import identity JSON
+                                </button>
+                            </>
+                        }
+                    >
+                        <label class="identity-key-block">
+                            <span>SIGNING KEY</span>
+                            <code>{identity()?.sigPub}</code>
+                        </label>
+                        <label class="identity-key-block">
+                            <span>ENCRYPTION KEY</span>
+                            <code>{identity()?.encPub}</code>
+                        </label>
+                    </Show>
+                </section>
+
+                <section class="settings-section">
+                    <h3>{sectionTitle("encryptedIdentity")}</h3>
                     <p class="help">
-                        The recovery JSON contains both private keys. Anyone with
-                        it can impersonate this identity.
+                        Wrap both private keys with AES-256-GCM using a
+                        passphrase-derived key. The .toloo-key file is safe to
+                        store separately; the passphrase is not recoverable.
                     </p>
+                    <input
+                        type="password"
+                        autocomplete="new-password"
+                        placeholder="Passphrase"
+                        value={passphrase()}
+                        onInput={(event) =>
+                            setPassphrase(event.currentTarget.value)
+                        }
+                    />
                     <div class="button-row">
                         <button
                             type="button"
                             class="ghost-button"
-                            onClick={() => void copyIdentity()}
-                        >
-                            <CopyIcon size={15} />
-                            Copy recovery
-                        </button>
-                        <button
-                            type="button"
-                            class="ghost-button"
+                            disabled={busy() || !identity()}
                             onClick={() =>
                                 downloadText(
                                     props.client.exportIdentity(),
@@ -175,63 +271,46 @@ export function SettingsModal(props: {
                                 )
                             }
                         >
-                            Download
+                            Export JSON
                         </button>
-                    </div>
-                </section>
-
-                <section class="settings-section">
-                    <h3>Encrypted identity</h3>
-                    <p class="help">
-                        Wrap both private keys with AES-256-GCM using a
-                        passphrase-derived key. The .toloo-key file is safe to
-                        store separately; the passphrase is not recoverable.
-                    </p>
-                    <label class="field">
-                        <span>Passphrase</span>
-                        <input
-                            type="password"
-                            autocomplete="new-password"
-                            value={passphrase()}
-                            onInput={(event) =>
-                                setPassphrase(event.currentTarget.value)
-                            }
-                        />
-                    </label>
-                    <div class="button-row">
                         <button
                             type="button"
-                            class="ghost-button"
-                            disabled={busy() || !passphrase()}
+                            class="primary-button"
+                            disabled={busy() || !identity() || !passphrase()}
                             onClick={() => void downloadEncryptedIdentity()}
                         >
-                            Encrypt & download
+                            Encrypted export
                         </button>
-                        <label class="ghost-button file-button">
-                            Unlock .toloo-key
-                            <input
-                                type="file"
-                                accept=".toloo-key,text/plain"
-                                hidden
-                                disabled={busy() || !passphrase()}
-                                onChange={(event) => void unlockIdentityFile(event)}
-                            />
-                        </label>
                     </div>
+                    <input
+                        type="text"
+                        spellcheck={false}
+                        placeholder="Encrypted identity blob"
+                        value={encryptedBlob()}
+                        onInput={(event) =>
+                            setEncryptedBlob(event.currentTarget.value)
+                        }
+                    />
+                    <button
+                        type="button"
+                        class="ghost-button wide"
+                        disabled={busy() || !encryptedBlob() || !passphrase()}
+                        onClick={() => void unlockEncryptedIdentity()}
+                    >
+                        Unlock encrypted identity
+                    </button>
                 </section>
 
                 <section class="settings-section">
-                    <h3>Relays</h3>
-                    <p class="help">
-                        This page accepts {protocols()} endpoints.{" "}
-                        {window.location.protocol === "https:"
-                            ? "Self-signed relay certificates cannot be used from the browser."
-                            : "HTTP pages are dev/LAN only and are not a secure context."}
+                    <h3>{sectionTitle("relays")}</h3>
+                    <p class="relay-network">
+                        {props.client.relays().length === 0
+                            ? "No relays"
+                            : props.client.relays().length === 1
+                              ? "1 relay"
+                              : `${props.client.relays().length} relays`}
                     </p>
-                    <Show
-                        when={props.client.relays().length > 0}
-                        fallback={<p class="empty-note">No relays configured.</p>}
-                    >
+                    <Show when={props.client.relays().length > 0}>
                         <ul class="relay-list">
                             <For each={props.client.relays()}>
                                 {(relay) => (
@@ -261,7 +340,11 @@ export function SettingsModal(props: {
                             value={relayUrl()}
                             onInput={(event) => setRelayUrl(event.currentTarget.value)}
                         />
-                        <button class="primary-button" type="submit" disabled={busy()}>
+                        <button
+                            class="ghost-button"
+                            type="submit"
+                            disabled={busy() || !relayUrl().trim()}
+                        >
                             Add
                         </button>
                     </form>
@@ -273,7 +356,41 @@ export function SettingsModal(props: {
                 </section>
 
                 <section class="settings-section">
-                    <h3>Blocked nodes</h3>
+                    <h3>{sectionTitle("host")}</h3>
+                    <p class="help">
+                        Relay hosting is available in the desktop and Android
+                        apps. Browsers cannot open local relay sockets.
+                    </p>
+                </section>
+
+                <section class="settings-section">
+                    <h3>{sectionTitle("notifications")}</h3>
+                    <button
+                        type="button"
+                        class="ghost-button wide"
+                        onClick={() => void toggleNotifications()}
+                    >
+                        {notificationsEnabled()
+                            ? "Notifications: on"
+                            : "Notifications: off"}
+                    </button>
+                </section>
+
+                <section class="settings-section">
+                    <h3>{sectionTitle("layout")}</h3>
+                    <button
+                        type="button"
+                        class="ghost-button"
+                        onClick={toggleRtl}
+                    >
+                        {rtl()
+                            ? "Right-to-left: on"
+                            : "Right-to-left: off"}
+                    </button>
+                </section>
+
+                <section class="settings-section">
+                    <h3>{sectionTitle("blocked")}</h3>
                     <Show
                         when={props.client.blocked().length > 0}
                         fallback={<p class="empty-note">No blocked nodes.</p>}
@@ -299,50 +416,22 @@ export function SettingsModal(props: {
                     </Show>
                 </section>
 
-                <section class="settings-section">
-                    <h3>Notifications</h3>
+                <section class="settings-section danger-zone">
+                    <h3>{sectionTitle("device")}</h3>
                     <p class="help">
-                        {notifyPermission() === "granted"
-                            ? "Desktop notifications are enabled for new incoming messages."
-                            : "Allow desktop notifications while this tab is in the background."}
+                        {identity()
+                            ? "This identity is stored on this device."
+                            : "No identity is stored on this device."}
                     </p>
-                    <Show when={notifyPermission() !== "granted"}>
+                    <Show when={identity()}>
                         <button
                             type="button"
-                            class="ghost-button"
-                            onClick={() => void enableNotifications()}
+                            class="danger-button wide"
+                            onClick={() => void removeIdentity()}
                         >
-                            Enable notifications
+                            Remove identity from this device
                         </button>
                     </Show>
-                </section>
-
-                <section class="settings-section">
-                    <h3>Layout</h3>
-                    <button
-                        type="button"
-                        class="ghost-button"
-                        onClick={toggleRtl}
-                    >
-                        {rtl()
-                            ? "Right-to-left layout: on"
-                            : "Right-to-left layout: off"}
-                    </button>
-                </section>
-
-                <section class="settings-section danger-zone">
-                    <h3>This browser</h3>
-                    <p class="help">
-                        Clear the local identity, room list, relay list, and
-                        cached envelopes. Relay copies are not deleted.
-                    </p>
-                    <button
-                        type="button"
-                        class="danger-button"
-                        onClick={() => void reset()}
-                    >
-                        Clear local data
-                    </button>
                 </section>
             </div>
         </Modal>
@@ -354,9 +443,8 @@ export function AddRoomModal(props: {
     onClose: () => void;
     onCreated: (room: RoomRecord) => void;
 }): JSX.Element {
-    const [mode, setMode] = createSignal<"create" | "join" | "import">("create");
     const [name, setName] = createSignal("");
-    const [invite, setInvite] = createSignal("");
+    const [joinInput, setJoinInput] = createSignal("");
     const [error, setError] = createSignal("");
     const [busy, setBusy] = createSignal(false);
 
@@ -379,21 +467,7 @@ export function AddRoomModal(props: {
         setError("");
         setBusy(true);
         try {
-            await props.client.joinRoom(invite());
-            props.onClose();
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function importAll(event: SubmitEvent): Promise<void> {
-        event.preventDefault();
-        setError("");
-        setBusy(true);
-        try {
-            await props.client.importDiscovery(invite());
+            await props.client.joinRoom(joinInput());
             props.onClose();
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -403,119 +477,103 @@ export function AddRoomModal(props: {
     }
 
     return (
-        <Modal
-            title="Add a room"
-            subtitle="Create a keypair or join with an invite"
-            onClose={props.onClose}
-        >
-            <div class="segmented" role="tablist" aria-label="Add room">
+        <Modal title="New Room" onClose={props.onClose}>
+            <div class="field-label">CREATE</div>
+            <form class="stack" onSubmit={(event) => void create(event)}>
+                <input
+                    type="text"
+                    placeholder="Room name (optional)"
+                    value={name()}
+                    onInput={(event) => setName(event.currentTarget.value)}
+                />
                 <button
-                    type="button"
-                    role="tab"
-                    aria-selected={mode() === "create"}
-                    classList={{ active: mode() === "create" }}
-                    onClick={() => {
-                        setMode("create");
-                        setError("");
-                    }}
+                    class="primary-button wide"
+                    type="submit"
+                    disabled={busy()}
                 >
-                    Create
+                    Create Room
+                </button>
+            </form>
+
+            <div class="divider" />
+            <div class="field-label">JOIN</div>
+            <form class="stack" onSubmit={(event) => void join(event)}>
+                <input
+                    type="text"
+                    spellcheck={false}
+                    placeholder="toloo:// invite or room key"
+                    value={joinInput()}
+                    onInput={(event) => setJoinInput(event.currentTarget.value)}
+                />
+                <button
+                    class="ghost-button wide"
+                    type="submit"
+                    disabled={busy() || !joinInput().trim()}
+                >
+                    Join Room
+                </button>
+            </form>
+
+            <Show when={error()}>
+                <p class="form-error" role="alert">
+                    {error()}
+                </p>
+            </Show>
+        </Modal>
+    );
+}
+
+export function ImportModal(props: {
+    client: TolooClient;
+    onClose: () => void;
+}): JSX.Element {
+    const [input, setInput] = createSignal("");
+    const [error, setError] = createSignal("");
+    const [busy, setBusy] = createSignal(false);
+
+    async function decode(): Promise<void> {
+        setError("");
+        setBusy(true);
+        try {
+            await props.client.importDiscovery(input());
+            props.onClose();
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Modal title="Import" onClose={props.onClose}>
+            <p class="help">
+                Paste a toloo:// link or open a .toloo file. Rooms, messages,
+                and relay endpoints are detected automatically.
+            </p>
+            <input
+                type="text"
+                spellcheck={false}
+                placeholder="toloo://BASE64URL…"
+                value={input()}
+                onInput={(event) => setInput(event.currentTarget.value)}
+            />
+            <div class="button-row">
+                <button
+                    class="primary-button"
+                    type="button"
+                    disabled={busy() || !input().trim()}
+                    onClick={() => void decode()}
+                >
+                    Decode
                 </button>
                 <button
+                    class="ghost-button"
                     type="button"
-                    role="tab"
-                    aria-selected={mode() === "join"}
-                    classList={{ active: mode() === "join" }}
-                    onClick={() => {
-                        setMode("join");
-                        setError("");
-                    }}
+                    onClick={props.onClose}
                 >
-                    Join
-                </button>
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected={mode() === "import"}
-                    classList={{ active: mode() === "import" }}
-                    onClick={() => {
-                        setMode("import");
-                        setError("");
-                    }}
-                >
-                    Import
+                    Close
                 </button>
             </div>
-
-            <Show when={mode() === "create"}>
-                <form class="stack" onSubmit={(event) => void create(event)}>
-                    <label class="field">
-                        <span>Room name</span>
-                        <input
-                            type="text"
-                            placeholder="Long table"
-                            value={name()}
-                            onInput={(event) => setName(event.currentTarget.value)}
-                        />
-                    </label>
-                    <p class="help">
-                        Joining and posting are open by default. The room key
-                        stays in this browser, so this client can commit.
-                    </p>
-                    <button class="primary-button wide" type="submit" disabled={busy()}>
-                        {busy() ? "Creating…" : "Create room"}
-                    </button>
-                </form>
-            </Show>
-
-            <Show when={mode() === "join"}>
-                <form class="stack" onSubmit={(event) => void join(event)}>
-                    <label class="field">
-                        <span>Invite or room key</span>
-                        <textarea
-                            rows={4}
-                            spellcheck={false}
-                            placeholder="toloo://… or a 43-character room public key"
-                            value={invite()}
-                            onInput={(event) => setInvite(event.currentTarget.value)}
-                        />
-                    </label>
-                    <p class="help">
-                        The invite is verified locally before the room is
-                        imported.
-                    </p>
-                    <button class="primary-button wide" type="submit" disabled={busy()}>
-                        {busy() ? "Joining…" : "Join room"}
-                    </button>
-                </form>
-            </Show>
-
-            <Show when={mode() === "import"}>
-                <form class="stack" onSubmit={(event) => void importAll(event)}>
-                    <label class="field">
-                        <span>toloo:// link or .toloo file contents</span>
-                        <textarea
-                            rows={5}
-                            spellcheck={false}
-                            placeholder="Paste exported rooms, messages, or node metadata"
-                            value={invite()}
-                            onInput={(event) => setInvite(event.currentTarget.value)}
-                        />
-                    </label>
-                    <p class="help">
-                        Envelopes are verified locally. Rooms and relay
-                        endpoints are detected; existing data is kept.
-                    </p>
-                    <button
-                        class="primary-button wide"
-                        type="submit"
-                        disabled={busy() || !invite().trim()}
-                    >
-                        {busy() ? "Importing…" : "Import everything"}
-                    </button>
-                </form>
-            </Show>
-
             <Show when={error()}>
                 <p class="form-error" role="alert">
                     {error()}
@@ -530,7 +588,7 @@ export function RoomActionsModal(props: {
     room: RoomRecord;
     onClose: () => void;
 }): JSX.Element {
-    const [name, setName] = createSignal(props.room.name);
+    const [name, setName] = createSignal("");
     const [error, setError] = createSignal("");
     const [busy, setBusy] = createSignal(false);
 
@@ -546,15 +604,46 @@ export function RoomActionsModal(props: {
         }
     };
 
-    async function run(action: () => Promise<void>): Promise<void> {
+    async function run(
+        action: () => Promise<void>,
+        close = false,
+    ): Promise<void> {
         setError("");
         setBusy(true);
         try {
             await action();
+            if (close) props.onClose();
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
         } finally {
             setBusy(false);
+        }
+    }
+
+    async function shareInvite(): Promise<void> {
+        const text = invite() || props.room.pub;
+        if (navigator.share) {
+            try {
+                await navigator.share({ text });
+                return;
+            } catch {
+                // Fall back to the clipboard when the share sheet is closed.
+            }
+        }
+        try {
+            await copyText(text);
+            props.client.notify("Invite copied.", "success");
+        } catch {
+            props.client.notify("Could not copy the invite.", "error");
+        }
+    }
+
+    async function copyRoomKey(): Promise<void> {
+        try {
+            await copyText(props.room.pub);
+            props.client.notify("Room key copied.", "success");
+        } catch {
+            props.client.notify("Could not copy the room key.", "error");
         }
     }
 
@@ -566,83 +655,93 @@ export function RoomActionsModal(props: {
         ) {
             return;
         }
+        await run(() => props.client.leaveRoom(props.room.pub), true);
+    }
+
+    async function remove(): Promise<void> {
+        if (
+            !window.confirm(
+                "Remove this room from this browser? Relay copies are kept.",
+            )
+        ) {
+            return;
+        }
         await run(async () => {
-            await props.client.leaveRoom();
-            props.onClose();
-        });
+            await props.client.removeRoom(props.room.pub);
+        }, true);
     }
 
     return (
-        <Modal
-            title={props.room.name}
-            subtitle="Room details, sharing, and moderation"
-            onClose={props.onClose}
-        >
-            <div class="key-row room-key-row">
-                <span>Room key</span>
-                <code>{shortKey(props.room.pub, 12)}</code>
-            </div>
-            <p class="help">
-                {props.room.roomIdentity
-                    ? "This browser holds the room key and can commit, rename, and moderate."
-                    : "You joined this room. Only the room owner can rename it."}
-            </p>
+        <Modal title={props.room.name} onClose={props.onClose}>
+            <p class="room-key-line">{props.room.pub}</p>
+            <div class="divider" />
+            <div class="field-label">ROOM ACTIONS</div>
 
-            <div class="button-row">
-                <Show when={invite()}>
-                    <button
-                        type="button"
-                        class="ghost-button"
-                        disabled={busy()}
-                        onClick={() =>
-                            void run(async () => {
-                                await copyText(invite());
-                                props.client.notify("Invite copied.", "success");
-                            })
-                        }
-                    >
-                        <CopyIcon size={15} />
-                        Copy invite
-                    </button>
-                </Show>
-                <button
-                    type="button"
-                    class="ghost-button"
-                    disabled={busy()}
-                    onClick={() =>
-                        void run(() => props.client.exportRoomMessages(props.room.pub))
-                    }
-                >
-                    Export messages
-                </button>
-                <button
-                    type="button"
-                    class="ghost-button"
-                    disabled={busy()}
-                    onClick={() => void props.client.syncRoom(props.room.pub)}
-                >
-                    Sync now
-                </button>
-            </div>
+            <button
+                type="button"
+                class="ghost-button wide"
+                disabled={busy()}
+                onClick={() => void run(() => props.client.syncRoom(props.room.pub))}
+            >
+                Sync now
+            </button>
+            <button
+                type="button"
+                class="primary-button wide"
+                disabled={busy()}
+                onClick={() => void shareInvite()}
+            >
+                Share invite link
+            </button>
+            <button
+                type="button"
+                class="ghost-button wide"
+                disabled={busy()}
+                onClick={() =>
+                    void run(() =>
+                        props.client.exportRoomMessages(props.room.pub),
+                    )
+                }
+            >
+                Export messages
+            </button>
+            <button
+                type="button"
+                class="ghost-button wide"
+                disabled={busy()}
+                onClick={() => void copyRoomKey()}
+            >
+                Copy room key
+            </button>
 
-            <Show when={props.room.roomIdentity}>
+            <Show
+                when={props.room.roomIdentity}
+                fallback={
+                    <p class="help">
+                        You joined this room, so only its owner can rename it.
+                    </p>
+                }
+            >
                 <form
                     class="inline-form"
                     onSubmit={(event) => {
                         event.preventDefault();
                         void run(async () => {
-                            await props.client.renameRoom(name());
-                            props.onClose();
-                        });
+                            await props.client.renameRoom(
+                                name(),
+                                props.room.pub,
+                            );
+                        }, true);
                     }}
                 >
                     <input
                         type="text"
+                        placeholder="New room name"
                         value={name()}
                         onInput={(event) => setName(event.currentTarget.value)}
                     />
                     <button
-                        class="primary-button"
+                        class="ghost-button"
                         type="submit"
                         disabled={
                             busy() ||
@@ -661,16 +760,23 @@ export function RoomActionsModal(props: {
                 </p>
             </Show>
 
-            <div class="button-row end">
-                <button
-                    type="button"
-                    class="danger-button"
-                    disabled={busy()}
-                    onClick={() => void leave()}
-                >
-                    Leave room
-                </button>
-            </div>
+            <div class="divider" />
+            <button
+                type="button"
+                class="ghost-button wide tint-warn"
+                disabled={busy()}
+                onClick={() => void leave()}
+            >
+                Leave room
+            </button>
+            <button
+                type="button"
+                class="ghost-button wide tint-danger"
+                disabled={busy()}
+                onClick={() => void remove()}
+            >
+                Remove from this device
+            </button>
         </Modal>
     );
 }
@@ -696,79 +802,110 @@ export function MessageActionsModal(props: {
         }
     }
 
+    async function copyMessage(): Promise<void> {
+        try {
+            await copyText(props.message.body);
+            props.client.notify("Message copied.", "success");
+        } catch {
+            props.client.notify("Could not copy the message.", "error");
+        }
+    }
+
     return (
         <Modal
             title="Message"
-            subtitle={`${shortKey(props.message.author, 7)} · ${formatTime(props.message.ts)}`}
+            subtitle={`${shortKey(props.message.author, 8)} · ${props.message.eid}`}
             onClose={props.onClose}
         >
             <div class="message-quote">{props.message.body}</div>
+
+            <button
+                type="button"
+                class="ghost-button wide"
+                onClick={() => void copyMessage()}
+            >
+                Copy message text
+            </button>
+
+            <div class="divider" />
+            <div class="field-label">MODERATION</div>
+            <button
+                type="button"
+                class="ghost-button wide tint-warn"
+                disabled={busy()}
+                onClick={() =>
+                    void run(() => props.client.flagMessage(props.message.eid))
+                }
+            >
+                Flag as spam
+            </button>
+            <button
+                type="button"
+                class="ghost-button wide tint-danger"
+                disabled={busy()}
+                onClick={() =>
+                    void run(() =>
+                        props.client.blockAuthor(props.message.author),
+                    )
+                }
+            >
+                Block author
+            </button>
             <div class="button-row">
                 <button
                     type="button"
-                    class="ghost-button"
+                    class="ghost-button tint-success"
                     disabled={busy()}
                     onClick={() =>
-                        void run(async () => {
-                            await copyText(props.message.body);
-                            props.client.notify("Message copied.", "success");
-                        })
+                        void run(() =>
+                            props.client.attestAuthor(
+                                props.message.author,
+                                "positive",
+                            ),
+                        )
                     }
                 >
-                    <CopyIcon size={15} />
-                    Copy text
+                    Attest +
                 </button>
                 <button
                     type="button"
-                    class="ghost-button"
+                    class="ghost-button tint-danger"
                     disabled={busy()}
                     onClick={() =>
-                        void run(() => props.client.flagMessage(props.message.eid))
+                        void run(() =>
+                            props.client.attestAuthor(
+                                props.message.author,
+                                "negative",
+                            ),
+                        )
                     }
                 >
-                    Flag as spam
+                    Attest −
                 </button>
-                <Show when={!props.message.mine}>
-                    <button
-                        type="button"
-                        class="danger-button"
-                        disabled={busy()}
-                        onClick={() =>
-                            void run(() =>
-                                props.client.blockAuthor(props.message.author),
-                            )
-                        }
-                    >
-                        Block author
-                    </button>
-                </Show>
-                <Show when={props.message.mine}>
-                    <button
-                        type="button"
-                        class="danger-button"
-                        disabled={busy()}
-                        onClick={() => {
-                            if (!window.confirm("Delete this message for everyone?")) return;
-                            void run(() =>
-                                props.client.deleteMessage(props.message.eid),
-                            );
-                        }}
-                    >
-                        <TrashIcon size={15} />
-                        Delete
-                    </button>
-                </Show>
             </div>
+            <Show when={props.message.mine}>
+                <button
+                    type="button"
+                    class="ghost-button wide tint-danger"
+                    disabled={busy()}
+                    onClick={() => {
+                        if (!window.confirm("Delete this message for everyone?")) {
+                            return;
+                        }
+                        void run(() =>
+                            props.client.deleteMessage(props.message.eid),
+                        );
+                    }}
+                >
+                    Delete message
+                </button>
+            </Show>
+
             <Show when={error()}>
                 <p class="form-error" role="alert">
                     {error()}
                 </p>
             </Show>
-            <div class="button-row end">
-                <button type="button" class="ghost-button" onClick={props.onClose}>
-                    Close
-                </button>
-            </div>
         </Modal>
     );
 }
@@ -801,12 +938,25 @@ export function InviteModal(props: {
         }
     }
 
+    async function shareInvite(): Promise<void> {
+        const text = invite();
+        if (!text) return;
+        if (navigator.share) {
+            try {
+                await navigator.share({ text });
+                return;
+            } catch {
+                // Fall back to the clipboard when the share sheet is closed.
+            }
+        }
+        await copyInvite();
+    }
+
     return (
-        <Modal
-            title={`Invite to ${props.room.name}`}
-            subtitle="Share this verified room.create envelope"
-            onClose={props.onClose}
-        >
+        <Modal title="Share invite" onClose={props.onClose}>
+            <p class="help">
+                Keep this text secret. Select it below to copy.
+            </p>
             <Show
                 when={invite()}
                 fallback={
@@ -824,25 +974,29 @@ export function InviteModal(props: {
                     onFocus={(event) => event.currentTarget.select()}
                 />
             </Show>
-            <div class="key-row room-key-row">
-                <span>Room key</span>
-                <code>{shortKey(props.room.pub, 12)}</code>
-            </div>
-            <div class="button-row end">
-                <button type="button" class="ghost-button" onClick={props.onClose}>
-                    Done
+            <p class="room-key-line">{props.room.pub}</p>
+            <div class="button-row">
+                <button
+                    type="button"
+                    class="ghost-button"
+                    disabled={!invite()}
+                    onClick={() => void copyInvite()}
+                >
+                    <CopyIcon size={15} />
+                    Copy
                 </button>
-                <Show when={invite()}>
-                    <button
-                        type="button"
-                        class="primary-button"
-                        onClick={() => void copyInvite()}
-                    >
-                        <CopyIcon size={15} />
-                        Copy invite
-                    </button>
-                </Show>
+                <button
+                    type="button"
+                    class="primary-button"
+                    disabled={!invite()}
+                    onClick={() => void shareInvite()}
+                >
+                    Share
+                </button>
             </div>
+            <button type="button" class="ghost-button wide" onClick={props.onClose}>
+                Done
+            </button>
         </Modal>
     );
 }

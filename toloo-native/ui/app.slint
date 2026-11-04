@@ -15,7 +15,8 @@ export component AppWindow inherits Window {
     in property <bool> has-identity: false;
     in property <string> identity-label: "No identity";
     in property <string> identity-initial: "?";
-    in property <int> identity-hue: 0;
+    in property <string> identity-avatar-path;
+    in property <int> identity-avatar-palette: 0;
     in property <string> identity-sig-pub: "";
     in property <string> identity-enc-pub: "";
     in property <string> status: "Starting…";
@@ -24,7 +25,8 @@ export component AppWindow inherits Window {
     in property <string> active-room-id: "";
     in property <string> room-key: "";
     in property <string> room-initial: "?";
-    in property <int> room-hue: 0;
+    in property <string> room-avatar-path;
+    in property <int> room-avatar-palette: 0;
     in property <bool> room-has-key: false;
     in property <string> members-label: "";
     in property <bool> rtl: false;
@@ -115,7 +117,8 @@ export component AppWindow inherits Window {
         rooms: root.rooms;
         identity-label: root.identity-label;
         identity-initial: root.identity-initial;
-        identity-hue: root.identity-hue;
+        identity-avatar-path: root.identity-avatar-path;
+        identity-avatar-palette: root.identity-avatar-palette;
         status: root.status;
         network-label: root.network-label;
         compact: true;
@@ -147,7 +150,8 @@ export component AppWindow inherits Window {
         room-name: root.active-room;
         room-id: root.room-key;
         room-initial: root.room-initial;
-        room-hue: root.room-hue;
+        room-avatar-path: root.room-avatar-path;
+        room-avatar-palette: root.room-avatar-palette;
         members-label: root.members-label;
         status: root.status;
         has-room: root.active-room-id != "";
@@ -194,7 +198,8 @@ export component AppWindow inherits Window {
             rooms: root.rooms;
             identity-label: root.identity-label;
             identity-initial: root.identity-initial;
-            identity-hue: root.identity-hue;
+            identity-avatar-path: root.identity-avatar-path;
+            identity-avatar-palette: root.identity-avatar-palette;
             status: root.status;
             network-label: root.network-label;
             compact: root.tablet;
@@ -221,7 +226,8 @@ export component AppWindow inherits Window {
             room-name: root.active-room;
             room-id: root.room-key;
             room-initial: root.room-initial;
-            room-hue: root.room-hue;
+            room-avatar-path: root.room-avatar-path;
+            room-avatar-palette: root.room-avatar-palette;
             members-label: root.members-label;
             status: root.status;
             has-room: root.active-room-id != "";
@@ -269,7 +275,7 @@ export component AppWindow inherits Window {
         Rectangle {
             width: root.phone
                 ? root.width - root.inset-left - root.inset-right
-                : 480px;
+                : Theme.settings-width;
             height: root.phone
                 ? (root.height - root.inset-top - root.inset-bottom) * 0.74
                 : 620px;
@@ -310,7 +316,8 @@ export component AppWindow inherits Window {
                 has-identity: root.has-identity;
                 identity-label: root.identity-label;
                 identity-initial: root.identity-initial;
-                identity-hue: root.identity-hue;
+                identity-avatar-path: root.identity-avatar-path;
+            identity-avatar-palette: root.identity-avatar-palette;
                 sig-pub: root.identity-sig-pub;
                 enc-pub: root.identity-enc-pub;
                 rtl: root.rtl;

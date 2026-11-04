@@ -1,12 +1,13 @@
 {
   "name": "toloo-web",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "scripts": {
+    "design": "node ../design/generate.mjs",
     "wasm": "node scripts/build-wasm.mjs",
-    "dev": "npm run wasm && vite",
-    "build": "npm run wasm && tsc --noEmit && vite build",
+    "dev": "npm run design && npm run wasm && vite",
+    "build": "npm run design && npm run wasm && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preview": "vite preview"

@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use toloo_core::avatar::AvatarSpec;
 use toloo_core::base64url;
 use toloo_core::canonical::canonical_value;
 use toloo_core::crypto::{
@@ -33,6 +34,21 @@ pub const PROTOCOL_VERSION: &str = "0.2";
 
 pub fn core_version() -> &'static str {
     PROTOCOL_VERSION
+}
+
+/// Deterministic avatar geometry for an Ed25519 public key.
+///
+/// Returns `{"cells","shape","palette","grid","svgPath"}`.
+pub fn avatar_spec(public_key: &str) -> Result<String> {
+    let spec = AvatarSpec::from_pubkey_b64(public_key)?;
+    Ok(json!({
+        "cells": spec.cells,
+        "shape": spec.shape,
+        "palette": spec.palette,
+        "grid": spec.grid_25(),
+        "svgPath": spec.to_svg_path(),
+    })
+    .to_string())
 }
 
 /// Generate a new node identity.
@@ -905,6 +921,19 @@ pub fn base64url_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_spec_matches_reference_vector() {
+        let value: Value = serde_json::from_str(
+            &avatar_spec("11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["cells"], serde_json::json!(0x24FA));
+        assert_eq!(value["shape"], serde_json::json!(0));
+        assert_eq!(value["palette"], serde_json::json!(7));
+        assert_eq!(value["grid"].as_array().unwrap().len(), 25);
+        assert!(value["svgPath"].as_str().unwrap().starts_with('M'));
+    }
 
     #[test]
     fn identity_round_trip_preserves_keys() {

@@ -1,7 +1,6 @@
-import { For, type JSX } from "solid-js";
+import { type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { CloseIcon } from "./Icons";
-import type { Toast } from "../lib/client";
 
 export function Modal(props: {
     title: string;
@@ -49,34 +48,6 @@ export function Modal(props: {
                     </header>
                     <div class="modal-body">{props.children}</div>
                 </div>
-            </div>
-        </Portal>
-    );
-}
-
-export function Toasts(props: {
-    toasts: Toast[];
-    dismiss: (id: string) => void;
-}): JSX.Element {
-    return (
-        <Portal>
-            <div class="toasts" aria-live="polite" aria-atomic="false">
-                <For each={props.toasts}>
-                    {(toast) => (
-                        <button
-                            type="button"
-                            class="toast"
-                            classList={{
-                                "toast-error": toast.kind === "error",
-                                "toast-success": toast.kind === "success",
-                            }}
-                            onClick={() => props.dismiss(toast.id)}
-                        >
-                            <span class="toast-dot" aria-hidden="true" />
-                            <span>{toast.text}</span>
-                        </button>
-                    )}
-                </For>
             </div>
         </Portal>
     );

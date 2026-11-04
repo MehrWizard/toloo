@@ -26,12 +26,7 @@ export interface Message {
 export interface RoomSummary {
     preview: string;
     ts: number;
-}
-
-export interface Toast {
-    id: string;
-    text: string;
-    kind: "info" | "success" | "error";
+    unread: number;
 }
 
 const CHAT_CHANNEL = 1;
@@ -57,7 +52,7 @@ function shortRoomName(pub: string): string {
 
 function previewOf(body: string): string {
     const text = body.replace(/\s+/g, " ").trim();
-    return text.length > 60 ? `${text.slice(0, 60)}…` : text;
+    return text.length > 44 ? `${text.slice(0, 44)}…` : text;
 }
 
 export function createTolooClient() {
@@ -76,7 +71,7 @@ export function createTolooClient() {
     const [syncing, setSyncing] = createSignal(false);
     const [lastSync, setLastSync] = createSignal<number | null>(null);
     const [blocked, setBlocked] = createSignal<string[]>([]);
-    const [toasts, setToasts] = createSignal<Toast[]>([]);
+    const [status, setStatus] = createSignal("");
 
     const activeRoom = createMemo(
         () => rooms().find((room) => room.pub === activePub()) ?? null,
@@ -86,22 +81,9 @@ export function createTolooClient() {
 
     function notify(
         text: string,
-        kind: Toast["kind"] = "info",
-        timeoutMs = 4200,
+        _kind: "info" | "success" | "error" = "info",
     ): void {
-        const id = randomId();
-        setToasts((current) =>
-            [...current.filter((toast) => toast.text !== text), { id, text, kind }].slice(
-                -3,
-            ),
-        );
-        window.setTimeout(() => {
-            setToasts((current) => current.filter((toast) => toast.id !== id));
-        }, timeoutMs);
-    }
-
-    function dismissToast(id: string): void {
-        setToasts((current) => current.filter((toast) => toast.id !== id));
+        setStatus(text);
     }
 
     function connectionFor(relay: RelayRecord): RelayConnection {
@@ -120,35 +102,47 @@ export function createTolooClient() {
 
     async function refreshSummary(roomPub: string): Promise<void> {
         const records = await db.roomEnvelopes(roomPub);
+        const mark = rooms().find((room) => room.pub === roomPub)?.lastReadAt ?? 0;
+        const self = identity()?.sigPub;
+        const unread = new Set<string>();
         let latest: EnvelopeRecord | null = null;
         for (const record of records) {
             if (record.type !== "room.message" || !record.body) continue;
+            if (blocked().includes(record.signer)) continue;
             if (!latest || record.ts > latest.ts) latest = record;
+            if (record.ts > mark && record.signer !== self) {
+                unread.add(record.eid);
+            }
         }
         setRoomSummaries((current) => ({
             ...current,
             [roomPub]: latest
-                ? { preview: previewOf(latest.body ?? ""), ts: latest.ts }
-                : { preview: "", ts: 0 },
+                ? {
+                      preview: previewOf(latest.body ?? ""),
+                      ts: latest.ts,
+                      unread: unread.size,
+                  }
+                : { preview: "", ts: 0, unread: 0 },
         }));
     }
 
     async function load(): Promise<void> {
-        const [savedIdentity, savedRelays, savedRooms, savedBlocklist] =
+        const [savedIdentity, savedRelays, savedRooms, savedBlocklist, active] =
             await Promise.all([
                 db.getIdentity(),
                 db.listRelays(),
                 db.listRooms(),
                 db.getSetting<string[]>("blocklist"),
+                db.getSetting<string>("activeRoom"),
             ]);
         setIdentity(savedIdentity ?? null);
         setRelays(savedRelays);
         setRooms(savedRooms);
         setBlocked(savedBlocklist ?? []);
         await Promise.all(savedRooms.map((room) => refreshSummary(room.pub)));
-        if (savedIdentity && savedRooms.length > 0) {
-            setActivePub(savedRooms[0].pub);
-            await refreshRoom(savedRooms[0].pub);
+        if (active && savedRooms.some((room) => room.pub === active)) {
+            setActivePub(active);
+            await refreshRoom(active);
         }
         setInitialized(true);
     }
@@ -372,7 +366,8 @@ export function createTolooClient() {
             document.hidden &&
             previous.length > 0 &&
             "Notification" in window &&
-            Notification.permission === "granted"
+            Notification.permission === "granted" &&
+            localStorage.getItem("toloo-notifications") !== "0"
         ) {
             const known = new Set(previous.map((message) => message.eid));
             const roomName =
@@ -386,12 +381,19 @@ export function createTolooClient() {
         }
         setMessages(list);
         const latestMessage = list.at(-1);
-        setRoomSummaries((current) => ({
-            ...current,
-            [roomPub]: latestMessage
-                ? { preview: previewOf(latestMessage.body), ts: latestMessage.ts }
-                : { preview: "", ts: 0 },
-        }));
+        const roomRecord = rooms().find((room) => room.pub === roomPub);
+        if (
+            activePub() === roomPub &&
+            roomRecord &&
+            latestMessage &&
+            latestMessage.ts > (roomRecord.lastReadAt ?? 0)
+        ) {
+            await updateRoomRecord({
+                ...roomRecord!,
+                lastReadAt: latestMessage.ts,
+            });
+        }
+        await refreshSummary(roomPub);
 
         const membershipEvents = records
             .filter(
@@ -434,6 +436,7 @@ export function createTolooClient() {
 
     async function selectRoom(roomPub: string): Promise<void> {
         setActivePub(roomPub);
+        await db.saveSetting("activeRoom", roomPub);
         setMessages([]);
         setMembers([]);
         setBanned([]);
@@ -539,6 +542,7 @@ export function createTolooClient() {
         setRooms((current) => [...current, room]);
         await storeEnvelopeJson(committedJson);
         setActivePub(room.pub);
+        await db.saveSetting("activeRoom", room.pub);
         await refreshRoom(room.pub);
 
         if (relays().length > 0) {
@@ -608,6 +612,7 @@ export function createTolooClient() {
         const join = protocol.roomJoin(currentIdentity, roomPub);
         await storeEnvelopeJson(JSON.stringify(join));
         setActivePub(roomPub);
+        await db.saveSetting("activeRoom", roomPub);
         await refreshRoom(roomPub);
 
         if (relays().length > 0) {
@@ -692,6 +697,7 @@ export function createTolooClient() {
         const first = additions[0];
         if (first) {
             setActivePub(first.pub);
+            await db.saveSetting("activeRoom", first.pub);
             await refreshRoom(first.pub);
         }
         notify(
@@ -728,7 +734,7 @@ export function createTolooClient() {
         await refreshRoom(room.pub);
 
         if (relays().length === 0) {
-            notify("Message saved locally. Add a relay to send it.", "info");
+            notify("Message saved locally: No relay configured", "info");
             return;
         }
         const offers = room.roomCreate
@@ -742,9 +748,12 @@ export function createTolooClient() {
         }
     }
 
-    async function renameRoom(nameInput: string): Promise<void> {
+    async function renameRoom(
+        nameInput: string,
+        roomPub = activePub(),
+    ): Promise<void> {
         const currentIdentity = identity();
-        const room = activeRoom();
+        const room = rooms().find((item) => item.pub === roomPub);
         const name = nameInput.trim();
         if (!currentIdentity) throw new Error("Create an identity first.");
         if (!room) throw new Error("Select a room first.");
@@ -766,9 +775,9 @@ export function createTolooClient() {
         notify("Room renamed.", "success");
     }
 
-    async function leaveRoom(): Promise<void> {
+    async function leaveRoom(roomPub = activePub()): Promise<void> {
         const currentIdentity = identity();
-        const room = activeRoom();
+        const room = rooms().find((item) => item.pub === roomPub);
         if (!currentIdentity) throw new Error("Create an identity first.");
         if (!room) throw new Error("Select a room first.");
         const leave = protocol.roomLeave(currentIdentity, room.pub);
@@ -847,6 +856,32 @@ export function createTolooClient() {
         notify(`Message flagged as ${category}.`, "success");
     }
 
+    async function attestAuthor(
+        nodePub: string,
+        level: "positive" | "negative",
+    ): Promise<void> {
+        const currentIdentity = identity();
+        if (!currentIdentity) throw new Error("Create an identity first.");
+        const attestation = protocol.sideAttestation(
+            currentIdentity,
+            nodePub,
+            level,
+        );
+        await storeEnvelopeJson(JSON.stringify(attestation));
+        if (relays().length > 0) {
+            try {
+                await requestFromRelays([attestation], [], 0, 200);
+            } catch (error) {
+                notify(
+                    `Attestation saved locally: ${errorText(error)}`,
+                    "error",
+                );
+                return;
+            }
+        }
+        notify(`Attestation recorded: ${level}`, "success");
+    }
+
     async function blockAuthor(nodePub: string): Promise<void> {
         if (blocked().includes(nodePub)) return;
         const next = [...blocked(), nodePub];
@@ -891,8 +926,11 @@ export function createTolooClient() {
             if (activePub() === roomPub) {
                 const next = remaining[0]?.pub ?? null;
                 setActivePub(next);
-                if (next) void refreshRoom(next);
-                else {
+                if (next) {
+                    void db.saveSetting("activeRoom", next);
+                    void refreshRoom(next);
+                } else {
+                    void db.saveSetting("activeRoom", "");
                     setMessages([]);
                     setMembers([]);
                 }
@@ -907,19 +945,10 @@ export function createTolooClient() {
         return JSON.stringify(current, null, 2);
     }
 
-    async function reset(): Promise<void> {
-        for (const id of connections.keys()) closeConnection(id);
-        await db.clearLocalData();
+    async function removeIdentity(): Promise<void> {
+        await db.deleteIdentity();
         setIdentity(null);
-        setRooms([]);
-        setRoomSummaries({});
-        setRelays([]);
-        setActivePub(null);
-        setMessages([]);
-        setMembers([]);
-        setBlocked([]);
-        setSyncState("idle");
-        setLastSync(null);
+        setStatus("Identity removed from this device.");
     }
 
     function startAutoSync(intervalMs = 12_000): () => void {
@@ -943,12 +972,13 @@ export function createTolooClient() {
         members,
         banned,
         blocked,
+        status,
         blockAuthor,
+        attestAuthor,
         unblockAuthor,
         syncState,
         syncing,
         lastSync,
-        toasts,
         load,
         createIdentity,
         restoreIdentity,
@@ -968,9 +998,8 @@ export function createTolooClient() {
         flagMessage,
         removeRoom,
         exportIdentity,
-        reset,
+        removeIdentity,
         notify,
-        dismissToast,
         startAutoSync,
     };
 }
