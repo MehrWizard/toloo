@@ -85,6 +85,7 @@ pub enum Command {
     },
     StopHost,
     Sync,
+    SyncRoom(String),
     SendMessage(String),
 }
 
@@ -454,6 +455,7 @@ impl Engine {
             Command::StartHost { port, proto } => self.start_host(port, &proto),
             Command::StopHost => self.stop_host(),
             Command::Sync => self.sync_active(),
+            Command::SyncRoom(room_id) => self.sync_room(&room_id),
             Command::SendMessage(body) => self.send_message(&body),
         }
     }
@@ -1236,11 +1238,22 @@ impl Engine {
     }
 
     fn sync_active(&mut self) -> Result<()> {
+        let room_id = self
+            .active_room()
+            .map(|room| room.pub_key.clone())
+            .ok_or_else(|| anyhow!("Select a room first"))?;
+        self.sync_room(&room_id)
+    }
+
+    fn sync_room(&mut self, room_id: &str) -> Result<()> {
         let node = self.node()?.clone();
         let room = self
-            .active_room()
+            .config
+            .rooms
+            .iter()
+            .find(|room| room.pub_key == room_id)
             .cloned()
-            .ok_or_else(|| anyhow!("Select a room first"))?;
+            .ok_or_else(|| anyhow!("Unknown room"))?;
         if self.config.relays.is_empty() {
             self.status = "No relay configured".to_owned();
             return Ok(());
@@ -1418,7 +1431,11 @@ impl Engine {
                             continue;
                         }
                         let body = message_body(inner);
-                        if !blocked.contains(&inner.d.n) && inner.d.ts > mark {
+                        let from_self = node_pub.as_deref() == Some(inner.d.n.as_str());
+                        if !from_self
+                            && !blocked.contains(&inner.d.n)
+                            && inner.d.ts > mark
+                        {
                             unread_ids.insert(message_key(&inner.d.n, inner.d.ts, &body));
                         }
                         if inner.d.ts > latest_ts {
@@ -1793,6 +1810,59 @@ mod tests {
         assert!(snapshot.messages[0].mine);
         assert!(snapshot.messages[0].committed);
         assert!(dir.join("config.json").exists());
+
+        drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unread_counts_only_incoming_messages() {
+        let (mut engine, dir) = temp_engine();
+        engine.handle(Command::CreateIdentity).unwrap();
+        engine
+            .handle(Command::CreateRoom("Alpha".to_owned()))
+            .unwrap();
+        let room_a = engine.config.rooms[0].pub_key.clone();
+        engine
+            .handle(Command::CreateRoom("Beta".to_owned()))
+            .unwrap();
+        let room_b = engine.config.rooms[1].pub_key.clone();
+
+        engine
+            .handle(Command::SendMessage("my own message".to_owned()))
+            .unwrap();
+        engine.handle(Command::SelectRoom(room_a)).unwrap();
+        let unread = |engine: &Engine| {
+            engine
+                .snapshot()
+                .rooms
+                .iter()
+                .find(|room| room.room_id == room_b)
+                .map(|room| room.unread)
+                .unwrap_or(-1)
+        };
+        assert_eq!(unread(&engine), 0);
+
+        let room_identity = engine.config.rooms[1]
+            .room_identity
+            .clone()
+            .expect("room identity");
+        let (sig_pub, sig_seed) = ed25519_generate();
+        let (enc_pub, enc_priv) = x25519_generate();
+        let peer = LocalNode {
+            sig: Keypair {
+                pub_key: base64url::encode(&sig_pub),
+                priv_key: base64url::encode(&sig_seed),
+            },
+            enc: Keypair {
+                pub_key: base64url::encode(&enc_pub),
+                priv_key: base64url::encode(&enc_priv),
+            },
+        };
+        let draft = make_room_message(&peer, &room_b, 1, "hello from a peer", vec![]).unwrap();
+        let commit = wrap_commit(draft, &room_identity, now_ms() + 1000).unwrap();
+        engine.pool.put(&commit).unwrap();
+        assert_eq!(unread(&engine), 1);
 
         drop(engine);
         let _ = std::fs::remove_dir_all(dir);

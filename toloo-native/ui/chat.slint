@@ -1,12 +1,13 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { AppIcon, Avatar, IconButton, TextField } from "components.slint";
+import { AppIcon, Avatar, DropdownItem, DropdownSeparator, IconButton, TextField } from "components.slint";
 import { MessageRow } from "models.slint";
 
 export component ChatPane inherits Rectangle {
     in property <[MessageRow]> messages;
     in property <string> room-name;
     in property <string> room-id;
+    in property <string> room-id-full;
     in property <string> room-initial: "?";
     in property <string> room-avatar-path;
     in property <int> room-avatar-palette: 0;
@@ -14,16 +15,37 @@ export component ChatPane inherits Rectangle {
     in property <string> status: "";
     in property <bool> has-room: false;
     in property <bool> show-back: false;
+    in property <bool> room-has-key: false;
     in property <bool> rtl: false;
     in-out property <string> message-input: "";
     callback back();
     callback sync-room();
     callback share-room();
     callback export-room();
-    callback room-menu();
-    callback message-menu(string, string, string, string, bool);
+    callback rename-room(string, string);
+    callback leave-room(string);
+    callback remove-room(string);
     callback send-message(string);
     callback open-settings();
+    callback copy-text(string);
+    callback flag-message(string, string, string);
+    callback block-node(string, string, string);
+    callback attest-node(string, string);
+    callback delete-message(string, string);
+
+    private property <string> menu-eid;
+    private property <string> menu-author;
+    private property <string> menu-author-id;
+    private property <string> menu-body;
+    private property <bool> menu-mine: false;
+    private property <length> menu-x: 0px;
+    private property <length> menu-y: 0px;
+    private property <length> menu-width: 224px;
+    private property <length> menu-height: root.menu-mine ? 261px : 216px;
+    private property <length> room-menu-x: 0px;
+    private property <length> room-menu-y: 0px;
+    private property <length> room-menu-width: 224px;
+    private property <length> room-menu-height: 303px;
 
     background: Theme.bg;
     height: 100%;
@@ -99,10 +121,16 @@ export component ChatPane inherits Rectangle {
                     tint: Theme.text-2;
                     clicked => { root.export-room(); }
                 }
-                if root.has-room : IconButton {
+                if root.has-room : room-more := IconButton {
                     icon: @image-url("../../design/icons/more.svg");
                     tint: Theme.text-2;
-                    clicked => { root.room-menu(); }
+                    clicked => {
+                        root.room-menu-x = room-more.absolute-position.x - root.absolute-position.x
+                            + (root.rtl ? 0px : room-more.width - root.room-menu-width);
+                        root.room-menu-y = room-more.absolute-position.y - root.absolute-position.y
+                            + room-more.height + 2px;
+                        room-actions-menu.show();
+                    }
                 }
                 IconButton {
                     icon: @image-url("../../design/icons/settings.svg");
@@ -207,11 +235,22 @@ export component ChatPane inherits Rectangle {
                                             : message.status == "sent" ? Theme.success : Theme.warn;
                                         font-size: Theme.font-xs;
                                     }
-                                    IconButton {
+                                    message-more := IconButton {
                                         icon: @image-url("../../design/icons/more.svg");
                                         tint: Theme.muted;
                                         button-size: 22px;
-                                        clicked => { root.message-menu(message.eid, message.author, message.author-id, message.body, message.mine); }
+                                        clicked => {
+                                            root.menu-eid = message.eid;
+                                            root.menu-author = message.author;
+                                            root.menu-author-id = message.author-id;
+                                            root.menu-body = message.body;
+                                            root.menu-mine = message.mine;
+                                            root.menu-x = message-more.absolute-position.x - root.absolute-position.x
+                                                + (root.rtl ? 0px : message-more.width - root.menu-width);
+                                            root.menu-y = message-more.absolute-position.y - root.absolute-position.y
+                                                + message-more.height + 2px;
+                                            message-menu.show();
+                                        }
                                     }
                                 }
                             }
@@ -277,6 +316,172 @@ export component ChatPane inherits Rectangle {
                                 root.message-input = "";
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    message-menu := PopupWindow {
+        width: root.menu-width;
+        height: root.menu-height;
+        x: root.menu-x;
+        y: root.menu-y;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            background: Theme.surface;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+
+            VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+
+                DropdownItem {
+                    icon: @image-url("../../design/icons/copy.svg");
+                    label: "Copy message text";
+                    clicked => {
+                        message-menu.close();
+                        root.copy-text(root.menu-body);
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/flag.svg");
+                    label: "Flag as spam";
+                    tint: Theme.warn;
+                    clicked => {
+                        message-menu.close();
+                        root.flag-message(root.room-id-full, root.menu-eid, "spam");
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/block.svg");
+                    label: "Block author";
+                    tint: Theme.danger;
+                    clicked => {
+                        message-menu.close();
+                        root.block-node(root.menu-author-id, "block", "");
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/check.svg");
+                    label: "Attest +";
+                    tint: Theme.success;
+                    clicked => {
+                        message-menu.close();
+                        root.attest-node(root.menu-author-id, "positive");
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/close.svg");
+                    label: "Attest −";
+                    tint: Theme.danger;
+                    clicked => {
+                        message-menu.close();
+                        root.attest-node(root.menu-author-id, "negative");
+                    }
+                }
+                if root.menu-mine : DropdownSeparator {}
+                if root.menu-mine : DropdownItem {
+                    icon: @image-url("../../design/icons/trash.svg");
+                    label: "Delete message";
+                    tint: Theme.danger;
+                    clicked => {
+                        message-menu.close();
+                        root.delete-message(root.room-id-full, root.menu-eid);
+                    }
+                }
+            }
+        }
+    }
+
+    room-actions-menu := PopupWindow {
+        width: root.room-menu-width;
+        height: root.room-menu-height;
+        x: root.room-menu-x;
+        y: root.room-menu-y;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            background: Theme.surface;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+
+            VerticalLayout {
+                padding: 4px;
+                spacing: 2px;
+
+                DropdownItem {
+                    icon: @image-url("../../design/icons/edit.svg");
+                    label: "Rename room";
+                    enabled: root.room-has-key;
+                    clicked => {
+                        room-actions-menu.close();
+                        root.rename-room(root.room-id-full, root.room-name);
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/sync.svg");
+                    label: "Sync now";
+                    clicked => {
+                        room-actions-menu.close();
+                        root.sync-room();
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/share.svg");
+                    label: "Share invite";
+                    clicked => {
+                        room-actions-menu.close();
+                        root.share-room();
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/export.svg");
+                    label: "Export messages";
+                    clicked => {
+                        room-actions-menu.close();
+                        root.export-room();
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/copy.svg");
+                    label: "Copy room key";
+                    clicked => {
+                        room-actions-menu.close();
+                        root.copy-text(root.room-id-full);
+                    }
+                }
+                DropdownSeparator {}
+                DropdownItem {
+                    icon: @image-url("../../design/icons/logout.svg");
+                    label: "Leave room";
+                    tint: Theme.warn;
+                    clicked => {
+                        room-actions-menu.close();
+                        root.leave-room(root.room-id-full);
+                    }
+                }
+                DropdownItem {
+                    icon: @image-url("../../design/icons/trash.svg");
+                    label: "Remove from this device";
+                    tint: Theme.danger;
+                    clicked => {
+                        room-actions-menu.close();
+                        root.remove-room(root.room-id-full);
                     }
                 }
             }

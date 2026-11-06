@@ -1,20 +1,40 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import type { TolooClient } from "../lib/client";
 import type { RoomRecord } from "../lib/db";
-import { formatTime, shortKey } from "../lib/ui";
+import { copyText, formatTime } from "../lib/ui";
 import { Avatar } from "./Avatar";
-import { InboxIcon, MoreIcon, PlusIcon, RelayIcon } from "./Icons";
+import { DropdownMenu, menuPosition, type DropdownEntry } from "./Dropdown";
+import {
+    CopyIcon,
+    EditIcon,
+    ExportIcon,
+    InboxIcon,
+    LogoIcon,
+    LogoutIcon,
+    MoreIcon,
+    PlusIcon,
+    RelayIcon,
+    ShareIcon,
+    SyncIcon,
+    TrashIcon,
+} from "./Icons";
 
 export function Sidebar(props: {
     client: TolooClient;
     onAddRoom: () => void;
     onImportRoom: () => void;
     onSettings: () => void;
-    onRoomMenu: (room: RoomRecord) => void;
+    onRenameRoom: (room: RoomRecord) => void;
+    onShareRoom: (room: RoomRecord) => void;
     onOpenChat: () => void;
 }): JSX.Element {
     const identity = () => props.client.identity();
     const [query, setQuery] = createSignal("");
+    const [menu, setMenu] = createSignal<{
+        room: RoomRecord;
+        x: number;
+        y: number;
+    } | null>(null);
     const filteredRooms = createMemo(() => {
         const needle = query().trim().toLowerCase();
         if (!needle) return props.client.rooms();
@@ -29,6 +49,81 @@ export function Sidebar(props: {
         const count = props.client.relays().length;
         if (count === 0) return "No relays";
         return count === 1 ? "1 relay" : `${count} relays`;
+    }
+
+    async function copyRoomKey(room: RoomRecord): Promise<void> {
+        try {
+            await copyText(room.pub);
+            props.client.notify("Room key copied.", "success");
+        } catch {
+            props.client.notify("Could not copy the room key.", "error");
+        }
+    }
+
+    async function leaveRoom(room: RoomRecord): Promise<void> {
+        if (
+            !window.confirm(
+                "Leave this room? It is removed from this browser; copies on relays are kept.",
+            )
+        ) {
+            return;
+        }
+        await props.client.leaveRoom(room.pub);
+    }
+
+    async function removeRoom(room: RoomRecord): Promise<void> {
+        if (
+            !window.confirm(
+                "Remove this room from this browser? Relay copies are kept.",
+            )
+        ) {
+            return;
+        }
+        await props.client.removeRoom(room.pub);
+    }
+
+    function entries(room: RoomRecord): DropdownEntry[] {
+        return [
+            {
+                label: "Rename room",
+                icon: <EditIcon />,
+                disabled: !room.roomIdentity,
+                onSelect: () => props.onRenameRoom(room),
+            },
+            {
+                label: "Sync now",
+                icon: <SyncIcon />,
+                onSelect: () => void props.client.syncRoom(room.pub),
+            },
+            {
+                label: "Share invite",
+                icon: <ShareIcon />,
+                onSelect: () => props.onShareRoom(room),
+            },
+            {
+                label: "Export messages",
+                icon: <ExportIcon />,
+                onSelect: () => void props.client.exportRoomMessages(room.pub),
+            },
+            {
+                label: "Copy room key",
+                icon: <CopyIcon />,
+                onSelect: () => void copyRoomKey(room),
+            },
+            { separator: true },
+            {
+                label: "Leave room",
+                icon: <LogoutIcon />,
+                warn: true,
+                onSelect: () => void leaveRoom(room),
+            },
+            {
+                label: "Remove from this device",
+                icon: <TrashIcon />,
+                danger: true,
+                onSelect: () => void removeRoom(room),
+            },
+        ];
     }
 
     return (
@@ -46,6 +141,7 @@ export function Sidebar(props: {
                         label="This device"
                     />
                 </button>
+                <LogoIcon size={22} class="sidebar-logo" />
                 <span class="sidebar-brand">Toloo</span>
                 <span class="sidebar-spacer" />
                 <button
@@ -137,7 +233,9 @@ export function Sidebar(props: {
                                             }
                                         >
                                             <span class="room-row-unread">
-                                                {summary()?.unread}
+                                                {(summary()?.unread ?? 0) > 99
+                                                    ? "99+"
+                                                    : summary()?.unread}
                                             </span>
                                         </Show>
                                     </span>
@@ -146,7 +244,12 @@ export function Sidebar(props: {
                                     type="button"
                                     class="icon-button subtle room-row-menu"
                                     aria-label={`Actions for ${room.name}`}
-                                    onClick={() => props.onRoomMenu(room)}
+                                    onClick={(event) => {
+                                        const position = menuPosition(
+                                            event.currentTarget,
+                                        );
+                                        setMenu({ room, ...position });
+                                    }}
                                 >
                                     <MoreIcon size={16} />
                                 </button>
@@ -175,6 +278,17 @@ export function Sidebar(props: {
                     <RelayIcon />
                 </button>
             </footer>
+
+            <Show when={menu()}>
+                {(state) => (
+                    <DropdownMenu
+                        x={state().x}
+                        y={state().y}
+                        entries={entries(state().room)}
+                        onClose={() => setMenu(null)}
+                    />
+                )}
+            </Show>
         </aside>
     );
 }

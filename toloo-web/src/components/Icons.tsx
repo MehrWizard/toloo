@@ -29,13 +29,18 @@ function icon(name: IconName): Component<IconProps> {
 }
 
 export const ArrowLeftIcon = icon("back");
+export const BlockIcon = icon("block");
 export const CheckIcon = icon("check");
 export const ClockIcon = icon("clock");
 export const CloseIcon = icon("close");
 export const CopyIcon = icon("copy");
+export const EditIcon = icon("edit");
 export const ExportIcon = icon("export");
+export const FlagIcon = icon("flag");
 export const InboxIcon = icon("inbox");
 export const LockIcon = icon("lock");
+export const LogoIcon = icon("logo");
+export const LogoutIcon = icon("logout");
 export const MoreIcon = icon("more");
 export const PeopleIcon = icon("users");
 export const PlusIcon = icon("plus");

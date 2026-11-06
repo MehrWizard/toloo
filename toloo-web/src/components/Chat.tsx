@@ -6,30 +6,48 @@ import {
     type JSX,
 } from "solid-js";
 import type { Message, TolooClient } from "../lib/client";
-import { formatDay, formatTime, sameDay, shortKey } from "../lib/ui";
+import type { RoomRecord } from "../lib/db";
+import { copyText, formatDay, formatTime, sameDay, shortKey } from "../lib/ui";
 import { Avatar } from "./Avatar";
+import { DropdownMenu, menuPosition, type DropdownEntry } from "./Dropdown";
 import {
     ArrowLeftIcon,
+    BlockIcon,
+    CheckIcon,
+    CloseIcon,
+    CopyIcon,
+    EditIcon,
     ExportIcon,
+    FlagIcon,
+    LogoutIcon,
     MoreIcon,
     SendIcon,
     SettingsIcon,
     ShareIcon,
     SyncIcon,
+    TrashIcon,
     UserIcon,
 } from "./Icons";
-import { MessageActionsModal } from "./Modals";
 
 export function Chat(props: {
     client: TolooClient;
     onBack: () => void;
     onInvite: () => void;
-    onRoomMenu: () => void;
+    onRenameRoom: (room: RoomRecord) => void;
     onSettings: () => void;
 }): JSX.Element {
     const [draft, setDraft] = createSignal("");
     const [sending, setSending] = createSignal(false);
-    const [selectedMessage, setSelectedMessage] = createSignal<Message | null>(null);
+    const [roomMenu, setRoomMenu] = createSignal<{
+        room: RoomRecord;
+        x: number;
+        y: number;
+    } | null>(null);
+    const [messageMenu, setMessageMenu] = createSignal<{
+        message: Message;
+        x: number;
+        y: number;
+    } | null>(null);
     let scrollArea: HTMLDivElement | undefined;
 
     const room = () => props.client.activeRoom();
@@ -38,6 +56,174 @@ export function Chat(props: {
         const key = shortKey(pub, 8);
         const count = props.client.members().length;
         return `${key} · ${count} ${count === 1 ? "member" : "members"}`;
+    }
+
+    function run(action: () => Promise<void>): void {
+        action().catch((error) => {
+            props.client.notify(
+                error instanceof Error ? error.message : String(error),
+                "error",
+            );
+        });
+    }
+
+    async function copyRoomKey(roomRecord: RoomRecord): Promise<void> {
+        try {
+            await copyText(roomRecord.pub);
+            props.client.notify("Room key copied.", "success");
+        } catch {
+            props.client.notify("Could not copy the room key.", "error");
+        }
+    }
+
+    async function copyMessage(message: Message): Promise<void> {
+        try {
+            await copyText(message.body);
+            props.client.notify("Message copied.", "success");
+        } catch {
+            props.client.notify("Could not copy the message.", "error");
+        }
+    }
+
+    async function leaveRoom(roomRecord: RoomRecord): Promise<void> {
+        if (
+            !window.confirm(
+                "Leave this room? It is removed from this browser; copies on relays are kept.",
+            )
+        ) {
+            return;
+        }
+        await props.client.leaveRoom(roomRecord.pub);
+    }
+
+    async function removeRoom(roomRecord: RoomRecord): Promise<void> {
+        if (
+            !window.confirm(
+                "Remove this room from this browser? Relay copies are kept.",
+            )
+        ) {
+            return;
+        }
+        await props.client.removeRoom(roomRecord.pub);
+    }
+
+    function roomEntries(roomRecord: RoomRecord): DropdownEntry[] {
+        return [
+            {
+                label: "Rename room",
+                icon: <EditIcon />,
+                disabled: !roomRecord.roomIdentity,
+                onSelect: () => props.onRenameRoom(roomRecord),
+            },
+            {
+                label: "Sync now",
+                icon: <SyncIcon />,
+                onSelect: () =>
+                    run(() => props.client.syncRoom(roomRecord.pub)),
+            },
+            {
+                label: "Share invite",
+                icon: <ShareIcon />,
+                onSelect: props.onInvite,
+            },
+            {
+                label: "Export messages",
+                icon: <ExportIcon />,
+                onSelect: () =>
+                    run(() =>
+                        props.client.exportRoomMessages(roomRecord.pub),
+                    ),
+            },
+            {
+                label: "Copy room key",
+                icon: <CopyIcon />,
+                onSelect: () => void copyRoomKey(roomRecord),
+            },
+            { separator: true },
+            {
+                label: "Leave room",
+                icon: <LogoutIcon />,
+                warn: true,
+                onSelect: () => run(() => leaveRoom(roomRecord)),
+            },
+            {
+                label: "Remove from this device",
+                icon: <TrashIcon />,
+                danger: true,
+                onSelect: () => run(() => removeRoom(roomRecord)),
+            },
+        ];
+    }
+
+    function messageEntries(message: Message): DropdownEntry[] {
+        const entries: DropdownEntry[] = [
+            {
+                label: "Copy message text",
+                icon: <CopyIcon />,
+                onSelect: () => void copyMessage(message),
+            },
+            {
+                label: "Flag as spam",
+                icon: <FlagIcon />,
+                warn: true,
+                onSelect: () =>
+                    run(() => props.client.flagMessage(message.eid)),
+            },
+            {
+                label: "Block author",
+                icon: <BlockIcon />,
+                danger: true,
+                onSelect: () =>
+                    run(() => props.client.blockAuthor(message.author)),
+            },
+            {
+                label: "Attest +",
+                icon: <CheckIcon />,
+                success: true,
+                onSelect: () =>
+                    run(() =>
+                        props.client.attestAuthor(
+                            message.author,
+                            "positive",
+                        ),
+                    ),
+            },
+            {
+                label: "Attest −",
+                icon: <CloseIcon />,
+                danger: true,
+                onSelect: () =>
+                    run(() =>
+                        props.client.attestAuthor(
+                            message.author,
+                            "negative",
+                        ),
+                    ),
+            },
+        ];
+        if (message.mine) {
+            entries.push(
+                { separator: true },
+                {
+                    label: "Delete message",
+                    icon: <TrashIcon />,
+                    danger: true,
+                    onSelect: () => {
+                        if (
+                            !window.confirm(
+                                "Delete this message for everyone?",
+                            )
+                        ) {
+                            return;
+                        }
+                        run(() =>
+                            props.client.deleteMessage(message.eid),
+                        );
+                    },
+                },
+            );
+        }
+        return entries;
     }
 
     createEffect(() => {
@@ -58,7 +244,7 @@ export function Chat(props: {
             await props.client.sendMessage(body);
             setDraft("");
         } catch {
-            // The client raises a toast for relay failures.
+            // The client reports relay failures through the status bar.
         } finally {
             setSending(false);
         }
@@ -138,7 +324,15 @@ export function Chat(props: {
                                 class="icon-button"
                                 aria-label="Room actions"
                                 title="Room actions"
-                                onClick={props.onRoomMenu}
+                                onClick={(event) => {
+                                    const position = menuPosition(
+                                        event.currentTarget,
+                                    );
+                                    setRoomMenu({
+                                        room: current(),
+                                        ...position,
+                                    });
+                                }}
                             >
                                 <MoreIcon />
                             </button>
@@ -268,11 +462,20 @@ export function Chat(props: {
                                                                 type="button"
                                                                 class="icon-button subtle message-more"
                                                                 aria-label="Message actions"
-                                                                onClick={() =>
-                                                                    setSelectedMessage(
-                                                                        message,
-                                                                    )
-                                                                }
+                                                                onClick={(
+                                                                    event,
+                                                                ) => {
+                                                                    const position =
+                                                                        menuPosition(
+                                                                            event.currentTarget,
+                                                                        );
+                                                                    setMessageMenu(
+                                                                        {
+                                                                            message,
+                                                                            ...position,
+                                                                        },
+                                                                    );
+                                                                }}
                                                             >
                                                                 <MoreIcon
                                                                     size={14}
@@ -329,16 +532,28 @@ export function Chat(props: {
                                 <SendIcon size={19} />
                             </button>
                         </form>
-                        <Show when={selectedMessage()}>
-                            {(message) => (
-                                <MessageActionsModal
-                                    client={props.client}
-                                    message={message()}
-                                    onClose={() => setSelectedMessage(null)}
-                                />
-                            )}
-                        </Show>
                     </>
+                )}
+            </Show>
+
+            <Show when={roomMenu()}>
+                {(state) => (
+                    <DropdownMenu
+                        x={state().x}
+                        y={state().y}
+                        entries={roomEntries(state().room)}
+                        onClose={() => setRoomMenu(null)}
+                    />
+                )}
+            </Show>
+            <Show when={messageMenu()}>
+                {(state) => (
+                    <DropdownMenu
+                        x={state().x}
+                        y={state().y}
+                        entries={messageEntries(state().message)}
+                        onClose={() => setMessageMenu(null)}
+                    />
                 )}
             </Show>
         </section>

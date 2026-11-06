@@ -2,7 +2,7 @@ import { Theme } from "theme.slint";
 import { BlockedRow, MessageRow, RelayRow, RoomRow } from "models.slint";
 import { RoomsPane } from "rooms.slint";
 import { ChatPane } from "chat.slint";
-import { AddRoomSheet, ExportSheet, ImportSheet, MessageActionsSheet, RoomActionsSheet, SettingsSheet } from "sheets.slint";
+import { AddRoomSheet, ExportSheet, ImportSheet, RenameSheet, SettingsSheet } from "sheets.slint";
 
 export component AppWindow inherits Window {
     title: "Toloo";
@@ -63,11 +63,6 @@ export component AppWindow inherits Window {
     in-out property <string> selected-room-id: "";
     in-out property <string> selected-room-name: "";
     in-out property <bool> selected-room-has-key: false;
-    in-out property <string> selected-message-eid: "";
-    in-out property <string> selected-message-author: "";
-    in-out property <string> selected-message-author-id: "";
-    in-out property <string> selected-message-body: "";
-    in-out property <bool> selected-message-mine: false;
 
     callback create-identity();
     callback restore-identity(string, string);
@@ -83,6 +78,7 @@ export component AppWindow inherits Window {
     callback select-room(string);
     callback search-changed(string);
     callback sync-now();
+    callback sync-room(string);
     callback send-message(string);
     callback import-discovery(string);
     callback export-invite(string);
@@ -108,12 +104,18 @@ export component AppWindow inherits Window {
     private property <length> inset-top: root.safe-area-insets.top;
     private property <length> inset-right: root.safe-area-insets.right;
     private property <length> inset-bottom: root.safe-area-insets.bottom;
+    private property <length> keyboard-height: root.virtual-keyboard-size.height > 0px
+        ? root.virtual-keyboard-size.height : 0px;
+    private property <length> bottom-inset: root.keyboard-height > root.inset-bottom
+        ? root.keyboard-height : root.inset-bottom;
+    private property <length> content-height: root.height - root.inset-top
+        - root.bottom-inset;
 
     if root.phone && root.page == 0 : RoomsPane {
         x: root.inset-left;
         y: root.inset-top;
         width: root.width - root.inset-left - root.inset-right;
-        height: root.height - root.inset-top - root.inset-bottom;
+        height: root.content-height;
         rooms: root.rooms;
         identity-label: root.identity-label;
         identity-initial: root.identity-initial;
@@ -128,12 +130,23 @@ export component AppWindow inherits Window {
             root.select-room(id);
             root.page = 1;
         }
-        room-menu(id, name, has-key) => {
+        sync-room(id) => { root.sync-room(id); }
+        share-room(id) => {
+            root.export-invite(id);
+            root.sheet = 4;
+        }
+        export-room(id) => {
+            root.export-messages(id);
+            root.sheet = 4;
+        }
+        rename-room(id, name) => {
             root.selected-room-id = id;
             root.selected-room-name = name;
-            root.selected-room-has-key = has-key;
             root.sheet = 6;
         }
+        copy-text(value) => { root.copy-text(value); }
+        leave-room(id) => { root.leave-room(id); }
+        remove-room(id) => { root.remove-room(id); }
         search-changed(query) => { root.search-changed(query); }
         add-room => { root.sheet = 1; }
         import-room => { root.sheet = 2; }
@@ -145,11 +158,13 @@ export component AppWindow inherits Window {
         x: root.inset-left;
         y: root.inset-top;
         width: root.width - root.inset-left - root.inset-right;
-        height: root.height - root.inset-top - root.inset-bottom;
+        height: root.content-height;
         messages: root.messages;
         room-name: root.active-room;
         room-id: root.room-key;
+        room-id-full: root.active-room-id;
         room-initial: root.room-initial;
+        room-has-key: root.room-has-key;
         room-avatar-path: root.room-avatar-path;
         room-avatar-palette: root.room-avatar-palette;
         members-label: root.members-label;
@@ -168,29 +183,31 @@ export component AppWindow inherits Window {
             root.export-messages(root.active-room-id);
             root.sheet = 4;
         }
-        room-menu => {
-            root.selected-room-id = root.active-room-id;
-            root.selected-room-name = root.active-room;
-            root.selected-room-has-key = root.room-has-key;
-            root.sheet = 6;
-        }
-        message-menu(eid, author, author-id, body, mine) => {
-            root.selected-message-eid = eid;
-            root.selected-message-author = author;
-            root.selected-message-author-id = author-id;
-            root.selected-message-body = body;
-            root.selected-message-mine = mine;
-            root.sheet = 7;
-        }
         open-settings => { root.sheet = 3; }
         send-message(body) => { root.send-message(body); }
+        copy-text(value) => { root.copy-text(value); }
+        flag-message(room, target, category) => {
+            root.flag-message(room, target, category);
+        }
+        block-node(node, kind, reason) => { root.block-node(node, kind, reason); }
+        attest-node(target, level) => { root.attest-node(target, level); }
+        delete-message(room, target) => {
+            root.delete-message(room, target);
+        }
+        rename-room(id, name) => {
+            root.selected-room-id = id;
+            root.selected-room-name = name;
+            root.sheet = 6;
+        }
+        leave-room(id) => { root.leave-room(id); }
+        remove-room(id) => { root.remove-room(id); }
     }
 
     if !root.phone : HorizontalLayout {
         x: root.inset-left;
         y: root.inset-top;
         width: root.width - root.inset-left - root.inset-right;
-        height: root.height - root.inset-top - root.inset-bottom;
+        height: root.content-height;
         spacing: 0px;
         RoomsPane {
             width: root.tablet ? Theme.rail-width : Theme.sidebar-width;
@@ -206,12 +223,23 @@ export component AppWindow inherits Window {
             rtl: root.rtl;
             search <=> root.search;
             select-room(id) => { root.select-room(id); }
-            room-menu(id, name, has-key) => {
+            sync-room(id) => { root.sync-room(id); }
+            share-room(id) => {
+                root.export-invite(id);
+                root.sheet = 4;
+            }
+            export-room(id) => {
+                root.export-messages(id);
+                root.sheet = 4;
+            }
+            rename-room(id, name) => {
                 root.selected-room-id = id;
                 root.selected-room-name = name;
-                root.selected-room-has-key = has-key;
                 root.sheet = 6;
             }
+            copy-text(value) => { root.copy-text(value); }
+            leave-room(id) => { root.leave-room(id); }
+            remove-room(id) => { root.remove-room(id); }
             search-changed(query) => { root.search-changed(query); }
             add-room => { root.sheet = 1; }
             import-room => { root.sheet = 2; }
@@ -225,7 +253,9 @@ export component AppWindow inherits Window {
             messages: root.messages;
             room-name: root.active-room;
             room-id: root.room-key;
+            room-id-full: root.active-room-id;
             room-initial: root.room-initial;
+            room-has-key: root.room-has-key;
             room-avatar-path: root.room-avatar-path;
             room-avatar-palette: root.room-avatar-palette;
             members-label: root.members-label;
@@ -244,22 +274,24 @@ export component AppWindow inherits Window {
                 root.export-messages(root.active-room-id);
                 root.sheet = 4;
             }
-            room-menu => {
-                root.selected-room-id = root.active-room-id;
-                root.selected-room-name = root.active-room;
-                root.selected-room-has-key = root.room-has-key;
-                root.sheet = 6;
-            }
-            message-menu(eid, author, author-id, body, mine) => {
-                root.selected-message-eid = eid;
-                root.selected-message-author = author;
-                root.selected-message-author-id = author-id;
-                root.selected-message-body = body;
-                root.selected-message-mine = mine;
-                root.sheet = 7;
-            }
             open-settings => { root.sheet = 3; }
             send-message(body) => { root.send-message(body); }
+            copy-text(value) => { root.copy-text(value); }
+            flag-message(room, target, category) => {
+                root.flag-message(room, target, category);
+            }
+            block-node(node, kind, reason) => { root.block-node(node, kind, reason); }
+            attest-node(target, level) => { root.attest-node(target, level); }
+            delete-message(room, target) => {
+                root.delete-message(room, target);
+            }
+            rename-room(id, name) => {
+                root.selected-room-id = id;
+                root.selected-room-name = name;
+                root.sheet = 6;
+            }
+            leave-room(id) => { root.leave-room(id); }
+            remove-room(id) => { root.remove-room(id); }
         }
     }
 
@@ -277,13 +309,13 @@ export component AppWindow inherits Window {
                 ? root.width - root.inset-left - root.inset-right
                 : Theme.settings-width;
             height: root.phone
-                ? (root.height - root.inset-top - root.inset-bottom) * 0.74
+                ? root.content-height * 0.74
                 : 620px;
             x: root.phone
                 ? root.inset-left
                 : root.inset-left + (root.width - root.inset-left - root.inset-right - self.width) / 2;
             y: root.phone
-                ? root.height - root.inset-bottom - self.height
+                ? root.height - root.bottom-inset - self.height
                 : root.inset-top + (root.height - root.inset-top - root.inset-bottom - self.height) / 2;
             border-radius: root.phone ? 16px : Theme.radius;
             background: Theme.surface;
@@ -368,62 +400,13 @@ export component AppWindow inherits Window {
                 share(value) => { root.share-text(value); }
             }
 
-            if root.sheet == 6 : RoomActionsSheet {
+            if root.sheet == 6 : RenameSheet {
                 room-name: root.selected-room-name;
-                room-key: root.selected-room-id;
-                has-key: root.selected-room-has-key;
                 rename-name <=> root.rename-input;
                 close => { root.sheet = 0; }
                 rename(name) => {
                     root.rename-room(root.selected-room-id, name);
                     root.rename-input = "";
-                    root.sheet = 0;
-                }
-                sync => {
-                    root.sync-now();
-                    root.sheet = 0;
-                }
-                share => {
-                    root.export-invite(root.selected-room-id);
-                    root.sheet = 4;
-                }
-                export => {
-                    root.export-messages(root.selected-room-id);
-                    root.sheet = 4;
-                }
-                copy(value) => { root.copy-text(value); }
-                leave => {
-                    root.leave-room(root.selected-room-id);
-                    root.sheet = 0;
-                }
-                remove => {
-                    root.remove-room(root.selected-room-id);
-                    root.sheet = 0;
-                }
-            }
-
-            if root.sheet == 7 : MessageActionsSheet {
-                author: root.selected-message-author;
-                author-id: root.selected-message-author-id;
-                body: root.selected-message-body;
-                eid: root.selected-message-eid;
-                mine: root.selected-message-mine;
-                close => { root.sheet = 0; }
-                copy(value) => { root.copy-text(value); }
-                flag(category) => {
-                    root.flag-message(root.active-room-id, root.selected-message-eid, category);
-                    root.sheet = 0;
-                }
-                block(author) => {
-                    root.block-node(author, "block", "");
-                    root.sheet = 0;
-                }
-                attest(author, level) => {
-                    root.attest-node(author, level);
-                    root.sheet = 0;
-                }
-                delete => {
-                    root.delete-message(root.active-room-id, root.selected-message-eid);
                     root.sheet = 0;
                 }
             }

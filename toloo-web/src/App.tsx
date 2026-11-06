@@ -12,10 +12,11 @@ import {
     AddRoomModal,
     ImportModal,
     InviteModal,
-    RoomActionsModal,
+    RenameModal,
     SettingsModal,
 } from "./components/Modals";
 import { Sidebar } from "./components/Sidebar";
+import { LogoIcon } from "./components/Icons";
 
 export default function App(): JSX.Element {
     const client = createTolooClient();
@@ -26,9 +27,7 @@ export default function App(): JSX.Element {
     const [settingsOpen, setSettingsOpen] = createSignal(false);
     const [addRoomOpen, setAddRoomOpen] = createSignal(false);
     const [importOpen, setImportOpen] = createSignal(false);
-    const [roomMenuRoom, setRoomMenuRoom] = createSignal<RoomRecord | null>(
-        null,
-    );
+    const [renameRoom, setRenameRoom] = createSignal<RoomRecord | null>(null);
     const [inviteRoom, setInviteRoom] = createSignal<RoomRecord | null>(null);
 
     onMount(() => {
@@ -70,9 +69,7 @@ export default function App(): JSX.Element {
                         when={bootError()}
                         fallback={
                             <>
-                                <div class="boot-mark" aria-hidden="true">
-                                    T
-                                </div>
+                                <LogoIcon size={48} class="boot-logo" />
                                 <p>Opening the wasm core…</p>
                             </>
                         }
@@ -93,7 +90,8 @@ export default function App(): JSX.Element {
                     onAddRoom={openAddRoom}
                     onImportRoom={() => setImportOpen(true)}
                     onSettings={() => setSettingsOpen(true)}
-                    onRoomMenu={(room) => setRoomMenuRoom(room)}
+                    onRenameRoom={(room) => setRenameRoom(room)}
+                    onShareRoom={(room) => setInviteRoom(room)}
                     onOpenChat={() => setMobilePage("chat")}
                 />
                 <Chat
@@ -103,10 +101,7 @@ export default function App(): JSX.Element {
                         const room = client.activeRoom();
                         if (room) setInviteRoom(room);
                     }}
-                    onRoomMenu={() => {
-                        const room = client.activeRoom();
-                        if (room) setRoomMenuRoom(room);
-                    }}
+                    onRenameRoom={(room) => setRenameRoom(room)}
                     onSettings={() => setSettingsOpen(true)}
                 />
             </div>
@@ -130,12 +125,12 @@ export default function App(): JSX.Element {
                     onClose={() => setImportOpen(false)}
                 />
             </Show>
-            <Show when={roomMenuRoom()}>
+            <Show when={renameRoom()}>
                 {(room) => (
-                    <RoomActionsModal
+                    <RenameModal
                         client={client}
                         room={room()}
-                        onClose={() => setRoomMenuRoom(null)}
+                        onClose={() => setRenameRoom(null)}
                     />
                 )}
             </Show>

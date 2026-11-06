@@ -81,16 +81,8 @@ p {
     color: var(--text-soft);
 }
 
-.boot-mark {
-    width: 58px;
-    height: 58px;
-    display: grid;
-    place-items: center;
-    border-radius: 16px;
-    background: var(--accent);
-    color: var(--accent-ink);
-    font-weight: 800;
-    font-size: 27px;
+.boot-logo {
+    color: var(--accent);
 }
 
 .boot-screen h1 {
@@ -283,9 +275,7 @@ textarea:focus {
     display: grid;
     place-items: center;
     flex: 0 0 auto;
-    border-radius: 50%;
-    background: var(--panel-2);
-    overflow: hidden;
+    background: transparent;
 }
 
 .pk-avatar svg {
@@ -587,6 +577,11 @@ textarea:focus {
     border: 0;
     border-radius: 50%;
     background: transparent;
+}
+
+.sidebar-logo {
+    flex: 0 0 auto;
+    color: var(--accent);
 }
 
 .sidebar-brand {
@@ -1001,6 +996,77 @@ textarea:focus {
 .send-button:disabled {
     background: var(--panel-2);
     color: var(--muted);
+}
+
+/* ── Dropdown menus ───────────────────────────────────────────────────── */
+
+.dropdown {
+    position: fixed;
+    z-index: 90;
+    width: 224px;
+    padding: 4px;
+    display: grid;
+    gap: 2px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--panel);
+    box-shadow: 0 12px 40px rgb(0 0 0 / 45%);
+}
+
+.dropdown-item {
+    width: 100%;
+    min-height: 40px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font-size: var(--font-ui);
+    text-align: left;
+}
+
+.dropdown-item:hover:not(:disabled),
+.dropdown-item:focus-visible {
+    background: var(--panel-2);
+}
+
+.dropdown-item:disabled {
+    color: var(--muted);
+    opacity: 0.55;
+}
+
+.dropdown-item svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+}
+
+.dropdown-item span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dropdown-item.danger {
+    color: var(--danger);
+}
+
+.dropdown-item.warn {
+    color: var(--warn);
+}
+
+.dropdown-item.success {
+    color: var(--success);
+}
+
+.dropdown-separator {
+    height: 1px;
+    margin: 2px 4px;
+    background: var(--line);
 }
 
 /* ── Modal ────────────────────────────────────────────────────────────── */

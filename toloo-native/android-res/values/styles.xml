@@ -7,7 +7,7 @@
         <item name="android:statusBarColor">@color/toloo_background</item>
         <item name="android:navigationBarColor">@color/toloo_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:colorAccent">#f5a623</item>
+        <item name="android:colorAccent">#f05228</item>
     </style>
 
     <style name="Theme.Toloo.Starting" parent="Theme.SplashScreen">

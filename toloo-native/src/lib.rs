@@ -353,16 +353,6 @@ fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
         .collect();
     ui.set_rooms(ModelRc::new(VecModel::from(rooms)));
 
-    if ui.get_sheet() == 7 && ui.get_selected_message_eid().is_empty() {
-        if let Some(message) = snapshot.messages.last() {
-            ui.set_selected_message_eid(message.eid.clone().into());
-            ui.set_selected_message_author(message.author.clone().into());
-            ui.set_selected_message_author_id(message.author_id.clone().into());
-            ui.set_selected_message_body(message.body.clone().into());
-            ui.set_selected_message_mine(message.mine);
-        }
-    }
-
     let messages: Vec<MessageRow> = snapshot
         .messages
         .into_iter()
@@ -443,6 +433,10 @@ fn run_ui(
     let tx = command_tx.clone();
     ui.on_sync_now(move || {
         let _ = tx.send(engine::Command::Sync);
+    });
+    let tx = command_tx.clone();
+    ui.on_sync_room(move |room_id| {
+        let _ = tx.send(engine::Command::SyncRoom(room_id.to_string()));
     });
     let tx = command_tx.clone();
     ui.on_send_message(move |body| {

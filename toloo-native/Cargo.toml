@@ -1,6 +1,6 @@
 [package]
 name = "toloo-native"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Toloo native client — Slint UI over the native Rust engine"
 publish = false

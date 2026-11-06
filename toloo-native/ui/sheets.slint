@@ -421,194 +421,62 @@ export component SettingsSheet inherits Rectangle {
     }
 }
 
-export component RoomActionsSheet inherits Rectangle {
+export component RenameSheet inherits Rectangle {
     width: 100%;
     height: 100%;
     in property <string> room-name;
-    in property <string> room-key;
-    in property <bool> has-key;
     in-out property <string> rename-name: "";
     callback close();
     callback rename(string);
-    callback sync();
-    callback share();
-    callback export();
-    callback copy(string);
-    callback leave();
-    callback remove();
 
     background: transparent;
 
     VerticalLayout {
         padding: 16px;
         spacing: 10px;
+
         HorizontalLayout {
             spacing: 8px;
             cross-axis-alignment: center;
             Text {
-                text: root.room-name;
+                text: "Rename room";
                 color: Theme.text;
                 font-size: Theme.font-title;
                 font-weight: 700;
                 horizontal-stretch: 1;
-                overflow: elide;
             }
             IconButton {
                 icon: @image-url("../../design/icons/close.svg");
                 clicked => { root.close(); }
             }
         }
+        Divider {}
         Text {
-            text: root.room-key;
+            text: root.room-name;
             color: Theme.muted;
-            font-size: Theme.font-xs;
-            font-family: "monospace";
+            font-size: Theme.font-sm;
             overflow: elide;
         }
-        Divider {}
-        FieldLabel { text: "ROOM ACTIONS"; }
-        SecondaryButton {
-            text: "Sync now";
-            clicked => { root.sync(); }
-        }
-        PrimaryButton {
-            text: "Share invite link";
-            clicked => { root.share(); }
-        }
-        SecondaryButton {
-            text: "Export messages";
-            clicked => { root.export(); }
-        }
-        SecondaryButton {
-            text: "Copy room key";
-            clicked => { root.copy(root.room-key); }
-        }
-        if root.has-key : HorizontalLayout {
-            spacing: 8px;
-            TextField {
-                text <=> root.rename-name;
-                placeholder: "New room name";
+        TextField {
+            text <=> root.rename-name;
+            placeholder: "New room name";
+            accepted => {
+                if (root.rename-name != "") {
+                    root.rename(root.rename-name);
+                }
             }
-            SecondaryButton {
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            PrimaryButton {
                 text: "Rename";
                 enabled: root.rename-name != "";
                 clicked => { root.rename(root.rename-name); }
             }
-        }
-        if !root.has-key : Text {
-            text: "You joined this room, so only its owner can rename it.";
-            color: Theme.muted;
-            font-size: Theme.font-xs;
-            wrap: word-wrap;
-        }
-        Divider {}
-        SecondaryButton {
-            text: "Leave room";
-            tint: Theme.warn;
-            clicked => { root.leave(); }
-        }
-        SecondaryButton {
-            text: "Remove from this device";
-            tint: Theme.danger;
-            clicked => { root.remove(); }
-        }
-        Rectangle { vertical-stretch: 1; }
-    }
-}
-
-export component MessageActionsSheet inherits Rectangle {
-    width: 100%;
-    height: 100%;
-    in property <string> author;
-    in property <string> author-id;
-    in property <string> body;
-    in property <string> eid;
-    in property <bool> mine;
-    callback close();
-    callback copy(string);
-    callback flag(string);
-    callback block(string);
-    callback attest(string, string);
-    callback delete();
-
-    background: transparent;
-
-    VerticalLayout {
-        padding: 16px;
-        spacing: 10px;
-        HorizontalLayout {
-            spacing: 8px;
-            cross-axis-alignment: center;
-            Text {
-                text: "Message";
-                color: Theme.text;
-                font-size: Theme.font-title;
-                font-weight: 700;
-                horizontal-stretch: 1;
-            }
-            IconButton {
-                icon: @image-url("../../design/icons/close.svg");
+            SecondaryButton {
+                text: "Cancel";
                 clicked => { root.close(); }
             }
-        }
-        Text {
-            text: root.author + " · " + root.eid;
-            color: Theme.muted;
-            font-size: Theme.font-xs;
-            font-family: "monospace";
-            overflow: elide;
-        }
-        Rectangle {
-            height: 110px;
-            border-radius: Theme.radius-sm;
-            background: Theme.bg;
-            clip: true;
-            TextInput {
-                x: 10px;
-                y: 8px;
-                width: parent.width - 20px;
-                height: parent.height - 16px;
-                text: root.body;
-                read-only: true;
-                color: Theme.text;
-                font-size: Theme.font-sm;
-                wrap: word-wrap;
-                selection-background-color: Theme.accent;
-            }
-        }
-        SecondaryButton {
-            text: "Copy message text";
-            clicked => { root.copy(root.body); }
-        }
-        Divider {}
-        FieldLabel { text: "MODERATION"; }
-        SecondaryButton {
-            text: "Flag as spam";
-            tint: Theme.warn;
-            clicked => { root.flag("spam"); }
-        }
-        SecondaryButton {
-            text: "Block author";
-            tint: Theme.danger;
-            clicked => { root.block(root.author-id); }
-        }
-        HorizontalLayout {
-            spacing: 8px;
-            SecondaryButton {
-                text: "Attest +";
-                tint: Theme.success;
-                clicked => { root.attest(root.author-id, "positive"); }
-            }
-            SecondaryButton {
-                text: "Attest −";
-                tint: Theme.danger;
-                clicked => { root.attest(root.author-id, "negative"); }
-            }
-        }
-        if root.mine : SecondaryButton {
-            text: "Delete message";
-            tint: Theme.danger;
-            clicked => { root.delete(); }
         }
         Rectangle { vertical-stretch: 1; }
     }

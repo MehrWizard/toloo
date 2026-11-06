@@ -5,7 +5,7 @@ import {
     type JSX,
 } from "solid-js";
 import type { RoomRecord } from "../lib/db";
-import type { Message, TolooClient } from "../lib/client";
+import type { TolooClient } from "../lib/client";
 import { defaultEndpointScheme } from "../lib/transport";
 import { decryptIdentity, encryptIdentity } from "../lib/identity";
 import { copyText, downloadText, shortKey } from "../lib/ui";
@@ -583,7 +583,7 @@ export function ImportModal(props: {
     );
 }
 
-export function RoomActionsModal(props: {
+export function RenameModal(props: {
     client: TolooClient;
     room: RoomRecord;
     onClose: () => void;
@@ -592,208 +592,12 @@ export function RoomActionsModal(props: {
     const [error, setError] = createSignal("");
     const [busy, setBusy] = createSignal(false);
 
-    const invite = () => {
-        if (props.room.inviteUri) return props.room.inviteUri;
-        if (!props.room.roomCreate) return "";
-        try {
-            return protocol.encodeInvite([
-                JSON.parse(props.room.roomCreate) as protocol.Envelope,
-            ]);
-        } catch {
-            return "";
-        }
-    };
-
-    async function run(
-        action: () => Promise<void>,
-        close = false,
-    ): Promise<void> {
+    async function rename(event: SubmitEvent): Promise<void> {
+        event.preventDefault();
         setError("");
         setBusy(true);
         try {
-            await action();
-            if (close) props.onClose();
-        } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function shareInvite(): Promise<void> {
-        const text = invite() || props.room.pub;
-        if (navigator.share) {
-            try {
-                await navigator.share({ text });
-                return;
-            } catch {
-                // Fall back to the clipboard when the share sheet is closed.
-            }
-        }
-        try {
-            await copyText(text);
-            props.client.notify("Invite copied.", "success");
-        } catch {
-            props.client.notify("Could not copy the invite.", "error");
-        }
-    }
-
-    async function copyRoomKey(): Promise<void> {
-        try {
-            await copyText(props.room.pub);
-            props.client.notify("Room key copied.", "success");
-        } catch {
-            props.client.notify("Could not copy the room key.", "error");
-        }
-    }
-
-    async function leave(): Promise<void> {
-        if (
-            !window.confirm(
-                "Leave this room? It is removed from this browser; copies on relays are kept.",
-            )
-        ) {
-            return;
-        }
-        await run(() => props.client.leaveRoom(props.room.pub), true);
-    }
-
-    async function remove(): Promise<void> {
-        if (
-            !window.confirm(
-                "Remove this room from this browser? Relay copies are kept.",
-            )
-        ) {
-            return;
-        }
-        await run(async () => {
-            await props.client.removeRoom(props.room.pub);
-        }, true);
-    }
-
-    return (
-        <Modal title={props.room.name} onClose={props.onClose}>
-            <p class="room-key-line">{props.room.pub}</p>
-            <div class="divider" />
-            <div class="field-label">ROOM ACTIONS</div>
-
-            <button
-                type="button"
-                class="ghost-button wide"
-                disabled={busy()}
-                onClick={() => void run(() => props.client.syncRoom(props.room.pub))}
-            >
-                Sync now
-            </button>
-            <button
-                type="button"
-                class="primary-button wide"
-                disabled={busy()}
-                onClick={() => void shareInvite()}
-            >
-                Share invite link
-            </button>
-            <button
-                type="button"
-                class="ghost-button wide"
-                disabled={busy()}
-                onClick={() =>
-                    void run(() =>
-                        props.client.exportRoomMessages(props.room.pub),
-                    )
-                }
-            >
-                Export messages
-            </button>
-            <button
-                type="button"
-                class="ghost-button wide"
-                disabled={busy()}
-                onClick={() => void copyRoomKey()}
-            >
-                Copy room key
-            </button>
-
-            <Show
-                when={props.room.roomIdentity}
-                fallback={
-                    <p class="help">
-                        You joined this room, so only its owner can rename it.
-                    </p>
-                }
-            >
-                <form
-                    class="inline-form"
-                    onSubmit={(event) => {
-                        event.preventDefault();
-                        void run(async () => {
-                            await props.client.renameRoom(
-                                name(),
-                                props.room.pub,
-                            );
-                        }, true);
-                    }}
-                >
-                    <input
-                        type="text"
-                        placeholder="New room name"
-                        value={name()}
-                        onInput={(event) => setName(event.currentTarget.value)}
-                    />
-                    <button
-                        class="ghost-button"
-                        type="submit"
-                        disabled={
-                            busy() ||
-                            !name().trim() ||
-                            name().trim() === props.room.name
-                        }
-                    >
-                        Rename
-                    </button>
-                </form>
-            </Show>
-
-            <Show when={error()}>
-                <p class="form-error" role="alert">
-                    {error()}
-                </p>
-            </Show>
-
-            <div class="divider" />
-            <button
-                type="button"
-                class="ghost-button wide tint-warn"
-                disabled={busy()}
-                onClick={() => void leave()}
-            >
-                Leave room
-            </button>
-            <button
-                type="button"
-                class="ghost-button wide tint-danger"
-                disabled={busy()}
-                onClick={() => void remove()}
-            >
-                Remove from this device
-            </button>
-        </Modal>
-    );
-}
-
-export function MessageActionsModal(props: {
-    client: TolooClient;
-    message: Message;
-    onClose: () => void;
-}): JSX.Element {
-    const [error, setError] = createSignal("");
-    const [busy, setBusy] = createSignal(false);
-
-    async function run(action: () => Promise<void>): Promise<void> {
-        setError("");
-        setBusy(true);
-        try {
-            await action();
+            await props.client.renameRoom(name(), props.room.pub);
             props.onClose();
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : String(cause));
@@ -802,105 +606,33 @@ export function MessageActionsModal(props: {
         }
     }
 
-    async function copyMessage(): Promise<void> {
-        try {
-            await copyText(props.message.body);
-            props.client.notify("Message copied.", "success");
-        } catch {
-            props.client.notify("Could not copy the message.", "error");
-        }
-    }
-
     return (
-        <Modal
-            title="Message"
-            subtitle={`${shortKey(props.message.author, 8)} · ${props.message.eid}`}
-            onClose={props.onClose}
-        >
-            <div class="message-quote">{props.message.body}</div>
-
-            <button
-                type="button"
-                class="ghost-button wide"
-                onClick={() => void copyMessage()}
-            >
-                Copy message text
-            </button>
-
-            <div class="divider" />
-            <div class="field-label">MODERATION</div>
-            <button
-                type="button"
-                class="ghost-button wide tint-warn"
-                disabled={busy()}
-                onClick={() =>
-                    void run(() => props.client.flagMessage(props.message.eid))
-                }
-            >
-                Flag as spam
-            </button>
-            <button
-                type="button"
-                class="ghost-button wide tint-danger"
-                disabled={busy()}
-                onClick={() =>
-                    void run(() =>
-                        props.client.blockAuthor(props.message.author),
-                    )
-                }
-            >
-                Block author
-            </button>
-            <div class="button-row">
-                <button
-                    type="button"
-                    class="ghost-button tint-success"
-                    disabled={busy()}
-                    onClick={() =>
-                        void run(() =>
-                            props.client.attestAuthor(
-                                props.message.author,
-                                "positive",
-                            ),
-                        )
-                    }
-                >
-                    Attest +
-                </button>
-                <button
-                    type="button"
-                    class="ghost-button tint-danger"
-                    disabled={busy()}
-                    onClick={() =>
-                        void run(() =>
-                            props.client.attestAuthor(
-                                props.message.author,
-                                "negative",
-                            ),
-                        )
-                    }
-                >
-                    Attest −
-                </button>
-            </div>
-            <Show when={props.message.mine}>
-                <button
-                    type="button"
-                    class="ghost-button wide tint-danger"
-                    disabled={busy()}
-                    onClick={() => {
-                        if (!window.confirm("Delete this message for everyone?")) {
-                            return;
-                        }
-                        void run(() =>
-                            props.client.deleteMessage(props.message.eid),
-                        );
-                    }}
-                >
-                    Delete message
-                </button>
-            </Show>
-
+        <Modal title="Rename room" onClose={props.onClose}>
+            <p class="help">{props.room.name}</p>
+            <form class="stack" onSubmit={(event) => void rename(event)}>
+                <input
+                    type="text"
+                    placeholder="New room name"
+                    value={name()}
+                    onInput={(event) => setName(event.currentTarget.value)}
+                />
+                <div class="button-row">
+                    <button
+                        class="primary-button"
+                        type="submit"
+                        disabled={busy() || !name().trim()}
+                    >
+                        Rename
+                    </button>
+                    <button
+                        class="ghost-button"
+                        type="button"
+                        onClick={props.onClose}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </form>
             <Show when={error()}>
                 <p class="form-error" role="alert">
                     {error()}

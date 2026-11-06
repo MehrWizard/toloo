@@ -21,7 +21,7 @@ if match is None:
 logo_inner = match.group(1)
 logo_inner = re.sub(r'\s+id="char-\d+"', '', logo_inner)
 logo_inner = re.sub(r'\s+data-char="[^"]*"', '', logo_inner)
-logo_inner = logo_inner.replace('fill="#f5a623"', 'fill="url(#logoBrand)"')
+logo_inner = logo_inner.replace('fill="#f5a623"', 'fill="url(#logoBrand)"').replace('stroke="#f5a623"', 'stroke="url(#logoBrand)"')
 logo_inner = '\n'.join(line.rstrip() for line in logo_inner.splitlines() if line.strip())
 logo_inner = logo_inner.replace('\n', '\n      ')
 

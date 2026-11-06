@@ -93,9 +93,8 @@ export component Avatar inherits Rectangle {
 
     width: avatar-size;
     height: avatar-size;
-    border-radius: avatar-size / 2;
-    background: Theme.surface-2;
-    clip: true;
+    background: transparent;
+    clip: false;
 
     Path {
         width: root.avatar-size * 0.72;
@@ -107,6 +106,48 @@ export component Avatar inherits Rectangle {
         commands: root.path;
         fill: Theme.avatar-palette[root.palette];
     }
+}
+
+export component DropdownItem inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <brush> tint: Theme.text;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 40px;
+    border-radius: Theme.radius-sm;
+    background: touch.pressed ? Theme.surface-2 : transparent;
+    opacity: root.enabled ? 1 : 0.45;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+        AppIcon {
+            source: root.icon;
+            icon-size: 16px;
+            tint: root.tint;
+        }
+        Text {
+            text: root.label;
+            color: root.tint;
+            font-size: Theme.font-ui;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component DropdownSeparator inherits Rectangle {
+    height: 1px;
+    background: Theme.border;
 }
 
 export component TextField inherits Rectangle {
