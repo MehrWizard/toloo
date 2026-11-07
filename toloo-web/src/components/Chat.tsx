@@ -11,7 +11,7 @@ import type { Message, TolooClient } from "../lib/client";
 import type { RoomRecord } from "../lib/db";
 import { copyText, formatDay, formatTime, sameDay, shortKey } from "../lib/ui";
 import { Avatar } from "./Avatar";
-import { DropdownMenu, EmojiPicker, menuPosition, type DropdownEntry } from "./Dropdown";
+import { DropdownMenu, menuPosition, type DropdownEntry } from "./Dropdown";
 import {
     ArrowLeftIcon,
     BlockIcon,
@@ -32,6 +32,21 @@ import {
     UserIcon,
 } from "./Icons";
 
+const EMOJIS = [
+    "😀", "😂", "😊", "😍", "🤔", "😎", "😢", "😡",
+    "👍", "👎", "🙏", "👏", "💪", "🤝", "👋", "❤️",
+    "🔥", "✨", "🎉", "💯", "🌙", "☀️", "🌱", "🍀",
+    "🍕", "☕", "🎵", "📎", "✅", "❌", "🔒", "🔗",
+    "😅", "🤣", "🙂", "🙃", "😉", "😇", "🥰", "😘",
+    "😋", "😜", "🤪", "🤗", "🤫", "🤭", "😴", "🤤",
+    "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁",
+    "😣", "😖", "😫", "😩", "🥺", "😭", "😤", "😠",
+    "🤬", "😱", "😨", "😰", "😥", "😓", "🤯", "😳",
+    "🥵", "🥶", "😵", "🤐", "🤢", "🤮", "🤧", "😷",
+    "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👻", "💀",
+    "🤖", "💩", "😺", "😸", "😹", "😻", "😼", "😽",
+];
+
 export function Chat(props: {
     client: TolooClient;
     onBack: () => void;
@@ -51,11 +66,10 @@ export function Chat(props: {
         x: number;
         y: number;
     } | null>(null);
-    const [emojiMenu, setEmojiMenu] = createSignal<{
-        x: number;
-        y: number;
-    } | null>(null);
+    const [emojiOpen, setEmojiOpen] = createSignal(false);
+    const [emojiHeight, setEmojiHeight] = createSignal(300);
     const [selected, setSelected] = createSignal<string[]>([]);
+    let composerInput: HTMLInputElement | undefined;
     let scrollArea: HTMLDivElement | undefined;
     let longPressTimer: number | undefined;
     let longPressFired = false;
@@ -376,11 +390,52 @@ export function Chat(props: {
         }
     }
 
+    function rememberKeyboardHeight(): void {
+        const viewport = window.visualViewport;
+        if (!viewport) return;
+        const keyboard = window.innerHeight - viewport.height;
+        if (keyboard > 140) {
+            setEmojiHeight(
+                Math.min(Math.round(keyboard), Math.round(window.innerHeight * 0.6)),
+            );
+        }
+    }
+
+    function closeEmoji(focusComposer = true): void {
+        if (!emojiOpen()) return;
+        setEmojiOpen(false);
+        if (focusComposer) composerInput?.focus();
+    }
+
+    function toggleEmoji(): void {
+        if (emojiOpen()) {
+            closeEmoji();
+            return;
+        }
+        rememberKeyboardHeight();
+        composerInput?.blur();
+        setEmojiOpen(true);
+    }
+
+    function onDocumentKeyDown(event: KeyboardEvent): void {
+        if (event.key === "Escape" && emojiOpen()) {
+            event.preventDefault();
+            closeEmoji();
+        }
+    }
+
     onMount(() => {
+        window.visualViewport?.addEventListener("resize", rememberKeyboardHeight);
+        document.addEventListener("keydown", onDocumentKeyDown);
         document.addEventListener("pointermove", onDocumentPointerMove, true);
         document.addEventListener("pointerup", onDocumentPointerUp, true);
         document.addEventListener("pointercancel", onDocumentPointerUp, true);
         onCleanup(() => {
+            window.visualViewport?.removeEventListener(
+                "resize",
+                rememberKeyboardHeight,
+            );
+            document.removeEventListener("keydown", onDocumentKeyDown);
             document.removeEventListener(
                 "pointermove",
                 onDocumentPointerMove,
@@ -403,6 +458,7 @@ export function Chat(props: {
     createEffect(() => {
         props.client.activePub();
         clearSelection();
+        setEmojiOpen(false);
     });
 
     createEffect(() => {
@@ -796,28 +852,27 @@ export function Chat(props: {
 
                         <form
                             class="composer"
+                            classList={{ "with-emoji": emojiOpen() }}
                             onSubmit={(event) => void send(event)}
                         >
                             <button
                                 type="button"
                                 class="icon-button composer-emoji"
+                                classList={{ active: emojiOpen() }}
                                 aria-label="Emoji"
+                                aria-expanded={emojiOpen()}
                                 title="Emoji"
-                                onClick={(event) => {
-                                    const rect = event.currentTarget.getBoundingClientRect();
-                                    setEmojiMenu({
-                                        x: rect.left,
-                                        y: rect.top - 190,
-                                    });
-                                }}
+                                onClick={toggleEmoji}
                             >
                                 <EmojiIcon />
                             </button>
                             <input
+                                ref={composerInput}
                                 type="text"
                                 placeholder="Message…"
                                 aria-label="Message"
                                 value={draft()}
+                                onFocus={() => setEmojiOpen(false)}
                                 onInput={(event) =>
                                     setDraft(event.currentTarget.value)
                                 }
@@ -834,6 +889,32 @@ export function Chat(props: {
                                 <SendIcon size={19} />
                             </button>
                         </form>
+                        <Show when={emojiOpen()}>
+                            <div
+                                class="emoji-keyboard"
+                                style={{ height: `${emojiHeight()}px` }}
+                                role="group"
+                                aria-label="Emoji keyboard"
+                            >
+                                <div class="emoji-keyboard-grid">
+                                    <For each={EMOJIS}>
+                                        {(emoji) => (
+                                            <button
+                                                type="button"
+                                                class="emoji-key"
+                                                onClick={() =>
+                                                    setDraft(
+                                                        (value) => value + emoji,
+                                                    )
+                                                }
+                                            >
+                                                {emoji}
+                                            </button>
+                                        )}
+                                    </For>
+                                </div>
+                            </div>
+                        </Show>
                     </>
                 )}
             </Show>
@@ -855,16 +936,6 @@ export function Chat(props: {
                         y={state().y}
                         entries={messageEntries(state().message)}
                         onClose={() => setMessageMenu(null)}
-                    />
-                )}
-            </Show>
-            <Show when={emojiMenu()}>
-                {(state) => (
-                    <EmojiPicker
-                        x={state().x}
-                        y={state().y}
-                        onPick={(emoji) => setDraft((value) => value + emoji)}
-                        onClose={() => setEmojiMenu(null)}
                     />
                 )}
             </Show>

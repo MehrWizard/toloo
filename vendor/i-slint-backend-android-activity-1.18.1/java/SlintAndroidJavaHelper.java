@@ -255,22 +255,11 @@ class SlintInputView extends View {
     private InputHandle mRightHandle;
     public Rect selectionRect = new Rect();
 
-    // num_handles: 0=hidden, 1=cursor handle, 2=selection handles
+    // num_handles: 0=hidden, 2=the two selection handles. Toloo never shows
+    // the single caret handle, only the pair around a real selection.
     public void setCursorPos(int left_x, int left_y, int right_x, int right_y, int cursor_height, int num_handles) {
         int handleHeight = 0;
-        if (num_handles == 1) {
-            // Toloo: keep the native copy/paste menu available for selections,
-            // but never show the single caret handle.
-            if (mLeftHandle != null) {
-                mLeftHandle.hide();
-            }
-            if (mRightHandle != null) {
-                mRightHandle.hide();
-            }
-            if (mCursorHandle != null) {
-                mCursorHandle.hide();
-            }
-        } else if (num_handles == 2) {
+        if (num_handles == 2) {
             if (left_x != -1) {
                 if (mLeftHandle == null) {
                     mLeftHandle = new InputHandle(this, android.R.attr.textSelectHandleLeft);
@@ -607,8 +596,8 @@ public class SlintAndroidJavaHelper {
                 int selEnd = Math.max(cursor_position, anchor_position);
                 mInputView.setText(text, selStart, selEnd, preedit_start, preedit_end, input_type);
                 int num_handles = 0;
-                if (show_cursor_handles) {
-                    num_handles = cursor_position == anchor_position ? 1 : 2;
+                if (show_cursor_handles && cursor_position != anchor_position) {
+                    num_handles = 2;
                 }
                 if (cursor_position < anchor_position) {
                     mInputView.setCursorPos(cur_x, cur_y, anchor_x, anchor_y, cursor_height, num_handles);

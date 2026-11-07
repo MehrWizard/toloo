@@ -1031,6 +1031,14 @@ textarea:focus {
     padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
 
+.composer.with-emoji {
+    padding-bottom: 8px;
+}
+
+.composer-emoji.active {
+    color: var(--accent);
+}
+
 .composer input {
     flex: 1;
     min-width: 0;
@@ -1135,34 +1143,35 @@ textarea:focus {
     background: var(--line);
 }
 
-.emoji-picker {
-    position: fixed;
-    z-index: 90;
-    width: 304px;
-    padding: 8px;
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 4px;
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius-sm);
-    background: var(--panel);
-    box-shadow: 0 12px 40px rgb(0 0 0 / 45%);
+.emoji-keyboard {
+    flex: 0 0 auto;
+    min-height: 180px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom));
 }
 
-.emoji-item {
-    width: 34px;
-    height: 34px;
+.emoji-keyboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+    gap: 2px;
+}
+
+.emoji-key {
+    height: 40px;
     display: grid;
     place-items: center;
     border: 0;
     border-radius: var(--radius-sm);
     background: transparent;
-    font-size: 20px;
+    font-size: 22px;
     line-height: 1;
 }
 
-.emoji-item:hover,
-.emoji-item:focus-visible {
+.emoji-key:hover,
+.emoji-key:focus-visible {
     background: var(--panel-2);
 }
 
@@ -1310,6 +1319,16 @@ textarea:focus {
 [dir="rtl"] .room-row.active::before {
     left: auto;
     right: 0;
+}
+
+@media (max-width: 699px) {
+    .room-row.active {
+        background: transparent;
+    }
+
+    .room-row.active::before {
+        display: none;
+    }
 }
 
 [dir="rtl"] input,

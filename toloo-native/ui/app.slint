@@ -1,3 +1,4 @@
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { BlockedRow, MessageRow, RelayRow, RoomRow } from "models.slint";
 import { RoomsPane } from "rooms.slint";
@@ -56,6 +57,8 @@ export component AppWindow inherits Window {
     in-out property <string> enc-priv: "";
     in-out property <string> import-input: "";
     in-out property <string> message-input: "";
+    in-out property <bool> emoji-open: false;
+    in-out property <int> focus-request: 0;
     in-out property <string> passphrase: "";
     in-out property <string> identity-input: "";
     in-out property <string> encrypted-input: "";
@@ -111,24 +114,58 @@ export component AppWindow inherits Window {
     private property <length> inset-bottom: root.safe-area-insets.bottom;
     private property <length> keyboard-height: root.virtual-keyboard-size.height > 0px
         ? root.virtual-keyboard-size.height : 0px;
-    private property <length> bottom-inset: root.keyboard-height > root.inset-bottom
-        ? root.keyboard-height : root.inset-bottom;
+    private property <length> last-keyboard-height: 0px;
+    private property <length> emoji-panel-height: root.last-keyboard-height > 0px
+        ? root.last-keyboard-height : 320px;
+    private property <length> emoji-inset: root.emoji-open ? root.emoji-panel-height : 0px;
+    private property <length> bottom-inset: max(root.inset-bottom,
+        max(root.keyboard-height, root.emoji-inset));
     private property <length> content-height: root.height - root.inset-top
         - root.bottom-inset;
     private property <bool> can-back: root.feedback-open || root.sheet != 0
-        || (root.phone && root.page == 1);
+        || root.emoji-open || (root.phone && root.page == 1);
+    private property <[string]> emojis: [
+        "😀", "😂", "😊", "😍", "🤔", "😎", "😢", "😡",
+        "👍", "👎", "🙏", "👏", "💪", "🤝", "👋", "❤️",
+        "🔥", "✨", "🎉", "💯", "🌙", "☀️", "🌱", "🍀",
+        "🍕", "☕", "🎵", "📎", "✅", "❌", "🔒", "🔗",
+        "😅", "🤣", "🙂", "🙃", "😉", "😇", "🥰", "😘",
+        "😋", "😜", "🤪", "🤗", "🤫", "🤭", "😴", "🤤",
+        "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁",
+        "😣", "😖", "😫", "😩", "🥺", "😭", "😤", "😠",
+        "🤬", "😱", "😨", "😰", "😥", "😓", "🤯", "😳",
+        "🥵", "🥶", "😵", "🤐", "🤢", "🤮", "🤧", "😷",
+        "🤒", "🤕", "🤑", "🤠", "😈", "👿", "👻", "💀",
+        "🤖", "💩", "😺", "😸", "😹", "😻", "😼", "😽"
+    ];
+
+    changed keyboard-height => {
+        if (root.keyboard-height > 0px) {
+            root.last-keyboard-height = root.keyboard-height;
+        }
+    }
+
+    changed emoji-open => {
+        if (root.emoji-open) {
+            key-scope.focus();
+        }
+    }
 
     public function go-back() {
         if (root.feedback-open) {
             root.feedback-open = false;
         } else if (root.sheet != 0) {
             root.close-sheet();
+        } else if (root.emoji-open) {
+            root.emoji-open = false;
+            root.focus-request += 1;
         } else if (root.phone && root.page == 1) {
             root.page = 0;
         }
     }
 
     public function open-sheet(next: int) {
+        root.emoji-open = false;
         if (root.sheet != 0) {
             root.sheet-stack.push(root.sheet);
         }
@@ -148,6 +185,11 @@ export component AppWindow inherits Window {
         width: 100%;
         height: 100%;
         init => { key-scope.focus(); }
+        key-focus-timer := Timer {
+            interval: 100ms;
+            running: root.emoji-open && !key-scope.has-focus;
+            triggered => { key-scope.focus(); }
+        }
         KeyBinding {
             keys: @keys(Back);
             enabled: root.can-back;
@@ -174,7 +216,9 @@ export component AppWindow inherits Window {
             compact: true;
             rtl: root.rtl;
             search <=> root.search;
+            phone: true;
             select-room(id) => {
+                root.emoji-open = false;
                 root.select-room(id);
                 root.page = 1;
             }
@@ -221,7 +265,12 @@ export component AppWindow inherits Window {
             show-back: true;
             rtl: root.rtl;
             message-input <=> root.message-input;
-            back => { root.page = 0; }
+            emoji-open <=> root.emoji-open;
+            focus-request <=> root.focus-request;
+            back => {
+                root.emoji-open = false;
+                root.page = 0;
+            }
             sync-room => { root.sync-now(); }
             share-room => {
                 root.export-invite(root.active-room-id);
@@ -257,7 +306,8 @@ export component AppWindow inherits Window {
             x: root.inset-left;
             y: root.inset-top;
             width: root.width - root.inset-left - root.inset-right;
-            height: root.content-height;
+            height: root.height - root.inset-top
+                - (root.emoji-open ? root.inset-bottom : root.bottom-inset);
             spacing: 0px;
             RoomsPane {
                 width: root.tablet ? Theme.rail-width : Theme.sidebar-width;
@@ -272,7 +322,10 @@ export component AppWindow inherits Window {
                 compact: root.tablet;
                 rtl: root.rtl;
                 search <=> root.search;
-                select-room(id) => { root.select-room(id); }
+                select-room(id) => {
+                    root.emoji-open = false;
+                    root.select-room(id);
+                }
                 sync-room(id) => { root.sync-room(id); }
                 share-room(id) => {
                     root.export-invite(id);
@@ -299,7 +352,7 @@ export component AppWindow inherits Window {
             Rectangle { width: 1px; height: 100%; background: Theme.border; }
             ChatPane {
                 width: root.width - (root.tablet ? Theme.rail-width : Theme.sidebar-width) - 1px;
-                height: 100%;
+                height: parent.height - (root.emoji-open ? root.emoji-panel-height : 0px);
                 messages: root.messages;
                 room-name: root.active-room;
                 room-id: root.room-key;
@@ -314,6 +367,8 @@ export component AppWindow inherits Window {
                 show-back: false;
                 rtl: root.rtl;
                 message-input <=> root.message-input;
+                emoji-open <=> root.emoji-open;
+                focus-request <=> root.focus-request;
                 back => { }
                 sync-room => { root.sync-now(); }
                 share-room => {
@@ -344,6 +399,64 @@ export component AppWindow inherits Window {
                 }
                 leave-room(id) => { root.leave-room(id); }
                 remove-room(id) => { root.remove-room(id); }
+            }
+        }
+
+        if root.emoji-open && root.active-room-id != ""
+            && (!root.phone || root.page == 1) : Rectangle {
+            x: root.phone
+                ? root.inset-left
+                : root.inset-left + (root.tablet ? Theme.rail-width : Theme.sidebar-width) + 1px;
+            y: root.phone
+                ? root.height - root.bottom-inset
+                : root.height - root.inset-bottom - root.emoji-panel-height;
+            width: root.phone
+                ? root.width - root.inset-left - root.inset-right
+                : root.width - root.inset-left - root.inset-right
+                    - (root.tablet ? Theme.rail-width : Theme.sidebar-width) - 1px;
+            height: root.phone ? root.bottom-inset : root.emoji-panel-height;
+            background: Theme.bg;
+
+            Rectangle {
+                y: 0;
+                width: 100%;
+                height: 1px;
+                background: Theme.border;
+            }
+
+            ScrollView {
+                y: 1px;
+                width: 100%;
+                height: parent.height - 1px;
+                vertical-scrollbar-policy: always-off;
+
+                FlexboxLayout {
+                    width: 100%;
+                    padding: 8px;
+                    spacing: 4px;
+                    flex-wrap: wrap;
+                    alignment: start;
+
+                    for emoji in root.emojis : Rectangle {
+                        width: 38px;
+                        height: 38px;
+                        border-radius: Theme.radius-sm;
+                        background: emoji-touch.pressed ? Theme.surface-2 : transparent;
+                        Text {
+                            text: emoji;
+                            font-size: 21px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                        emoji-touch := TouchArea {
+                            clicked => {
+                                root.message-input = root.message-input + emoji;
+                            }
+                        }
+                    }
+                }
             }
         }
 

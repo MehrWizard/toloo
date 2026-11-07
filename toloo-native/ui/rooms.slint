@@ -12,6 +12,7 @@ export component RoomsPane inherits Rectangle {
     in property <string> status: "";
     in property <string> network-label: "No relays";
     in property <bool> compact: false;
+    in property <bool> phone: false;
     in property <bool> rtl: false;
     in-out property <string> search: "";
     callback select-room(string);
@@ -131,9 +132,9 @@ export component RoomsPane inherits Rectangle {
 
                 for room in root.rooms : Rectangle {
                     height: 66px;
-                    background: room.selected ? Theme.surface-2 : transparent;
+                    background: room.selected && !root.phone ? Theme.surface-2 : transparent;
 
-                    if room.selected : Rectangle {
+                    if room.selected && !root.phone : Rectangle {
                         x: root.rtl ? parent.width - self.width : 0px;
                         width: 3px;
                         height: 100%;

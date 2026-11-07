@@ -18,6 +18,8 @@ export component ChatPane inherits Rectangle {
     in property <bool> room-has-key: false;
     in property <bool> rtl: false;
     in-out property <string> message-input: "";
+    in-out property <bool> emoji-open: false;
+    in-out property <int> focus-request: 0;
     callback back();
     callback sync-room();
     callback share-room();
@@ -52,16 +54,6 @@ export component ChatPane inherits Rectangle {
     private property <bool> selection-dragging: false;
     private property <length> selection-y: 0px;
     private property <int> selection-last-index: -1;
-    private property <length> emoji-picker-x: 0px;
-    private property <length> emoji-picker-y: 0px;
-    private property <length> emoji-picker-width: 340px;
-    private property <length> emoji-picker-height: 176px;
-    private property <[string]> emojis: [
-        "😀", "😂", "😊", "😍", "🤔", "😎", "😢", "😡",
-        "👍", "👎", "🙏", "👏", "💪", "🤝", "👋", "❤️",
-        "🔥", "✨", "🎉", "💯", "🌙", "☀️", "🌱", "🍀",
-        "🍕", "☕", "🎵", "📎", "✅", "❌", "🔒", "🔗"
-    ];
 
     public function toggle-message(eid: string) {
         let index = root.selected-eids.index-of(eid);
@@ -92,6 +84,16 @@ export component ChatPane inherits Rectangle {
 
     changed room-id-full => {
         root.clear-selected();
+    }
+
+    changed emoji-open => {
+        if (root.emoji-open) {
+            input-field.clear-field-focus();
+        }
+    }
+
+    changed focus-request => {
+        input-field.focus-field();
     }
 
     background: Theme.bg;
@@ -366,23 +368,39 @@ export component ChatPane inherits Rectangle {
                         button-size: 40px;
                         layout-order: root.rtl ? 2 : 0;
                         clicked => {
-                            root.emoji-picker-x = emoji-button.absolute-position.x - root.absolute-position.x;
-                            root.emoji-picker-y = emoji-button.absolute-position.y - root.absolute-position.y
-                                - root.emoji-picker-height - 6px;
-                            emoji-picker.show();
+                            if (root.has-room) {
+                                if (root.emoji-open) {
+                                    root.emoji-open = false;
+                                    input-field.focus-field();
+                                } else {
+                                    root.emoji-open = true;
+                                }
+                            }
                         }
                     }
-                    TextField {
-                        text <=> root.message-input;
-                        placeholder: root.has-room ? "Message…" : "Select a room first";
-                        enabled: root.has-room;
-                        rtl: root.rtl;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: 40px;
                         layout-order: 1;
-                        field-height: 40px;
-                        accepted => {
-                            if (root.has-room && root.message-input != "") {
-                                root.send-message(root.message-input);
-                                root.message-input = "";
+                        input-field := TextField {
+                            width: 100%;
+                            height: 100%;
+                            text <=> root.message-input;
+                            placeholder: root.has-room ? "Message…" : "Select a room first";
+                            enabled: root.has-room;
+                            rtl: root.rtl;
+                            field-height: 40px;
+                            accepted => {
+                                if (root.has-room && root.message-input != "") {
+                                    root.send-message(root.message-input);
+                                    root.message-input = "";
+                                }
+                            }
+                        }
+                        if root.emoji-open : TouchArea {
+                            clicked => {
+                                root.emoji-open = false;
+                                input-field.focus-field();
                             }
                         }
                     }
@@ -630,51 +648,4 @@ export component ChatPane inherits Rectangle {
             }
         }
     }
-    emoji-picker := PopupWindow {
-        width: root.emoji-picker-width;
-        height: root.emoji-picker-height;
-        x: root.emoji-picker-x;
-        y: root.emoji-picker-y;
-        close-policy: close-on-click-outside;
-
-        Rectangle {
-            width: 100%;
-            height: 100%;
-            border-radius: Theme.radius-sm;
-            border-width: 1px;
-            border-color: Theme.border-strong;
-            background: Theme.surface;
-            drop-shadow-blur: 18px;
-            drop-shadow-color: #00000088;
-            drop-shadow-offset-y: 6px;
-
-            FlexboxLayout {
-                padding: 8px;
-                spacing: 4px;
-                flex-wrap: wrap;
-
-                for emoji in root.emojis : Rectangle {
-                    width: 36px;
-                    height: 36px;
-                    border-radius: Theme.radius-sm;
-                    background: touch.pressed ? Theme.surface-2 : transparent;
-                    Text {
-                        text: emoji;
-                        font-size: 20px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                        width: 100%;
-                        height: 100%;
-                    }
-                    touch := TouchArea {
-                        clicked => {
-                            root.message-input = root.message-input + emoji;
-                            emoji-picker.close();
-                        }
-                    }
-                }
-            }
-        }
-    }
-
 }

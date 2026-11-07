@@ -246,13 +246,16 @@ export component TextField inherits Rectangle {
     callback edited();
     callback accepted();
 
+    public function focus-field() { input.focus(); }
+    public function clear-field-focus() { input.clear-focus(); }
+
     height: field-height;
     border-radius: Theme.radius-sm;
     border-width: 1px;
     border-color: root.enabled ? Theme.border : Theme.surface-2;
     background: Theme.bg;
 
-    TextInput {
+    input := TextInput {
         x: 11px;
         y: (parent.height - self.height) / 2;
         width: parent.width - 22px;
