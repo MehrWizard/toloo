@@ -2,7 +2,7 @@ import { Theme } from "theme.slint";
 import { BlockedRow, MessageRow, RelayRow, RoomRow } from "models.slint";
 import { RoomsPane } from "rooms.slint";
 import { ChatPane } from "chat.slint";
-import { AddRoomSheet, ExportSheet, ImportSheet, RenameSheet, SettingsSheet } from "sheets.slint";
+import { AddRoomSheet, AlertSheet, ExportSheet, ImportSheet, RenameSheet, SettingsSheet } from "sheets.slint";
 
 export component AppWindow inherits Window {
     title: "Toloo";
@@ -45,6 +45,9 @@ export component AppWindow inherits Window {
     in-out property <string> search: "";
     in-out property <int> page: 0;
     in-out property <int> sheet: 0;
+    in-out property <[int]> sheet-stack: [];
+    in-out property <string> feedback-message: "";
+    in-out property <bool> feedback-open: false;
 
     in-out property <string> relay-input: "";
     in-out property <string> create-room-name: "";
@@ -96,6 +99,8 @@ export component AppWindow inherits Window {
     callback start-host(string, string);
     callback stop-host();
     callback copy-text(string);
+    callback copy-selected([string]);
+    callback delete-selected([string]);
     callback share-text(string);
 
     private property <bool> phone: root.width < 700px;
@@ -110,108 +115,55 @@ export component AppWindow inherits Window {
         ? root.keyboard-height : root.inset-bottom;
     private property <length> content-height: root.height - root.inset-top
         - root.bottom-inset;
+    private property <bool> can-back: root.feedback-open || root.sheet != 0
+        || (root.phone && root.page == 1);
 
-    if root.phone && root.page == 0 : RoomsPane {
-        x: root.inset-left;
-        y: root.inset-top;
-        width: root.width - root.inset-left - root.inset-right;
-        height: root.content-height;
-        rooms: root.rooms;
-        identity-label: root.identity-label;
-        identity-initial: root.identity-initial;
-        identity-avatar-path: root.identity-avatar-path;
-        identity-avatar-palette: root.identity-avatar-palette;
-        status: root.status;
-        network-label: root.network-label;
-        compact: true;
-        rtl: root.rtl;
-        search <=> root.search;
-        select-room(id) => {
-            root.select-room(id);
-            root.page = 1;
+    public function go-back() {
+        if (root.feedback-open) {
+            root.feedback-open = false;
+        } else if (root.sheet != 0) {
+            root.close-sheet();
+        } else if (root.phone && root.page == 1) {
+            root.page = 0;
         }
-        sync-room(id) => { root.sync-room(id); }
-        share-room(id) => {
-            root.export-invite(id);
-            root.sheet = 4;
-        }
-        export-room(id) => {
-            root.export-messages(id);
-            root.sheet = 4;
-        }
-        rename-room(id, name) => {
-            root.selected-room-id = id;
-            root.selected-room-name = name;
-            root.sheet = 6;
-        }
-        copy-text(value) => { root.copy-text(value); }
-        leave-room(id) => { root.leave-room(id); }
-        remove-room(id) => { root.remove-room(id); }
-        search-changed(query) => { root.search-changed(query); }
-        add-room => { root.sheet = 1; }
-        import-room => { root.sheet = 2; }
-        open-settings => { root.sheet = 3; }
-        open-relays => { root.sheet = 3; }
     }
 
-    if root.phone && root.page == 1 : ChatPane {
-        x: root.inset-left;
-        y: root.inset-top;
-        width: root.width - root.inset-left - root.inset-right;
-        height: root.content-height;
-        messages: root.messages;
-        room-name: root.active-room;
-        room-id: root.room-key;
-        room-id-full: root.active-room-id;
-        room-initial: root.room-initial;
-        room-has-key: root.room-has-key;
-        room-avatar-path: root.room-avatar-path;
-        room-avatar-palette: root.room-avatar-palette;
-        members-label: root.members-label;
-        status: root.status;
-        has-room: root.active-room-id != "";
-        show-back: true;
-        rtl: root.rtl;
-        message-input <=> root.message-input;
-        back => { root.page = 0; }
-        sync-room => { root.sync-now(); }
-        share-room => {
-            root.export-invite(root.active-room-id);
-            root.sheet = 4;
+    public function open-sheet(next: int) {
+        if (root.sheet != 0) {
+            root.sheet-stack.push(root.sheet);
         }
-        export-room => {
-            root.export-messages(root.active-room-id);
-            root.sheet = 4;
-        }
-        open-settings => { root.sheet = 3; }
-        send-message(body) => { root.send-message(body); }
-        copy-text(value) => { root.copy-text(value); }
-        flag-message(room, target, category) => {
-            root.flag-message(room, target, category);
-        }
-        block-node(node, kind, reason) => { root.block-node(node, kind, reason); }
-        attest-node(target, level) => { root.attest-node(target, level); }
-        delete-message(room, target) => {
-            root.delete-message(room, target);
-        }
-        rename-room(id, name) => {
-            root.selected-room-id = id;
-            root.selected-room-name = name;
-            root.sheet = 6;
-        }
-        leave-room(id) => { root.leave-room(id); }
-        remove-room(id) => { root.remove-room(id); }
+        root.sheet = next;
     }
 
-    if !root.phone : HorizontalLayout {
-        x: root.inset-left;
-        y: root.inset-top;
-        width: root.width - root.inset-left - root.inset-right;
-        height: root.content-height;
-        spacing: 0px;
-        RoomsPane {
-            width: root.tablet ? Theme.rail-width : Theme.sidebar-width;
-            height: 100%;
+    public function close-sheet() {
+        if (root.sheet-stack.length > 0) {
+            root.sheet = root.sheet-stack[root.sheet-stack.length - 1];
+            root.sheet-stack.remove(root.sheet-stack.length - 1);
+        } else {
+            root.sheet = 0;
+        }
+    }
+
+    key-scope := FocusScope {
+        width: 100%;
+        height: 100%;
+        init => { key-scope.focus(); }
+        KeyBinding {
+            keys: @keys(Back);
+            enabled: root.can-back;
+            activated => { root.go-back(); }
+        }
+        KeyBinding {
+            keys: @keys(Escape);
+            enabled: root.can-back;
+            activated => { root.go-back(); }
+        }
+
+        if root.phone && root.page == 0 : RoomsPane {
+            x: root.inset-left;
+            y: root.inset-top;
+            width: root.width - root.inset-left - root.inset-right;
+            height: root.content-height;
             rooms: root.rooms;
             identity-label: root.identity-label;
             identity-initial: root.identity-initial;
@@ -219,37 +171,42 @@ export component AppWindow inherits Window {
             identity-avatar-palette: root.identity-avatar-palette;
             status: root.status;
             network-label: root.network-label;
-            compact: root.tablet;
+            compact: true;
             rtl: root.rtl;
             search <=> root.search;
-            select-room(id) => { root.select-room(id); }
+            select-room(id) => {
+                root.select-room(id);
+                root.page = 1;
+            }
             sync-room(id) => { root.sync-room(id); }
             share-room(id) => {
                 root.export-invite(id);
-                root.sheet = 4;
+                root.open-sheet(4);
             }
             export-room(id) => {
                 root.export-messages(id);
-                root.sheet = 4;
+                root.open-sheet(4);
             }
             rename-room(id, name) => {
                 root.selected-room-id = id;
                 root.selected-room-name = name;
-                root.sheet = 6;
+                root.open-sheet(6);
             }
             copy-text(value) => { root.copy-text(value); }
             leave-room(id) => { root.leave-room(id); }
             remove-room(id) => { root.remove-room(id); }
             search-changed(query) => { root.search-changed(query); }
-            add-room => { root.sheet = 1; }
-            import-room => { root.sheet = 2; }
-            open-settings => { root.sheet = 3; }
-            open-relays => { root.sheet = 3; }
+            add-room => { root.open-sheet(1); }
+            import-room => { root.open-sheet(2); }
+            open-settings => { root.open-sheet(3); }
+            open-relays => { root.open-sheet(3); }
         }
-        Rectangle { width: 1px; height: 100%; background: Theme.border; }
-        ChatPane {
-            width: root.width - (root.tablet ? Theme.rail-width : Theme.sidebar-width) - 1px;
-            height: 100%;
+
+        if root.phone && root.page == 1 : ChatPane {
+            x: root.inset-left;
+            y: root.inset-top;
+            width: root.width - root.inset-left - root.inset-right;
+            height: root.content-height;
             messages: root.messages;
             room-name: root.active-room;
             room-id: root.room-key;
@@ -261,22 +218,24 @@ export component AppWindow inherits Window {
             members-label: root.members-label;
             status: root.status;
             has-room: root.active-room-id != "";
-            show-back: false;
+            show-back: true;
             rtl: root.rtl;
             message-input <=> root.message-input;
-            back => { }
+            back => { root.page = 0; }
             sync-room => { root.sync-now(); }
             share-room => {
                 root.export-invite(root.active-room-id);
-                root.sheet = 4;
+                root.open-sheet(4);
             }
             export-room => {
                 root.export-messages(root.active-room-id);
-                root.sheet = 4;
+                root.open-sheet(4);
             }
-            open-settings => { root.sheet = 3; }
+            open-settings => { root.open-sheet(3); }
             send-message(body) => { root.send-message(body); }
             copy-text(value) => { root.copy-text(value); }
+            copy-selected(eids) => { root.copy-selected(eids); }
+            delete-selected(eids) => { root.delete-selected(eids); }
             flag-message(room, target, category) => {
                 root.flag-message(room, target, category);
             }
@@ -288,126 +247,250 @@ export component AppWindow inherits Window {
             rename-room(id, name) => {
                 root.selected-room-id = id;
                 root.selected-room-name = name;
-                root.sheet = 6;
+                root.open-sheet(6);
             }
             leave-room(id) => { root.leave-room(id); }
             remove-room(id) => { root.remove-room(id); }
         }
-    }
 
-    if root.sheet != 0 : Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #00000099;
-
-        TouchArea {
-            clicked => { root.sheet = 0; }
-        }
-
-        Rectangle {
-            width: root.phone
-                ? root.width - root.inset-left - root.inset-right
-                : Theme.settings-width;
-            height: root.phone
-                ? root.content-height * 0.74
-                : 620px;
-            x: root.phone
-                ? root.inset-left
-                : root.inset-left + (root.width - root.inset-left - root.inset-right - self.width) / 2;
-            y: root.phone
-                ? root.height - root.bottom-inset - self.height
-                : root.inset-top + (root.height - root.inset-top - root.inset-bottom - self.height) / 2;
-            border-radius: root.phone ? 16px : Theme.radius;
-            background: Theme.surface;
-            clip: true;
-
-            if root.sheet == 1 : AddRoomSheet {
-                create-name <=> root.create-room-name;
-                join-input <=> root.join-input;
-                close => { root.sheet = 0; }
-                create-room(name) => {
-                    root.create-room(name);
-                    root.sheet = 0;
-                }
-                join-room(value) => {
-                    root.join-room(value);
-                    root.sheet = 0;
-                }
-            }
-
-            if root.sheet == 2 : ImportSheet {
-                import-input <=> root.import-input;
-                close => { root.sheet = 0; }
-                decode(value) => {
-                    root.import-discovery(value);
-                    root.sheet = 0;
-                }
-            }
-
-            if root.sheet == 3 : SettingsSheet {
-                has-identity: root.has-identity;
+        if !root.phone : HorizontalLayout {
+            x: root.inset-left;
+            y: root.inset-top;
+            width: root.width - root.inset-left - root.inset-right;
+            height: root.content-height;
+            spacing: 0px;
+            RoomsPane {
+                width: root.tablet ? Theme.rail-width : Theme.sidebar-width;
+                height: 100%;
+                rooms: root.rooms;
                 identity-label: root.identity-label;
                 identity-initial: root.identity-initial;
                 identity-avatar-path: root.identity-avatar-path;
-            identity-avatar-palette: root.identity-avatar-palette;
-                sig-pub: root.identity-sig-pub;
-                enc-pub: root.identity-enc-pub;
-                rtl: root.rtl;
-                notifications-enabled: root.notifications-enabled;
+                identity-avatar-palette: root.identity-avatar-palette;
+                status: root.status;
                 network-label: root.network-label;
-                host-running: root.host-running;
-                host-address: root.host-address;
-                host-connections: root.host-connections;
-                relays: root.relays;
-                blocked: root.blocked;
-                host-port <=> root.host-port;
-                host-proto <=> root.host-proto;
-                relay-input <=> root.relay-input;
-                sig-seed <=> root.sig-seed;
-                enc-priv <=> root.enc-priv;
-                passphrase <=> root.passphrase;
-                identity-input <=> root.identity-input;
-                encrypted-input <=> root.encrypted-input;
-                close => { root.sheet = 0; }
-                create-identity => { root.create-identity(); }
-                restore-identity(seed, key) => { root.restore-identity(seed, key); }
-                add-relay(url) => { root.add-relay(url); }
-                remove-relay(url) => { root.remove-relay(url); }
-                export-identity => {
-                    root.export-identity();
-                    root.sheet = 4;
+                compact: root.tablet;
+                rtl: root.rtl;
+                search <=> root.search;
+                select-room(id) => { root.select-room(id); }
+                sync-room(id) => { root.sync-room(id); }
+                share-room(id) => {
+                    root.export-invite(id);
+                    root.open-sheet(4);
                 }
-                export-encrypted(passphrase) => {
-                    root.export-encrypted-identity(passphrase);
-                    root.sheet = 4;
+                export-room(id) => {
+                    root.export-messages(id);
+                    root.open-sheet(4);
                 }
-                load-identity-json(json) => { root.load-identity-json(json); }
-                load-encrypted(blob, passphrase) => { root.load-encrypted-identity(blob, passphrase); }
-                remove-identity => { root.remove-identity(); }
-                unblock-node(node) => { root.unblock-node(node); }
-                set-rtl(enabled) => { root.set-rtl(enabled); }
-                set-notifications(enabled) => { root.set-notifications(enabled); }
-                start-host(port, proto) => { root.start-host(port, proto); }
-                stop-host => { root.stop-host(); }
+                rename-room(id, name) => {
+                    root.selected-room-id = id;
+                    root.selected-room-name = name;
+                    root.open-sheet(6);
+                }
+                copy-text(value) => { root.copy-text(value); }
+                leave-room(id) => { root.leave-room(id); }
+                remove-room(id) => { root.remove-room(id); }
+                search-changed(query) => { root.search-changed(query); }
+                add-room => { root.open-sheet(1); }
+                import-room => { root.open-sheet(2); }
+                open-settings => { root.open-sheet(3); }
+                open-relays => { root.open-sheet(3); }
+            }
+            Rectangle { width: 1px; height: 100%; background: Theme.border; }
+            ChatPane {
+                width: root.width - (root.tablet ? Theme.rail-width : Theme.sidebar-width) - 1px;
+                height: 100%;
+                messages: root.messages;
+                room-name: root.active-room;
+                room-id: root.room-key;
+                room-id-full: root.active-room-id;
+                room-initial: root.room-initial;
+                room-has-key: root.room-has-key;
+                room-avatar-path: root.room-avatar-path;
+                room-avatar-palette: root.room-avatar-palette;
+                members-label: root.members-label;
+                status: root.status;
+                has-room: root.active-room-id != "";
+                show-back: false;
+                rtl: root.rtl;
+                message-input <=> root.message-input;
+                back => { }
+                sync-room => { root.sync-now(); }
+                share-room => {
+                    root.export-invite(root.active-room-id);
+                    root.open-sheet(4);
+                }
+                export-room => {
+                    root.export-messages(root.active-room-id);
+                    root.open-sheet(4);
+                }
+                open-settings => { root.open-sheet(3); }
+                send-message(body) => { root.send-message(body); }
+                copy-text(value) => { root.copy-text(value); }
+                copy-selected(eids) => { root.copy-selected(eids); }
+                delete-selected(eids) => { root.delete-selected(eids); }
+                flag-message(room, target, category) => {
+                    root.flag-message(room, target, category);
+                }
+                block-node(node, kind, reason) => { root.block-node(node, kind, reason); }
+                attest-node(target, level) => { root.attest-node(target, level); }
+                delete-message(room, target) => {
+                    root.delete-message(room, target);
+                }
+                rename-room(id, name) => {
+                    root.selected-room-id = id;
+                    root.selected-room-name = name;
+                    root.open-sheet(6);
+                }
+                leave-room(id) => { root.leave-room(id); }
+                remove-room(id) => { root.remove-room(id); }
+            }
+        }
+
+        if root.sheet != 0 : Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #00000099;
+
+            TouchArea {
+                clicked => { root.close-sheet(); }
             }
 
-            if root.sheet == 4 : ExportSheet {
-                export-text: root.export-text;
-                export-kind: root.export-kind;
-                room-key: root.room-key;
-                close => { root.sheet = 0; }
-                copy(value) => { root.copy-text(value); }
-                share(value) => { root.share-text(value); }
+            Rectangle {
+                width: root.phone
+                    ? root.width - root.inset-left - root.inset-right
+                    : Theme.settings-width;
+                height: root.phone
+                    ? root.content-height * 0.74
+                    : 620px;
+                x: root.phone
+                    ? root.inset-left
+                    : root.inset-left + (root.width - root.inset-left - root.inset-right - self.width) / 2;
+                y: root.phone
+                    ? root.height - root.bottom-inset - self.height
+                    : root.inset-top + (root.height - root.inset-top - root.inset-bottom - self.height) / 2;
+                border-radius: root.phone ? 16px : Theme.radius;
+                background: Theme.surface;
+                clip: true;
+
+                if root.sheet == 1 : AddRoomSheet {
+                    create-name <=> root.create-room-name;
+                    join-input <=> root.join-input;
+                    close => { root.close-sheet(); }
+                    create-room(name) => {
+                        root.create-room(name);
+                        root.close-sheet();
+                    }
+                    join-room(value) => {
+                        root.join-room(value);
+                        root.close-sheet();
+                    }
+                }
+
+                if root.sheet == 2 : ImportSheet {
+                    import-input <=> root.import-input;
+                    close => { root.close-sheet(); }
+                    decode(value) => {
+                        root.import-discovery(value);
+                        root.close-sheet();
+                    }
+                }
+
+                if root.sheet == 3 : SettingsSheet {
+                    has-identity: root.has-identity;
+                    identity-label: root.identity-label;
+                    identity-initial: root.identity-initial;
+                    identity-avatar-path: root.identity-avatar-path;
+                identity-avatar-palette: root.identity-avatar-palette;
+                    sig-pub: root.identity-sig-pub;
+                    enc-pub: root.identity-enc-pub;
+                    rtl: root.rtl;
+                    notifications-enabled: root.notifications-enabled;
+                    network-label: root.network-label;
+                    host-running: root.host-running;
+                    host-address: root.host-address;
+                    host-connections: root.host-connections;
+                    relays: root.relays;
+                    blocked: root.blocked;
+                    host-port <=> root.host-port;
+                    host-proto <=> root.host-proto;
+                    relay-input <=> root.relay-input;
+                    sig-seed <=> root.sig-seed;
+                    enc-priv <=> root.enc-priv;
+                    passphrase <=> root.passphrase;
+                    identity-input <=> root.identity-input;
+                    encrypted-input <=> root.encrypted-input;
+                    close => { root.close-sheet(); }
+                    create-identity => { root.create-identity(); }
+                    restore-identity(seed, key) => { root.restore-identity(seed, key); }
+                    add-relay(url) => { root.add-relay(url); }
+                    remove-relay(url) => { root.remove-relay(url); }
+                    export-identity => {
+                        root.export-identity();
+                        root.open-sheet(4);
+                    }
+                    export-encrypted(passphrase) => {
+                        root.export-encrypted-identity(passphrase);
+                        root.open-sheet(4);
+                    }
+                    load-identity-json(json) => { root.load-identity-json(json); }
+                    load-encrypted(blob, passphrase) => { root.load-encrypted-identity(blob, passphrase); }
+                    remove-identity => { root.remove-identity(); }
+                    unblock-node(node) => { root.unblock-node(node); }
+                    set-rtl(enabled) => { root.set-rtl(enabled); }
+                    set-notifications(enabled) => { root.set-notifications(enabled); }
+                    start-host(port, proto) => { root.start-host(port, proto); }
+                    stop-host => { root.stop-host(); }
+                }
+
+                if root.sheet == 4 : ExportSheet {
+                    export-text: root.export-text;
+                    export-kind: root.export-kind;
+                    room-key: root.room-key;
+                    close => { root.close-sheet(); }
+                    copy(value) => { root.copy-text(value); }
+                    share(value) => { root.share-text(value); }
+                }
+
+                if root.sheet == 6 : RenameSheet {
+                    room-name: root.selected-room-name;
+                    rename-name <=> root.rename-input;
+                    close => { root.close-sheet(); }
+                    rename(name) => {
+                        root.rename-room(root.selected-room-id, name);
+                        root.rename-input = "";
+                        root.close-sheet();
+                    }
+                }
+            }
+        }
+        if root.feedback-open : Rectangle {
+            width: 100%;
+            height: 100%;
+            background: #00000099;
+
+            TouchArea {
+                clicked => { root.feedback-open = false; }
             }
 
-            if root.sheet == 6 : RenameSheet {
-                room-name: root.selected-room-name;
-                rename-name <=> root.rename-input;
-                close => { root.sheet = 0; }
-                rename(name) => {
-                    root.rename-room(root.selected-room-id, name);
-                    root.rename-input = "";
-                    root.sheet = 0;
+            Rectangle {
+                width: root.phone
+                    ? root.width - root.inset-left - root.inset-right
+                    : Theme.settings-width;
+                height: root.phone ? 220px : 240px;
+                x: root.phone
+                    ? root.inset-left
+                    : root.inset-left + (root.width - root.inset-left - root.inset-right - self.width) / 2;
+                y: root.phone
+                    ? root.height - root.inset-bottom - self.height
+                    : root.inset-top + (root.height - root.inset-top - root.inset-bottom - self.height) / 2;
+                border-radius: root.phone ? 16px : Theme.radius;
+                background: Theme.surface;
+                clip: true;
+
+                AlertSheet {
+                    message: root.feedback-message;
+                    close => { root.feedback-open = false; }
                 }
             }
         }

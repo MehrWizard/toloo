@@ -130,6 +130,7 @@ export component SettingsSheet inherits Rectangle {
 
         ScrollView {
             vertical-stretch: 1;
+            vertical-scrollbar-policy: always-off;
             VerticalLayout {
                 spacing: 10px;
 
@@ -479,6 +480,48 @@ export component RenameSheet inherits Rectangle {
             }
         }
         Rectangle { vertical-stretch: 1; }
+    }
+}
+
+export component AlertSheet inherits Rectangle {
+    width: 100%;
+    height: 100%;
+    in property <string> message;
+    callback close();
+
+    background: transparent;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            cross-axis-alignment: center;
+            Text {
+                text: "Notice";
+                color: Theme.text;
+                font-size: Theme.font-title;
+                font-weight: 700;
+                horizontal-stretch: 1;
+            }
+            IconButton {
+                icon: @image-url("../../design/icons/close.svg");
+                clicked => { root.close(); }
+            }
+        }
+        Divider {}
+        Text {
+            text: root.message;
+            color: Theme.text-2;
+            font-size: Theme.font-sm;
+            wrap: word-wrap;
+            vertical-stretch: 1;
+        }
+        SecondaryButton {
+            text: "Close";
+            clicked => { root.close(); }
+        }
     }
 }
 

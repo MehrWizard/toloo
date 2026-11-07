@@ -3,13 +3,15 @@ import {
     Show,
     createEffect,
     createSignal,
+    onCleanup,
+    onMount,
     type JSX,
 } from "solid-js";
 import type { Message, TolooClient } from "../lib/client";
 import type { RoomRecord } from "../lib/db";
 import { copyText, formatDay, formatTime, sameDay, shortKey } from "../lib/ui";
 import { Avatar } from "./Avatar";
-import { DropdownMenu, menuPosition, type DropdownEntry } from "./Dropdown";
+import { DropdownMenu, EmojiPicker, menuPosition, type DropdownEntry } from "./Dropdown";
 import {
     ArrowLeftIcon,
     BlockIcon,
@@ -17,6 +19,7 @@ import {
     CloseIcon,
     CopyIcon,
     EditIcon,
+    EmojiIcon,
     ExportIcon,
     FlagIcon,
     LogoutIcon,
@@ -48,7 +51,20 @@ export function Chat(props: {
         x: number;
         y: number;
     } | null>(null);
+    const [emojiMenu, setEmojiMenu] = createSignal<{
+        x: number;
+        y: number;
+    } | null>(null);
+    const [selected, setSelected] = createSignal<string[]>([]);
     let scrollArea: HTMLDivElement | undefined;
+    let longPressTimer: number | undefined;
+    let longPressFired = false;
+    let dragSelecting = false;
+    let dragLastEid = "";
+    let dragClientX = 0;
+    let dragClientY = 0;
+    let autoScrollDirection = 0;
+    let autoScrollFrame: number | undefined;
 
     const room = () => props.client.activeRoom();
 
@@ -226,6 +242,169 @@ export function Chat(props: {
         return entries;
     }
 
+    function toggleSelected(eid: string): void {
+        setSelected((current) =>
+            current.includes(eid)
+                ? current.filter((item) => item !== eid)
+                : [...current, eid],
+        );
+    }
+
+    function hitTestSelection(): void {
+        if (!dragSelecting) return;
+        const element = document
+            .elementFromPoint(dragClientX, dragClientY)
+            ?.closest("[data-message-eid]") as HTMLElement | null;
+        const eid = element?.dataset.messageEid;
+        if (eid && eid !== dragLastEid) {
+            dragLastEid = eid;
+            toggleSelected(eid);
+        }
+    }
+
+    function autoScrollLoop(): void {
+        if (!dragSelecting || autoScrollDirection === 0 || !scrollArea) {
+            autoScrollFrame = undefined;
+            return;
+        }
+        scrollArea.scrollTop += autoScrollDirection * 10;
+        hitTestSelection();
+        autoScrollFrame = requestAnimationFrame(autoScrollLoop);
+    }
+
+    function startDragSelection(eid: string): void {
+        dragSelecting = true;
+        dragLastEid = eid;
+        setSelected((current) =>
+            current.includes(eid) ? current : [...current, eid],
+        );
+    }
+
+    function onDocumentPointerMove(event: PointerEvent): void {
+        if (!dragSelecting || !scrollArea) return;
+        dragClientX = event.clientX;
+        dragClientY = event.clientY;
+        hitTestSelection();
+        const rect = scrollArea.getBoundingClientRect();
+        const next =
+            event.clientY < rect.top + 60
+                ? -1
+                : event.clientY > rect.bottom - 60
+                  ? 1
+                  : 0;
+        autoScrollDirection = next;
+        if (next !== 0 && autoScrollFrame === undefined) {
+            autoScrollFrame = requestAnimationFrame(autoScrollLoop);
+        }
+    }
+
+    function onDocumentPointerUp(): void {
+        dragSelecting = false;
+        autoScrollDirection = 0;
+        if (longPressTimer !== undefined) {
+            window.clearTimeout(longPressTimer);
+            longPressTimer = undefined;
+        }
+    }
+
+    function startGutterPress(event: PointerEvent, message: Message): void {
+        if (event.button !== 0) return;
+        longPressFired = false;
+        dragLastEid = "";
+        dragClientX = event.clientX;
+        dragClientY = event.clientY;
+        if (longPressTimer !== undefined) window.clearTimeout(longPressTimer);
+        longPressTimer = window.setTimeout(() => {
+            longPressFired = true;
+            startDragSelection(message.eid);
+        }, 450);
+    }
+
+    function endGutterPress(message: Message): void {
+        if (longPressTimer !== undefined) {
+            window.clearTimeout(longPressTimer);
+            longPressTimer = undefined;
+        }
+        if (!longPressFired && selected().length > 0) {
+            toggleSelected(message.eid);
+        }
+        longPressFired = false;
+        onDocumentPointerUp();
+    }
+
+    function clearSelection(): void {
+        setSelected([]);
+        onDocumentPointerUp();
+    }
+
+    async function copySelected(): Promise<void> {
+        const text = props.client
+            .messages()
+            .filter((message) => selected().includes(message.eid))
+            .map((message) => message.body)
+            .join("\n");
+        if (!text) return;
+        try {
+            await copyText(text);
+            props.client.notify("Selected messages copied.", "success");
+        } catch {
+            props.client.notify("Could not copy the selected messages.", "error");
+        }
+        clearSelection();
+    }
+
+    async function deleteSelected(): Promise<void> {
+        if (
+            !window.confirm(
+                `Delete ${selected().length} selected message(s)?`,
+            )
+        ) {
+            return;
+        }
+        const eids = selected();
+        clearSelection();
+        for (const eid of eids) {
+            try {
+                await props.client.deleteMessage(eid);
+            } catch (error) {
+                props.client.notify(
+                    error instanceof Error ? error.message : String(error),
+                    "error",
+                );
+                break;
+            }
+        }
+    }
+
+    onMount(() => {
+        document.addEventListener("pointermove", onDocumentPointerMove, true);
+        document.addEventListener("pointerup", onDocumentPointerUp, true);
+        document.addEventListener("pointercancel", onDocumentPointerUp, true);
+        onCleanup(() => {
+            document.removeEventListener(
+                "pointermove",
+                onDocumentPointerMove,
+                true,
+            );
+            document.removeEventListener(
+                "pointerup",
+                onDocumentPointerUp,
+                true,
+            );
+            document.removeEventListener(
+                "pointercancel",
+                onDocumentPointerUp,
+                true,
+            );
+            if (autoScrollFrame !== undefined) cancelAnimationFrame(autoScrollFrame);
+        });
+    });
+
+    createEffect(() => {
+        props.client.activePub();
+        clearSelection();
+    });
+
     createEffect(() => {
         const count = props.client.messages().length;
         const pub = props.client.activePub();
@@ -349,6 +528,38 @@ export function Chat(props: {
                     <SettingsIcon />
                 </button>
             </header>
+            <Show when={selected().length > 0}>
+                <header class="chat-head selection-head">
+                    <button
+                        type="button"
+                        class="icon-button"
+                        aria-label="Cancel selection"
+                        onClick={clearSelection}
+                    >
+                        <CloseIcon />
+                    </button>
+                    <span class="selection-count">
+                        {selected().length} selected
+                    </span>
+                    <span class="chat-spacer" />
+                    <button
+                        type="button"
+                        class="icon-button"
+                        aria-label="Copy selected messages"
+                        onClick={() => void copySelected()}
+                    >
+                        <CopyIcon />
+                    </button>
+                    <button
+                        type="button"
+                        class="icon-button tint-danger"
+                        aria-label="Delete selected messages"
+                        onClick={() => void deleteSelected()}
+                    >
+                        <TrashIcon />
+                    </button>
+                </header>
+            </Show>
 
             <Show
                 when={room()}
@@ -397,29 +608,68 @@ export function Chat(props: {
                                         return (
                                             <article
                                                 class="message"
+                                                data-message-eid={message.eid}
                                                 classList={{
                                                     mine: message.mine,
                                                     grouped: grouped(),
+                                                    selected: selected().includes(message.eid),
                                                 }}
                                             >
                                                 <Show when={!message.mine}>
-                                                    <Show
-                                                        when={!grouped()}
-                                                        fallback={
-                                                            <span class="avatar-gap" />
+                                                    <span
+                                                        class="message-gutter"
+                                                        onPointerDown={(event) =>
+                                                            startGutterPress(
+                                                                event,
+                                                                message,
+                                                            )
+                                                        }
+                                                        onPointerUp={() =>
+                                                            endGutterPress(
+                                                                message,
+                                                            )
+                                                        }
+                                                        onPointerCancel={
+                                                            onDocumentPointerUp
                                                         }
                                                     >
-                                                        <Avatar
-                                                            publicKey={
-                                                                message.author
+                                                        <Show when={!grouped()}>
+                                                            <Avatar
+                                                                publicKey={
+                                                                    message.author
+                                                                }
+                                                                size={26}
+                                                                label={shortKey(
+                                                                    message.author,
+                                                                    8,
+                                                                )}
+                                                            />
+                                                        </Show>
+                                                        <Show
+                                                            when={
+                                                                selected()
+                                                                    .length > 0
                                                             }
-                                                            size={26}
-                                                            label={shortKey(
-                                                                message.author,
-                                                                8,
-                                                            )}
-                                                        />
-                                                    </Show>
+                                                        >
+                                                            <span
+                                                                class="selection-check"
+                                                                classList={{
+                                                                    selected:
+                                                                        selected().includes(
+                                                                            message.eid,
+                                                                        ),
+                                                                }}
+                                                            >
+                                                                <Show
+                                                                    when={selected().includes(
+                                                                        message.eid,
+                                                                    )}
+                                                                >
+                                                                    <CheckIcon size={12} />
+                                                                </Show>
+                                                            </span>
+                                                        </Show>
+                                                    </span>
                                                 </Show>
                                                 <div class="message-stack">
                                                     <Show
@@ -485,20 +735,57 @@ export function Chat(props: {
                                                     </div>
                                                 </div>
                                                 <Show when={message.mine}>
-                                                    <Show
-                                                        when={!grouped()}
-                                                        fallback={
-                                                            <span class="avatar-gap" />
+                                                    <span
+                                                        class="message-gutter"
+                                                        onPointerDown={(event) =>
+                                                            startGutterPress(
+                                                                event,
+                                                                message,
+                                                            )
+                                                        }
+                                                        onPointerUp={() =>
+                                                            endGutterPress(
+                                                                message,
+                                                            )
+                                                        }
+                                                        onPointerCancel={
+                                                            onDocumentPointerUp
                                                         }
                                                     >
-                                                        <Avatar
-                                                            publicKey={
-                                                                message.author
+                                                        <Show when={!grouped()}>
+                                                            <Avatar
+                                                                publicKey={
+                                                                    message.author
+                                                                }
+                                                                size={26}
+                                                                label="You"
+                                                            />
+                                                        </Show>
+                                                        <Show
+                                                            when={
+                                                                selected()
+                                                                    .length > 0
                                                             }
-                                                            size={26}
-                                                            label="You"
-                                                        />
-                                                    </Show>
+                                                        >
+                                                            <span
+                                                                class="selection-check"
+                                                                classList={{
+                                                                    selected:
+                                                                        selected().includes(
+                                                                            message.eid,
+                                                                        ),
+                                                                }}
+                                                            >
+                                                                <Show
+                                                                    when={selected().includes(
+                                                                        message.eid,
+                                                                    )}
+                                                                >
+                                                                    <CheckIcon size={12} />
+                                                                </Show>
+                                                            </span>
+                                                        </Show>
+                                                    </span>
                                                 </Show>
                                             </article>
                                         );
@@ -511,6 +798,21 @@ export function Chat(props: {
                             class="composer"
                             onSubmit={(event) => void send(event)}
                         >
+                            <button
+                                type="button"
+                                class="icon-button composer-emoji"
+                                aria-label="Emoji"
+                                title="Emoji"
+                                onClick={(event) => {
+                                    const rect = event.currentTarget.getBoundingClientRect();
+                                    setEmojiMenu({
+                                        x: rect.left,
+                                        y: rect.top - 190,
+                                    });
+                                }}
+                            >
+                                <EmojiIcon />
+                            </button>
                             <input
                                 type="text"
                                 placeholder="Message…"
@@ -553,6 +855,16 @@ export function Chat(props: {
                         y={state().y}
                         entries={messageEntries(state().message)}
                         onClose={() => setMessageMenu(null)}
+                    />
+                )}
+            </Show>
+            <Show when={emojiMenu()}>
+                {(state) => (
+                    <EmojiPicker
+                        x={state().x}
+                        y={state().y}
+                        onPick={(emoji) => setDraft((value) => value + emoji)}
+                        onClose={() => setEmojiMenu(null)}
                     />
                 )}
             </Show>

@@ -16,6 +16,7 @@ import {
     SettingsModal,
 } from "./components/Modals";
 import { Sidebar } from "./components/Sidebar";
+import { FeedbackModal } from "./components/Modal";
 import { LogoIcon } from "./components/Icons";
 
 export default function App(): JSX.Element {
@@ -140,6 +141,14 @@ export default function App(): JSX.Element {
                         client={client}
                         room={room()}
                         onClose={() => setInviteRoom(null)}
+                    />
+                )}
+            </Show>
+            <Show when={client.feedback()}>
+                {(message) => (
+                    <FeedbackModal
+                        message={message()}
+                        onClose={client.dismissFeedback}
                     />
                 )}
             </Show>

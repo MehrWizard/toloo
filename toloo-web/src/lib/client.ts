@@ -71,7 +71,7 @@ export function createTolooClient() {
     const [syncing, setSyncing] = createSignal(false);
     const [lastSync, setLastSync] = createSignal<number | null>(null);
     const [blocked, setBlocked] = createSignal<string[]>([]);
-    const [status, setStatus] = createSignal("");
+    const [feedback, setFeedback] = createSignal("");
 
     const activeRoom = createMemo(
         () => rooms().find((room) => room.pub === activePub()) ?? null,
@@ -81,9 +81,13 @@ export function createTolooClient() {
 
     function notify(
         text: string,
-        _kind: "info" | "success" | "error" = "info",
+        kind: "info" | "success" | "error" = "info",
     ): void {
-        setStatus(text);
+        if (kind === "error") setFeedback(text);
+    }
+
+    function dismissFeedback(): void {
+        setFeedback("");
     }
 
     function connectionFor(relay: RelayRecord): RelayConnection {
@@ -948,7 +952,7 @@ export function createTolooClient() {
     async function removeIdentity(): Promise<void> {
         await db.deleteIdentity();
         setIdentity(null);
-        setStatus("Identity removed from this device.");
+        notify("Identity removed from this device.", "info");
     }
 
     function startAutoSync(intervalMs = 12_000): () => void {
@@ -972,7 +976,8 @@ export function createTolooClient() {
         members,
         banned,
         blocked,
-        status,
+        feedback,
+        dismissFeedback,
         blockAuthor,
         attestAuthor,
         unblockAuthor,

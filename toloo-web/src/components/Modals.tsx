@@ -20,7 +20,6 @@ export function SettingsModal(props: {
     onClose: () => void;
 }): JSX.Element {
     const [relayUrl, setRelayUrl] = createSignal("");
-    const [error, setError] = createSignal("");
     const [busy, setBusy] = createSignal(false);
     const [rtl, setRtl] = createSignal(
         localStorage.getItem("toloo-rtl") === "1",
@@ -44,12 +43,14 @@ export function SettingsModal(props: {
     }
 
     async function run(action: () => Promise<void>): Promise<void> {
-        setError("");
         setBusy(true);
         try {
             await action();
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
+            props.client.notify(
+                cause instanceof Error ? cause.message : String(cause),
+                "error",
+            );
         } finally {
             setBusy(false);
         }
@@ -348,11 +349,6 @@ export function SettingsModal(props: {
                             Add
                         </button>
                     </form>
-                    <Show when={error()}>
-                        <p class="form-error" role="alert">
-                            {error()}
-                        </p>
-                    </Show>
                 </section>
 
                 <section class="settings-section">
@@ -445,18 +441,19 @@ export function AddRoomModal(props: {
 }): JSX.Element {
     const [name, setName] = createSignal("");
     const [joinInput, setJoinInput] = createSignal("");
-    const [error, setError] = createSignal("");
     const [busy, setBusy] = createSignal(false);
 
     async function create(event: SubmitEvent): Promise<void> {
         event.preventDefault();
-        setError("");
         setBusy(true);
         try {
             const room = await props.client.createRoom(name());
             props.onCreated(room);
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
+            props.client.notify(
+                cause instanceof Error ? cause.message : String(cause),
+                "error",
+            );
         } finally {
             setBusy(false);
         }
@@ -464,13 +461,15 @@ export function AddRoomModal(props: {
 
     async function join(event: SubmitEvent): Promise<void> {
         event.preventDefault();
-        setError("");
         setBusy(true);
         try {
             await props.client.joinRoom(joinInput());
             props.onClose();
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
+            props.client.notify(
+                cause instanceof Error ? cause.message : String(cause),
+                "error",
+            );
         } finally {
             setBusy(false);
         }
@@ -513,12 +512,6 @@ export function AddRoomModal(props: {
                     Join Room
                 </button>
             </form>
-
-            <Show when={error()}>
-                <p class="form-error" role="alert">
-                    {error()}
-                </p>
-            </Show>
         </Modal>
     );
 }
@@ -528,17 +521,18 @@ export function ImportModal(props: {
     onClose: () => void;
 }): JSX.Element {
     const [input, setInput] = createSignal("");
-    const [error, setError] = createSignal("");
     const [busy, setBusy] = createSignal(false);
 
     async function decode(): Promise<void> {
-        setError("");
         setBusy(true);
         try {
             await props.client.importDiscovery(input());
             props.onClose();
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
+            props.client.notify(
+                cause instanceof Error ? cause.message : String(cause),
+                "error",
+            );
         } finally {
             setBusy(false);
         }
@@ -574,11 +568,6 @@ export function ImportModal(props: {
                     Close
                 </button>
             </div>
-            <Show when={error()}>
-                <p class="form-error" role="alert">
-                    {error()}
-                </p>
-            </Show>
         </Modal>
     );
 }
@@ -589,18 +578,19 @@ export function RenameModal(props: {
     onClose: () => void;
 }): JSX.Element {
     const [name, setName] = createSignal("");
-    const [error, setError] = createSignal("");
     const [busy, setBusy] = createSignal(false);
 
     async function rename(event: SubmitEvent): Promise<void> {
         event.preventDefault();
-        setError("");
         setBusy(true);
         try {
             await props.client.renameRoom(name(), props.room.pub);
             props.onClose();
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : String(cause));
+            props.client.notify(
+                cause instanceof Error ? cause.message : String(cause),
+                "error",
+            );
         } finally {
             setBusy(false);
         }
@@ -633,11 +623,6 @@ export function RenameModal(props: {
                     </button>
                 </div>
             </form>
-            <Show when={error()}>
-                <p class="form-error" role="alert">
-                    {error()}
-                </p>
-            </Show>
         </Modal>
     );
 }

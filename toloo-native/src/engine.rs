@@ -1432,10 +1432,7 @@ impl Engine {
                         }
                         let body = message_body(inner);
                         let from_self = node_pub.as_deref() == Some(inner.d.n.as_str());
-                        if !from_self
-                            && !blocked.contains(&inner.d.n)
-                            && inner.d.ts > mark
-                        {
+                        if !from_self && !blocked.contains(&inner.d.n) && inner.d.ts > mark {
                             unread_ids.insert(message_key(&inner.d.n, inner.d.ts, &body));
                         }
                         if inner.d.ts > latest_ts {
@@ -1449,7 +1446,7 @@ impl Engine {
                     room_id: room.pub_key.clone(),
                     display_name: room.name.clone(),
                     initial: initial(&room.name),
-                            selected: is_active,
+                    selected: is_active,
                     has_key: room.room_identity.is_some(),
                     preview,
                     time_label,
@@ -2133,10 +2130,11 @@ mod tests {
             "Relay hops look stable from here.",
             "Meet at the usual channel after dark.",
         ];
-        for (index, body) in messages.iter().enumerate() {
+        for body in messages {
             let draft = make_room_message(&peer, &room_id, 1, body, vec![]).unwrap();
-            let timestamp = now_ms() + index as u64 * 60_000;
-            let commit = wrap_commit(draft, &room_identity, timestamp).unwrap();
+            // Message ids are channel:timestamp:author, so keep timestamps distinct.
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            let commit = wrap_commit(draft, &room_identity, now_ms()).unwrap();
             engine.pool.put(&commit).unwrap();
         }
         engine.select_room(&room_id).unwrap();

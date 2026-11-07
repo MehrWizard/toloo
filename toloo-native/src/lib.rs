@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 
 use anyhow::Result;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use toloo_lib::avatar::AvatarSpec;
 
 mod engine;
@@ -105,9 +105,7 @@ fn android_call_string(method: &str, value: &str) {
         let Ok(value) = env.new_string(value) else {
             return;
         };
-        let Ok(method_id) =
-            env.get_static_method_id(class, method, "(Ljava/lang/String;)V")
-        else {
+        let Ok(method_id) = env.get_static_method_id(class, method, "(Ljava/lang/String;)V") else {
             return;
         };
         let args = [JValue::Object(&value).as_jni()];
@@ -198,12 +196,7 @@ fn notify_content_snapshot() {
 
 static NOTIFIED_ROOMS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-fn maybe_notify(
-    room_id: &str,
-    room_name: &str,
-    messages: &[engine::MessageView],
-    enabled: bool,
-) {
+fn maybe_notify(room_id: &str, room_name: &str, messages: &[engine::MessageView], enabled: bool) {
     if !enabled || room_id.is_empty() {
         return;
     }
@@ -216,10 +209,7 @@ fn maybe_notify(
     let seen = guard.get_or_insert_with(HashMap::new);
     if let Some(previous) = seen.get(room_id) {
         if previous != &latest.eid {
-            platform::notify_message(
-                &format!("Toloo · {room_name}"),
-                &latest.body,
-            );
+            platform::notify_message(&format!("Toloo · {room_name}"), &latest.body);
         }
     }
     seen.insert(room_id.to_owned(), latest.eid.clone());
@@ -259,6 +249,23 @@ pub fn default_data_dir() -> PathBuf {
     PathBuf::from(".toloo-native")
 }
 
+fn is_error_status(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("error") || lower.contains("failed") || lower.contains("could not")
+}
+
+fn set_status(ui: &AppWindow, message: &str) {
+    ui.set_status(message.into());
+    if is_error_status(message) {
+        if ui.get_feedback_message().as_str() != message {
+            ui.set_feedback_message(message.into());
+            ui.set_feedback_open(true);
+        }
+    } else if !ui.get_feedback_open() {
+        ui.set_feedback_message("".into());
+    }
+}
+
 fn avatar_for(public_key: &str) -> (String, i32) {
     match AvatarSpec::from_pubkey_b64(public_key) {
         Ok(spec) => (spec.to_svg_path(), spec.palette as i32),
@@ -278,13 +285,12 @@ fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
     ui.set_has_identity(snapshot.has_identity);
     ui.set_identity_label(snapshot.identity_label.into());
     ui.set_identity_initial(snapshot.identity_initial.into());
-    let (identity_avatar_path, identity_avatar_palette) =
-        avatar_for(&snapshot.identity_sig_pub);
+    let (identity_avatar_path, identity_avatar_palette) = avatar_for(&snapshot.identity_sig_pub);
     ui.set_identity_avatar_path(identity_avatar_path.into());
     ui.set_identity_avatar_palette(identity_avatar_palette);
     ui.set_identity_sig_pub(snapshot.identity_sig_pub.into());
     ui.set_identity_enc_pub(snapshot.identity_enc_pub.into());
-    ui.set_status(snapshot.status.into());
+    set_status(ui, &snapshot.status);
     ui.set_network_label(snapshot.network_label.into());
     let (room_avatar_path, room_avatar_palette) = avatar_for(&snapshot.active_room_id);
     ui.set_active_room(snapshot.active_room.into());
@@ -554,7 +560,7 @@ fn run_ui(
         }
         let _ = tx.send(engine::Command::SetNotifications(enabled));
     });
-    let tx = command_tx;
+    let tx = command_tx.clone();
     ui.on_set_rtl(move |enabled| {
         let _ = tx.send(engine::Command::SetRtl(enabled));
     });
@@ -566,7 +572,38 @@ fn run_ui(
             Err(error) => format!("Could not copy: {error:#}"),
         };
         if let Some(ui) = status_weak.upgrade() {
-            ui.set_status(message.into());
+            set_status(&ui, &message);
+        }
+    });
+    let selection_weak = ui.as_weak();
+    ui.on_copy_selected(move |eids| {
+        if let Some(ui) = selection_weak.upgrade() {
+            let selected: Vec<String> = eids.iter().map(|eid| eid.to_string()).collect();
+            let messages = ui.get_messages();
+            let mut lines = Vec::new();
+            for message in messages.iter() {
+                if selected.iter().any(|eid| eid == message.eid.as_str()) {
+                    lines.push(message.body.to_string());
+                }
+            }
+            if !lines.is_empty() {
+                if let Err(error) = platform::copy_text(&lines.join("\n")) {
+                    set_status(&ui, &format!("Could not copy: {error:#}"));
+                }
+            }
+        }
+    });
+    let selection_weak = ui.as_weak();
+    let delete_tx = command_tx.clone();
+    ui.on_delete_selected(move |eids| {
+        if let Some(ui) = selection_weak.upgrade() {
+            let room_id = ui.get_active_room_id().to_string();
+            for eid in eids.iter() {
+                let _ = delete_tx.send(engine::Command::DeleteMessage {
+                    room_id: room_id.clone(),
+                    target: eid.to_string(),
+                });
+            }
         }
     });
     let status_weak = ui.as_weak();
@@ -576,7 +613,7 @@ fn run_ui(
             Err(error) => format!("Could not share: {error:#}"),
         };
         if let Some(ui) = status_weak.upgrade() {
-            ui.set_status(message.into());
+            set_status(&ui, &message);
         }
     });
 

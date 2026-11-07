@@ -570,18 +570,30 @@ textarea:focus {
 }
 
 .identity-button {
-    width: 36px;
-    height: 36px;
-    flex: 0 0 auto;
-    padding: 0;
+    min-width: 0;
+    height: 40px;
+    flex: 0 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 2px 4px 2px 0;
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--radius-sm);
     background: transparent;
+    color: var(--text);
 }
 
-.sidebar-logo {
-    flex: 0 0 auto;
-    color: var(--accent);
+.identity-button:hover {
+    background: var(--panel-2);
+}
+
+.sidebar-identity-name {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-ui);
+    font-weight: 600;
 }
 
 .sidebar-brand {
@@ -722,20 +734,6 @@ textarea:focus {
     margin-right: 4px;
 }
 
-.sidebar-status {
-    flex: 0 0 auto;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    padding: 0 11px;
-    background: var(--panel-2);
-    color: var(--text-soft);
-    font-size: var(--font-xs);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
 .sidebar-foot {
     flex: 0 0 auto;
     height: 44px;
@@ -759,6 +757,7 @@ textarea:focus {
 /* ── Chat ─────────────────────────────────────────────────────────────── */
 
 .chat {
+    position: relative;
     min-width: 0;
     height: 100%;
     display: flex;
@@ -815,6 +814,68 @@ textarea:focus {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.chat-spacer {
+    flex: 1;
+}
+
+.selection-head {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 6;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+}
+
+.selection-count {
+    color: var(--text);
+    font-size: var(--font-ui);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.message-gutter {
+    position: relative;
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    user-select: none;
+    touch-action: none;
+}
+
+.selection-check {
+    position: absolute;
+    inset: 0;
+    width: 18px;
+    height: 18px;
+    margin: auto;
+    display: grid;
+    place-items: center;
+    border: 2px solid var(--text-soft);
+    border-radius: 50%;
+    background: rgb(0 0 0 / 40%);
+    color: var(--accent-ink);
+    pointer-events: none;
+}
+
+.selection-check.selected {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+
+.message.selected .bubble {
+    border-color: var(--accent);
+}
+
+.bubble-text {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 .spinning svg {
@@ -976,6 +1037,11 @@ textarea:focus {
     height: 40px;
 }
 
+.composer-emoji {
+    width: 40px;
+    height: 40px;
+}
+
 .send-button {
     width: 44px;
     height: 40px;
@@ -1067,6 +1133,37 @@ textarea:focus {
     height: 1px;
     margin: 2px 4px;
     background: var(--line);
+}
+
+.emoji-picker {
+    position: fixed;
+    z-index: 90;
+    width: 304px;
+    padding: 8px;
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--panel);
+    box-shadow: 0 12px 40px rgb(0 0 0 / 45%);
+}
+
+.emoji-item {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    font-size: 20px;
+    line-height: 1;
+}
+
+.emoji-item:hover,
+.emoji-item:focus-visible {
+    background: var(--panel-2);
 }
 
 /* ── Modal ────────────────────────────────────────────────────────────── */

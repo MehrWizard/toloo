@@ -108,6 +108,93 @@ export component Avatar inherits Rectangle {
     }
 }
 
+export component MessageGutter inherits Rectangle {
+    in property <string> label;
+    in property <string> path;
+    in property <int> palette: 0;
+    in property <bool> selected: false;
+    in property <bool> selection-mode: false;
+    callback long-pressed();
+    callback toggle();
+    callback drag(length);
+    callback released();
+
+    width: 26px;
+    height: 26px;
+    background: transparent;
+
+    if root.path != "" : Avatar {
+        avatar-size: 26px;
+        label: root.label;
+        path: root.path;
+        palette: root.palette;
+    }
+
+    if root.selection-mode : Rectangle {
+        width: 18px;
+        height: 18px;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: 9px;
+        border-width: 2px;
+        border-color: root.selected ? Theme.accent : Theme.text-2;
+        background: root.selected ? Theme.accent : #00000066;
+        AppIcon {
+            source: @image-url("../../design/icons/check.svg");
+            icon-size: 12px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            tint: root.selected ? Theme.accent-ink : Theme.text-2;
+            visible: root.selected;
+        }
+    }
+
+    touch := TouchArea {
+        property <bool> dragging: false;
+        property <bool> long-fired: false;
+        property <length> start-y: 0px;
+
+        timer := Timer {
+            interval: 450ms;
+            running: touch.pressed && !touch.dragging && !touch.long-fired;
+            triggered => {
+                touch.long-fired = true;
+                touch.dragging = true;
+                root.long-pressed();
+            }
+        }
+
+        changed pressed => {
+            if (touch.pressed) {
+                touch.start-y = touch.mouse-y;
+                touch.long-fired = false;
+                touch.dragging = false;
+            } else {
+                touch.dragging = false;
+                root.released();
+            }
+        }
+        moved => {
+            if (touch.pressed) {
+                if (!touch.dragging
+                    && (touch.mouse-y - touch.start-y > 10px
+                        || touch.start-y - touch.mouse-y > 10px)) {
+                    touch.dragging = true;
+                }
+                if (root.selection-mode) {
+                    root.drag(touch.absolute-position.y + touch.mouse-y);
+                }
+            }
+        }
+        clicked => {
+            if (!touch.long-fired && root.selection-mode) {
+                root.toggle();
+            }
+            touch.long-fired = false;
+        }
+    }
+}
+
 export component DropdownItem inherits Rectangle {
     in property <image> icon;
     in property <string> label;

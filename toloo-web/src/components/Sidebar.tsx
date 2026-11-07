@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import type { TolooClient } from "../lib/client";
 import type { RoomRecord } from "../lib/db";
-import { copyText, formatTime } from "../lib/ui";
+import { copyText, formatTime, shortKey } from "../lib/ui";
 import { Avatar } from "./Avatar";
 import { DropdownMenu, menuPosition, type DropdownEntry } from "./Dropdown";
 import {
@@ -9,7 +9,6 @@ import {
     EditIcon,
     ExportIcon,
     InboxIcon,
-    LogoIcon,
     LogoutIcon,
     MoreIcon,
     PlusIcon,
@@ -140,9 +139,12 @@ export function Sidebar(props: {
                         size={36}
                         label="This device"
                     />
+                    <span class="sidebar-identity-name">
+                        {identity()
+                            ? shortKey(identity()!.sigPub, 8)
+                            : "No identity"}
+                    </span>
                 </button>
-                <LogoIcon size={22} class="sidebar-logo" />
-                <span class="sidebar-brand">Toloo</span>
                 <span class="sidebar-spacer" />
                 <button
                     type="button"
@@ -258,12 +260,6 @@ export function Sidebar(props: {
                     }}
                 </For>
             </nav>
-
-            <Show when={props.client.status()}>
-                <div class="sidebar-status" title={props.client.status()}>
-                    {props.client.status()}
-                </div>
-            </Show>
 
             <footer class="sidebar-foot">
                 <span class="sidebar-network">{networkLabel()}</span>

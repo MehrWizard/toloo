@@ -35,6 +35,7 @@ export const ClockIcon = icon("clock");
 export const CloseIcon = icon("close");
 export const CopyIcon = icon("copy");
 export const EditIcon = icon("edit");
+export const EmojiIcon = icon("emoji");
 export const ExportIcon = icon("export");
 export const FlagIcon = icon("flag");
 export const InboxIcon = icon("inbox");

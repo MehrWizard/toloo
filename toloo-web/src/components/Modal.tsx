@@ -52,3 +52,17 @@ export function Modal(props: {
         </Portal>
     );
 }
+
+export function FeedbackModal(props: {
+    message: string;
+    onClose: () => void;
+}): JSX.Element {
+    return (
+        <Modal title="Notice" onClose={props.onClose}>
+            <p class="help">{props.message}</p>
+            <button type="button" class="ghost-button wide" onClick={props.onClose}>
+                Close
+            </button>
+        </Modal>
+    );
+}

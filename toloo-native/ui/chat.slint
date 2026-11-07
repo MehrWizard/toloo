@@ -1,6 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { AppIcon, Avatar, DropdownItem, DropdownSeparator, IconButton, TextField } from "components.slint";
+import { AppIcon, Avatar, DropdownItem, DropdownSeparator, IconButton, MessageGutter, TextField } from "components.slint";
 import { MessageRow } from "models.slint";
 
 export component ChatPane inherits Rectangle {
@@ -32,6 +32,8 @@ export component ChatPane inherits Rectangle {
     callback block-node(string, string, string);
     callback attest-node(string, string);
     callback delete-message(string, string);
+    callback copy-selected([string]);
+    callback delete-selected([string]);
 
     private property <string> menu-eid;
     private property <string> menu-author;
@@ -46,6 +48,51 @@ export component ChatPane inherits Rectangle {
     private property <length> room-menu-y: 0px;
     private property <length> room-menu-width: 224px;
     private property <length> room-menu-height: 303px;
+    in-out property <[string]> selected-eids: [];
+    private property <bool> selection-dragging: false;
+    private property <length> selection-y: 0px;
+    private property <int> selection-last-index: -1;
+    private property <length> emoji-picker-x: 0px;
+    private property <length> emoji-picker-y: 0px;
+    private property <length> emoji-picker-width: 340px;
+    private property <length> emoji-picker-height: 176px;
+    private property <[string]> emojis: [
+        "😀", "😂", "😊", "😍", "🤔", "😎", "😢", "😡",
+        "👍", "👎", "🙏", "👏", "💪", "🤝", "👋", "❤️",
+        "🔥", "✨", "🎉", "💯", "🌙", "☀️", "🌱", "🍀",
+        "🍕", "☕", "🎵", "📎", "✅", "❌", "🔒", "🔗"
+    ];
+
+    public function toggle-message(eid: string) {
+        let index = root.selected-eids.index-of(eid);
+        if (index >= 0) {
+            root.selected-eids.remove(index);
+        } else {
+            root.selected-eids.push(eid);
+        }
+    }
+
+    public function begin-selection(index: int, eid: string) {
+        root.selection-last-index = index;
+        root.selection-dragging = true;
+        root.toggle-message(eid);
+    }
+
+    public function hit-selection(index: int, eid: string) {
+        if (root.selection-dragging && root.selection-last-index != index) {
+            root.selection-last-index = index;
+            root.toggle-message(eid);
+        }
+    }
+
+    public function clear-selected() {
+        root.selected-eids = [];
+        root.selection-dragging = false;
+    }
+
+    changed room-id-full => {
+        root.clear-selected();
+    }
 
     background: Theme.bg;
     height: 100%;
@@ -76,8 +123,8 @@ export component ChatPane inherits Rectangle {
                 }
                 if root.has-room : VerticalLayout {
                     vertical-stretch: 1;
+                    horizontal-stretch: 1;
                     spacing: 1px;
-                    cross-axis-alignment: center;
                     Text {
                         text: root.room-name;
                         color: Theme.text;
@@ -105,7 +152,6 @@ export component ChatPane inherits Rectangle {
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                 }
-                Rectangle { horizontal-stretch: 1; min-width: 1px; }
                 if root.has-room && !root.show-back : IconButton {
                     icon: @image-url("../../design/icons/sync.svg");
                     tint: Theme.text-2;
@@ -161,8 +207,9 @@ export component ChatPane inherits Rectangle {
             }
         }
 
-        if root.has-room : ScrollView {
+        if root.has-room : messages-scroll := ScrollView {
             vertical-stretch: 1;
+            vertical-scrollbar-policy: always-off;
             VerticalLayout {
                 padding: 12px;
                 spacing: 9px;
@@ -180,21 +227,22 @@ export component ChatPane inherits Rectangle {
                     }
                 }
 
-                for message in root.messages : HorizontalLayout {
+                for message[index] in root.messages : HorizontalLayout {
                     spacing: 8px;
                     alignment: message.mine
                         ? (root.rtl ? start : end)
                         : (root.rtl ? end : start);
 
-                    if !message.mine && !message.grouped : Avatar {
-                        avatar-size: 26px;
+                    if !message.mine : MessageGutter {
                         label: message.author-initial;
-                        path: message.avatar-path;
+                        path: message.grouped ? "" : message.avatar-path;
                         palette: message.avatar-palette;
-                    }
-                    if !message.mine && message.grouped : Rectangle {
-                        width: 26px;
-                        height: 26px;
+                        selected: root.selected-eids.index-of(message.eid) >= 0;
+                        selection-mode: root.selected-eids.length > 0;
+                        long-pressed => { root.begin-selection(index, message.eid); }
+                        toggle => { root.toggle-message(message.eid); }
+                        drag(y) => { root.selection-y = y - root.absolute-position.y; }
+                        released => { root.selection-dragging = false; }
                     }
                     VerticalLayout {
                         max-width: 520px;
@@ -205,20 +253,35 @@ export component ChatPane inherits Rectangle {
                             font-size: Theme.font-xs;
                             font-family: "monospace";
                         }
-                        Rectangle {
+                        message-bubble := Rectangle {
                             border-radius: Theme.radius;
                             background: message.mine ? Theme.bubble-mine : Theme.surface;
                             border-width: 1px;
-                            border-color: message.mine ? Theme.bubble-mine-border : Theme.border;
+                            border-color: root.selected-eids.index-of(message.eid) >= 0
+                                ? Theme.accent
+                                : message.mine ? Theme.bubble-mine-border : Theme.border;
+                            selection-hit-timer := Timer {
+                                interval: 30ms;
+                                running: root.selection-dragging
+                                    && root.selection-y >= message-bubble.absolute-position.y - root.absolute-position.y
+                                    && root.selection-y < message-bubble.absolute-position.y - root.absolute-position.y + message-bubble.height;
+                                triggered => {
+                                    root.hit-selection(index, message.eid);
+                                }
+                            }
                             VerticalLayout {
                                 padding: 9px;
                                 spacing: 3px;
-                                Text {
+                                TextInput {
                                     text: message.body;
+                                    read-only: true;
+                                    single-line: false;
                                     color: Theme.text;
                                     font-size: Theme.font-ui;
                                     horizontal-alignment: root.rtl ? right : left;
                                     wrap: word-wrap;
+                                    selection-background-color: Theme.accent;
+                                    selection-foreground-color: #1a0d08;
                                 }
                                 HorizontalLayout {
                                     spacing: 6px;
@@ -256,15 +319,32 @@ export component ChatPane inherits Rectangle {
                             }
                         }
                     }
-                    if message.mine && !message.grouped : Avatar {
-                        avatar-size: 26px;
+                    if message.mine : MessageGutter {
                         label: message.author-initial;
-                        path: message.avatar-path;
+                        path: message.grouped ? "" : message.avatar-path;
                         palette: message.avatar-palette;
+                        selected: root.selected-eids.index-of(message.eid) >= 0;
+                        selection-mode: root.selected-eids.length > 0;
+                        long-pressed => { root.begin-selection(index, message.eid); }
+                        toggle => { root.toggle-message(message.eid); }
+                        drag(y) => { root.selection-y = y - root.absolute-position.y; }
+                        released => { root.selection-dragging = false; }
                     }
-                    if message.mine && message.grouped : Rectangle {
-                        width: 26px;
-                        height: 26px;
+                }
+            }
+
+            selection-scroll := Timer {
+                interval: 60ms;
+                running: root.selection-dragging
+                    && (root.selection-y < 100px || root.selection-y > root.height - 80px);
+                triggered => {
+                    if (root.selection-y < 100px) {
+                        messages-scroll.content-y = min(0px, messages-scroll.content-y + 24px);
+                    } else {
+                        messages-scroll.content-y = max(
+                            messages-scroll.visible-height - messages-scroll.content-height,
+                            messages-scroll.content-y - 24px
+                        );
                     }
                 }
             }
@@ -280,12 +360,24 @@ export component ChatPane inherits Rectangle {
                 padding-bottom: 8px;
                 HorizontalLayout {
                     spacing: 8px;
+                    emoji-button := IconButton {
+                        icon: @image-url("../../design/icons/emoji.svg");
+                        tint: Theme.text-2;
+                        button-size: 40px;
+                        layout-order: root.rtl ? 2 : 0;
+                        clicked => {
+                            root.emoji-picker-x = emoji-button.absolute-position.x - root.absolute-position.x;
+                            root.emoji-picker-y = emoji-button.absolute-position.y - root.absolute-position.y
+                                - root.emoji-picker-height - 6px;
+                            emoji-picker.show();
+                        }
+                    }
                     TextField {
                         text <=> root.message-input;
                         placeholder: root.has-room ? "Message…" : "Select a room first";
                         enabled: root.has-room;
                         rtl: root.rtl;
-                        layout-order: root.rtl ? 1 : 0;
+                        layout-order: 1;
                         field-height: 40px;
                         accepted => {
                             if (root.has-room && root.message-input != "") {
@@ -297,7 +389,7 @@ export component ChatPane inherits Rectangle {
                     Rectangle {
                         width: 44px;
                         height: 40px;
-                        layout-order: root.rtl ? 0 : 1;
+                        layout-order: root.rtl ? 0 : 2;
                         border-radius: Theme.radius-sm;
                         background: root.has-room && root.message-input != ""
                             ? Theme.accent : Theme.surface-2;
@@ -319,6 +411,57 @@ export component ChatPane inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    if root.selected-eids.length > 0 : Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: Theme.header-height;
+        background: Theme.bg;
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 8px;
+            cross-axis-alignment: center;
+
+            IconButton {
+                icon: @image-url("../../design/icons/close.svg");
+                tint: Theme.text-2;
+                clicked => { root.clear-selected(); }
+            }
+            Text {
+                text: "\{root.selected-eids.length} selected";
+                color: Theme.text;
+                font-size: Theme.font-ui;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; min-width: 1px; }
+            IconButton {
+                icon: @image-url("../../design/icons/copy.svg");
+                tint: Theme.text-2;
+                clicked => {
+                    root.copy-selected(root.selected-eids);
+                    root.clear-selected();
+                }
+            }
+            IconButton {
+                icon: @image-url("../../design/icons/trash.svg");
+                tint: Theme.danger;
+                clicked => {
+                    root.delete-selected(root.selected-eids);
+                    root.clear-selected();
+                }
+            }
+        }
+        Rectangle {
+            y: parent.height - 1px;
+            width: 100%;
+            height: 1px;
+            background: Theme.border;
         }
     }
 
@@ -487,4 +630,51 @@ export component ChatPane inherits Rectangle {
             }
         }
     }
+    emoji-picker := PopupWindow {
+        width: root.emoji-picker-width;
+        height: root.emoji-picker-height;
+        x: root.emoji-picker-x;
+        y: root.emoji-picker-y;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            background: Theme.surface;
+            drop-shadow-blur: 18px;
+            drop-shadow-color: #00000088;
+            drop-shadow-offset-y: 6px;
+
+            FlexboxLayout {
+                padding: 8px;
+                spacing: 4px;
+                flex-wrap: wrap;
+
+                for emoji in root.emojis : Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: Theme.radius-sm;
+                    background: touch.pressed ? Theme.surface-2 : transparent;
+                    Text {
+                        text: emoji;
+                        font-size: 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        width: 100%;
+                        height: 100%;
+                    }
+                    touch := TouchArea {
+                        clicked => {
+                            root.message-input = root.message-input + emoji;
+                            emoji-picker.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 }

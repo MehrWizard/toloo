@@ -89,3 +89,67 @@ export function menuPosition(element: HTMLElement): {
     const rtl = document.documentElement.dir === "rtl";
     return { x: rtl ? rect.left : rect.right - 224, y: rect.bottom + 2 };
 }
+
+const EMOJIS = [
+    "😀", "😂", "😊", "😍", "🤔", "😎", "😢", "😡",
+    "👍", "👎", "🙏", "👏", "💪", "🤝", "👋", "❤️",
+    "🔥", "✨", "🎉", "💯", "🌙", "☀️", "🌱", "🍀",
+    "🍕", "☕", "🎵", "📎", "✅", "❌", "🔒", "🔗",
+];
+
+export function EmojiPicker(props: {
+    x: number;
+    y: number;
+    onPick: (emoji: string) => void;
+    onClose: () => void;
+}): JSX.Element {
+    let picker: HTMLDivElement | undefined;
+
+    onMount(() => {
+        const onKey = (event: KeyboardEvent) => {
+            if (event.key === "Escape") props.onClose();
+        };
+        const onPointer = (event: PointerEvent) => {
+            if (picker && !picker.contains(event.target as Node)) props.onClose();
+        };
+        document.addEventListener("keydown", onKey);
+        document.addEventListener("pointerdown", onPointer, true);
+        queueMicrotask(() => {
+            if (!picker) return;
+            const rect = picker.getBoundingClientRect();
+            picker.style.left = `${Math.max(8, Math.min(props.x, window.innerWidth - rect.width - 8))}px`;
+            picker.style.top = `${Math.max(8, Math.min(props.y, window.innerHeight - rect.height - 8))}px`;
+        });
+        onCleanup(() => {
+            document.removeEventListener("keydown", onKey);
+            document.removeEventListener("pointerdown", onPointer, true);
+        });
+    });
+
+    return (
+        <Portal>
+            <div
+                ref={picker}
+                class="emoji-picker"
+                role="dialog"
+                aria-label="Emoji"
+                style={{ left: `${props.x}px`, top: `${props.y}px` }}
+            >
+                <For each={EMOJIS}>
+                    {(emoji) => (
+                        <button
+                            type="button"
+                            class="emoji-item"
+                            onClick={() => {
+                                props.onPick(emoji);
+                                props.onClose();
+                            }}
+                        >
+                            {emoji}
+                        </button>
+                    )}
+                </For>
+            </div>
+        </Portal>
+    );
+}
