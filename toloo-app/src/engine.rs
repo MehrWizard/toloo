@@ -1775,7 +1775,7 @@ mod tests {
     fn temp_engine() -> (Engine, PathBuf) {
         let id = TEST_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "toloo-native-test-{}-{}-{id}",
+            "toloo-app-test-{}-{}-{id}",
             std::process::id(),
             now_ms()
         ));

@@ -24,4 +24,4 @@ cargo ndk \
     "${ABIS[@]/#/--target=}" \
     --platform 26 \
     -o "$JNI_DIR" \
-    build --release --locked -p toloo-native --lib
+    build --release --locked -p toloo-app --lib

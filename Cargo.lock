@@ -6932,6 +6932,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "toloo-app"
+version = "0.1.7"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "jni 0.21.1",
+ "serde",
+ "serde_json",
+ "slint",
+ "slint-build",
+ "tokio",
+ "toloo-lib",
+]
+
+[[package]]
 name = "toloo-cli"
 version = "0.1.7"
 dependencies = [
@@ -6985,21 +7000,6 @@ dependencies = [
  "tokio-tungstenite",
  "toloo-core",
  "x509-cert",
-]
-
-[[package]]
-name = "toloo-native"
-version = "0.1.7"
-dependencies = [
- "anyhow",
- "arboard",
- "jni 0.21.1",
- "serde",
- "serde_json",
- "slint",
- "slint-build",
- "tokio",
- "toloo-lib",
 ]
 
 [[package]]

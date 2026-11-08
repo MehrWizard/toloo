@@ -14,15 +14,16 @@ git. Current remaining work, in priority order:
 - [ ] Client UI: per-room LRU tail windows + batched foreground ingest
 - [ ] Client UI: virtualized message list (render visible rows only)
 
-## Native Slint client (2026-11-01)
+## Toloo app (2026-11-01)
 
-- [x] `toloo-native` crate: Slint UI + engine thread over `toloo-lib`; native
+- [x] `toloo-app` crate: Slint UI + engine thread over `toloo-lib`; native
       WS/HTTP transports, local Pool, config persistence, room authority.
 - [x] Desktop build and engine tests (identity, restore, create room, send,
       committed status, WS and HTTP relay sync).
 - [x] `native.yml`: desktop release builds + experimental Android APK job;
-      release workflow now ships native binaries instead of Tauri.
-- [x] Remove Tauri (`toloo-app/`) from workspace, CI, release, and docs.
+      release workflow now ships app binaries instead of Tauri.
+- [x] Remove the Tauri app from `main`; its last snapshot is preserved as the
+      `toloo-app-legacy` tag.
 - [ ] Validate Android APK on a real API 26 device; verify AWS-LC/Skia
       cross-compilation, IME, TLS, renderer choice, APK size and RSS.
 - [ ] Android release signing/AAB and store packaging.

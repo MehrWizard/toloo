@@ -50,17 +50,17 @@ jobs:
         run: cargo binstall --no-confirm cargo-ndk@4.1.2 || cargo install cargo-ndk --version 4.1.2 --locked
 
       - name: Build x86_64 native libraries
-        run: ./toloo-native/android/build-native.sh x86_64
+        run: ./toloo-app/android/build-native.sh x86_64
 
       - name: Build x86_64 debug APK
         env:
           TOLOO_ANDROID_EMULATOR_ABI: x86_64
-        run: gradle -p toloo-native/android --no-daemon assembleDebug
+        run: gradle -p toloo-app/android --no-daemon assembleDebug
 
       - name: Inspect debug APK
         run: |
-          find toloo-native/android/app/build/outputs/apk/debug -type f | sort
-          unzip -l toloo-native/android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/'
+          find toloo-app/android/app/build/outputs/apk/debug -type f | sort
+          unzip -l toloo-app/android/app/build/outputs/apk/debug/app-debug.apk | grep 'lib/'
 
       - name: Enable KVM
         run: |
@@ -82,7 +82,7 @@ jobs:
             -camera-back none -camera-front none
           script: |
             set -x
-            adb install -r toloo-native/android/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r toloo-app/android/app/build/outputs/apk/debug/app-debug.apk
             adb logcat -c
             adb shell am start -W -n com.irandawn.toloo/.TolooActivity | tee start.txt
             sleep 2

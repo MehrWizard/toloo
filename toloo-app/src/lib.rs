@@ -1,4 +1,4 @@
-//! Toloo native client: Slint UI over the native toloo-lib engine.
+//! Toloo application: Slint UI over the native toloo-lib engine.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -215,38 +215,51 @@ fn maybe_notify(room_id: &str, room_name: &str, messages: &[engine::MessageView]
     seen.insert(room_id.to_owned(), latest.eid.clone());
 }
 
+fn migrate_legacy_dir(old: PathBuf, new: PathBuf) -> PathBuf {
+    if new.exists() || !old.exists() {
+        return new;
+    }
+    if std::fs::rename(&old, &new).is_ok() {
+        new
+    } else {
+        old
+    }
+}
+
 pub fn default_data_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("TOLOO_NATIVE_DATA_DIR") {
+    if let Some(path) =
+        std::env::var_os("TOLOO_APP_DATA_DIR").or_else(|| std::env::var_os("TOLOO_NATIVE_DATA_DIR"))
+    {
         return PathBuf::from(path);
     }
     #[cfg(target_os = "windows")]
     {
         if let Some(appdata) = std::env::var_os("APPDATA") {
-            return PathBuf::from(appdata).join("toloo-native");
+            let base = PathBuf::from(appdata);
+            return migrate_legacy_dir(base.join("toloo-native"), base.join("toloo-app"));
         }
     }
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
+            let base = PathBuf::from(home)
                 .join("Library")
-                .join("Application Support")
-                .join("toloo-native");
+                .join("Application Support");
+            return migrate_legacy_dir(base.join("toloo-native"), base.join("toloo-app"));
         }
     }
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
     {
         if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(data_home).join("toloo-native");
+            let base = PathBuf::from(data_home);
+            return migrate_legacy_dir(base.join("toloo-native"), base.join("toloo-app"));
         }
         if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join(".local")
-                .join("share")
-                .join("toloo-native");
+            let base = PathBuf::from(home).join(".local").join("share");
+            return migrate_legacy_dir(base.join("toloo-native"), base.join("toloo-app"));
         }
     }
-    PathBuf::from(".toloo-native")
+    migrate_legacy_dir(PathBuf::from(".toloo-native"), PathBuf::from(".toloo-app"))
 }
 
 fn is_error_status(message: &str) -> bool {
@@ -401,6 +414,28 @@ fn start_engine(
         .name("toloo-engine".to_owned())
         .spawn(move || engine::run(data_dir, command_rx, update_tx))?;
     Ok((command_tx, update_rx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::migrate_legacy_dir;
+    use std::fs;
+
+    #[test]
+    fn migrates_legacy_data_dir() {
+        let root = std::env::temp_dir().join(format!("toloo-app-migration-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let legacy = root.join("toloo-native");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("config.json"), "{}").unwrap();
+
+        let migrated = migrate_legacy_dir(legacy.clone(), root.join("toloo-app"));
+        assert_eq!(migrated, root.join("toloo-app"));
+        assert!(migrated.join("config.json").exists());
+        assert!(!legacy.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }
 
 fn run_ui(

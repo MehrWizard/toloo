@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "toloo-native"
+rootProject.name = "toloo-app"
 include(":app")

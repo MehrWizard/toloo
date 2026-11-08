@@ -85,14 +85,14 @@ toloo-web/            SolidJS + TypeScript browser client
   src/components/     Onboarding, sidebar, chat, settings, modals
   scripts/            Builds and copies toloo-wasm/pkg before Vite
 
-toloo-native/         Native Slint client over toloo-lib — no WebView
+toloo-app/         Toloo app — Slint UI over toloo-lib, no WebView
   ui/app.slint        Declarative UI (identity, relays, rooms, chat)
   src/engine.rs       Engine thread: native transports, pool, room authority
   src/lib.rs          Slint bridge and snapshot polling
   src/main.rs         Desktop entry point
   build.rs            Slint UI compiler
 
-toloo-cli/            Binary — headless relay and scripting
+toloo-cli/            Headless Toloo protocol — servers and physical nodes
   src/
     main.rs           keygen, relay, create-room, import, send, sync, vectors
 
@@ -101,35 +101,65 @@ toloo-cli/            Binary — headless relay and scripting
 Dependency chain:
 ```
 toloo-core  ←  toloo-lib  ←  toloo-cli
-                         ←  toloo-native (Slint, direct Rust)
+                         ←  toloo-app (Slint, direct Rust)
             ←  toloo-wasm  ←  toloo-web (wasm core + JS transport/store/UI)
 ```
 
 ---
 
+## Development rules
+
+- **Isolated GUI testing is mandatory.** Never launch `toloo-app` on the
+  developer's active desktop. Native interaction tests, screenshots, and
+  startup smoke checks must run inside an isolated nested niri session hosted
+  by cage (or another nested Wayland compositor), with a private
+  `XDG_RUNTIME_DIR` and synthetic input. Do not move the host pointer or switch
+  the host workspace; tear the session down afterward. Control it through CLI
+  tools and capture with `grim`.
+- **Build/check is enough for non-UI changes.** Do not start the GUI on the
+  host just to inspect `--help` or startup output.
+- **Browser UI tests use headless Chromium via CDP**, never a visible browser
+  window on the developer's desktop.
+- **Android APKs are built in GitHub Actions**, not on development machines.
+- **Native UI is canonical.** `toloo-web` mirrors the Slint client 1:1 (only
+  the accent color differs); theme, copy, and icons come from
+  `design/contract.json` via `node design/generate.mjs`. Do not hand-edit
+  generated files.
+- **One protocol implementation.** Envelope, crypto, membership, discovery,
+  and event logic live in `toloo-core`; clients must not duplicate it.
+  `toloo-ffi` is intentionally not used.
+- **Releases are `v0.1.N` tags.** Pushing a tag runs
+  `.github/workflows/release.yml`; every release asset name includes the
+  version (for example `toloo-app-0.1.8-linux-x86_64`).
+
+---
+
 ## Platform support
 
-### Native client (Slint)
+### Toloo app (`toloo-app`)
 
-No WebView and no JavaScript runtime. The UI is Slint; the protocol and
-transport engine is `toloo-lib` in the same process.
+The day-to-day application for normal users. No WebView and no JavaScript
+runtime. The UI is Slint; the protocol and transport engine is `toloo-lib` in
+the same process.
 
 | Platform | Minimum version | Notes |
 |---|---|---|
-| Linux x86_64 | glibc 2.17+ | `toloo-native` binary; X11/Wayland + OpenGL or software renderer |
+| Linux x86_64 | glibc 2.17+ | `toloo-app` binary; X11/Wayland + OpenGL or software renderer |
 | Linux aarch64 | glibc 2.17+ | Raspberry Pi 4/5, Ampere, AWS Graviton |
-| Windows x86_64 | Windows 10 | `toloo-native.exe` |
+| Windows x86_64 | Windows 10 | `toloo-app.exe` |
 | macOS arm64 | macOS 11+ | Slint winit backend |
 | Android | **API 26 / Android 8.0+** | Rust + Slint + Skia/OpenGL ES; arm64-v8a and armeabi-v7a; experimental APK workflow |
 | iOS | not yet shipped | Slint iOS support is version-dependent; verify before planning |
 
-The old Tauri/WebView app has been removed. Android 7 / API 24–25 devices are
-not supported by the Slint backend; they require a separate native-UI path.
+The old Tauri/WebView app has been removed from `main`; its last snapshot is
+preserved as the `toloo-app-legacy` tag. Android 7 / API 24–25 devices are not
+supported by the Slint backend; they require a separate native-UI path.
 
 ### CLI (`toloo-cli`)
 
-The CLI has no UI dependencies — pure Rust, zero system libraries. It builds and runs
-natively on Linux, Windows, and macOS with no system libraries required.
+`toloo-cli` is the cross-platform headless Toloo protocol for servers and
+physical nodes. It has no UI dependencies — pure Rust, zero system libraries —
+and runs natively on Linux, Windows, and macOS.
 
 | Platform | Minimum | Binary | Notes |
 |---|---|---|---|
@@ -209,26 +239,26 @@ cargo build -p toloo-cli --release --target aarch64-pc-windows-msvc
 set RUSTFLAGS=-C target-feature=+crt-static
 ```
 
-### Native client — Linux
+### Toloo app — Linux
 
 ```sh
 # Debian/Ubuntu build and runtime libraries for Slint's winit backend
 sudo apt-get install -y libxkbcommon-dev libfontconfig1-dev \
   libwayland-dev libx11-xcb-dev libxcb1-dev libgl1-mesa-dev
 
-cargo run -p toloo-native
-cargo build -p toloo-native --release
+cargo run -p toloo-app
+cargo build -p toloo-app --release
 ```
 
-Use `SLINT_BACKEND=winit-software cargo run -p toloo-native` for the CPU
+Use `SLINT_BACKEND=winit-software cargo run -p toloo-app` for the CPU
 renderer on systems without usable OpenGL.
 
-### Native client — Windows / macOS
+### Toloo app — Windows / macOS
 
 ```sh
-cargo build -p toloo-native --release
-# Windows: target/release/toloo-native.exe
-# macOS:   target/release/toloo-native
+cargo build -p toloo-app --release
+# Windows: target/release/toloo-app.exe
+# macOS:   target/release/toloo-app
 ```
 
 No WebView, WebView2, or JavaScript runtime is required.
@@ -246,8 +276,8 @@ rustup target add aarch64-linux-android armv7-linux-androideabi
 
 # Gradle + cargo-ndk packaging (Kotlin NativeActivity + AndroidX splash)
 cargo install cargo-ndk --version 4.1.2 --locked
-./toloo-native/android/build-native.sh
-(cd toloo-native/android && gradle assembleRelease)
+./toloo-app/android/build-native.sh
+(cd toloo-app/android && gradle assembleRelease)
 ```
 
 Set `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, and
@@ -290,10 +320,10 @@ targets in parallel and creates a GitHub Release:
 
 | Job | Runner | Output |
 |---|---|---|
-| `build-native (linux-x86_64)` | ubuntu-latest | `toloo-native` |
-| `build-native (linux-aarch64)` | ubuntu-24.04-arm | `toloo-native` |
-| `build-native (windows-x86_64)` | windows-latest | `toloo-native.exe` |
-| `build-native (macos-aarch64)` | macos-latest | `toloo-native` |
+| `build-app (linux-x86_64)` | ubuntu-latest | `toloo-app-<version>-linux-x86_64` |
+| `build-app (linux-aarch64)` | ubuntu-24.04-arm | `toloo-app-<version>-linux-aarch64` |
+| `build-app (windows-x86_64)` | windows-latest | `toloo-app-<version>-windows-x86_64.exe` |
+| `build-app (macos-aarch64)` | macos-latest | `toloo-app-<version>-macos-aarch64` |
 | `build-cli (cli-linux-x86_64)` | ubuntu-latest | static musl binary |
 | `build-cli (cli-linux-aarch64)` | ubuntu-latest | static musl binary (aarch64, zig cross) |
 | `build-cli (cli-windows-x86_64)` | windows-latest | `.exe` (static CRT) |
@@ -301,8 +331,9 @@ targets in parallel and creates a GitHub Release:
 | `build-cli (cli-macos-x86_64)` | macos-latest | macOS binary (x86_64) |
 | `build-cli (cli-macos-aarch64)` | macos-latest | macOS binary (Apple Silicon) |
 
-Android APKs are built by `.github/workflows/native.yml` (API 26+, arm64 and
-armv7) and are currently experimental.
+Android APKs are built by the release workflow and the `App` CI workflow
+(API 26+, arm64 and armv7) and are currently experimental. All release assets
+include the Toloo version in their file name.
 
 ### CI / Benchmarks
 
@@ -403,7 +434,7 @@ distributed. Details and fairness caveats:
 
 ### Native (Slint)
 
-The native client is one Rust process. Slint renders the UI; a dedicated engine
+The Toloo app is one Rust process. Slint renders the UI; a dedicated engine
 thread owns `toloo-lib`'s pool, Tokio runtime, and native WebSocket/HTTP
 transports. The UI sends commands over a channel and applies snapshots on the
 Slint event-loop thread.
@@ -422,7 +453,7 @@ transports, self-signed pinning, and OS storage.
 
 ### Browser (wasm)
 
-When running outside the native client — in a browser or a web app — protocol logic is the
+When running outside the Toloo app — in a browser or a web app — protocol logic is the
 same `toloo-core` compiled to WebAssembly by `toloo-wasm`. `toloo-web/` is the
 SolidJS client: it loads the generated wasm package, owns WebSocket/HTTP
 transport and IndexedDB persistence, and keeps all signing, verification,

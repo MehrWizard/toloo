@@ -5,7 +5,7 @@ members = [
     "toloo-cli",
     "toloo-protocol-bench",
     "toloo-wasm",
-    "toloo-native",
+    "toloo-app",
 ]
 resolver = "2"
 

@@ -180,8 +180,8 @@ export type IconName = keyof typeof ICONS;
 `;
 }
 
-emit("toloo-native/ui/theme.slint", themeSlint());
-emit("toloo-native/ui/design-copy.slint", copySlint());
+emit("toloo-app/ui/theme.slint", themeSlint());
+emit("toloo-app/ui/design-copy.slint", copySlint());
 emit("toloo-web/src/generated/design.css", designCss());
 emit("toloo-web/src/generated/design.ts", designTs());
 if (existsSync(path.join(here, "icons"))) {

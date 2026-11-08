@@ -19,7 +19,7 @@
             android:windowSoftInputMode="adjustResize">
             <meta-data
                 android:name="android.app.lib_name"
-                android:value="toloo_native" />
+                android:value="toloo_app" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

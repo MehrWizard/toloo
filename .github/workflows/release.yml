@@ -10,10 +10,10 @@ permissions:
 jobs:
 
   # ────────────────────────────────────────────────────────────────────
-  # Native Slint builds — no WebView, direct Rust core.
+  # Toloo app binaries — Slint UI, no WebView, direct Rust core.
   # ────────────────────────────────────────────────────────────────────
-  build-native:
-    name: Native (${{ matrix.artifact }})
+  build-app:
+    name: App (${{ matrix.artifact }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -21,16 +21,16 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: linux-x86_64
-            binary: target/release/toloo-native
+            binary: target/release/toloo-app
           - os: ubuntu-24.04-arm
             artifact: linux-aarch64
-            binary: target/release/toloo-native
+            binary: target/release/toloo-app
           - os: windows-latest
             artifact: windows-x86_64
-            binary: target/release/toloo-native.exe
+            binary: target/release/toloo-app.exe
           - os: macos-latest
             artifact: macos-aarch64
-            binary: target/release/toloo-native
+            binary: target/release/toloo-app
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -45,11 +45,22 @@ jobs:
             libxkbcommon-dev libfontconfig1-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libgl1-mesa-dev
       - name: Build
-        run: cargo build -p toloo-native --release
+        run: cargo build -p toloo-app --release
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ext=""
+          if [[ "${{ runner.os }}" == "Windows" ]]; then ext=".exe"; fi
+          mkdir -p dist
+          cp "${{ matrix.binary }}" \
+            "dist/toloo-app-${version}-${{ matrix.artifact }}${ext}"
+          chmod +x dist/* 2>/dev/null || true
+          ls -lh dist
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          name: app-${{ matrix.artifact }}
+          path: dist/
 
   build-android:
     name: Android APK (experimental)
@@ -91,27 +102,28 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d \
             > "$RUNNER_TEMP/android/toloo-release.jks"
       - name: Build Android native libraries
-        run: ./toloo-native/android/build-native.sh
+        run: ./toloo-app/android/build-native.sh
       - name: Build signed APKs
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/android/toloo-release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEYSTORE_ALIAS: toloo
-        run: gradle -p toloo-native/android --no-daemon assembleRelease
+        run: gradle -p toloo-app/android --no-daemon assembleRelease
       - name: Package APKs
         run: |
+          version="${GITHUB_REF_NAME#v}"
           mkdir -p dist/android
-          apkdir=toloo-native/android/app/build/outputs/apk/release
+          apkdir=toloo-app/android/app/build/outputs/apk/release
           cp "$apkdir/app-arm64-v8a-release.apk" \
-            dist/android/toloo-native-arm64-v8a.apk
+            "dist/android/toloo-app-${version}-android-arm64-v8a.apk"
           cp "$apkdir/app-armeabi-v7a-release.apk" \
-            dist/android/toloo-native-armeabi-v7a.apk
+            "dist/android/toloo-app-${version}-android-armeabi-v7a.apk"
           cp "$apkdir/app-universal-release.apk" \
-            dist/android/toloo-native-universal.apk
+            "dist/android/toloo-app-${version}-android-universal.apk"
           ls -lh dist/android
       - uses: actions/upload-artifact@v4
         with:
-          name: toloo-native-android
+          name: toloo-app-android
           path: dist/android/*.apk
           if-no-files-found: error
 
@@ -200,20 +212,22 @@ jobs:
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         run: |
+          version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           SUFFIX=$(echo "${{ matrix.artifact }}" | sed 's/^cli-//')
           cp target/${{ matrix.target }}/release/${{ matrix.binary }} \
-             dist/toloo-cli-${SUFFIX}
+             "dist/toloo-cli-${version}-${SUFFIX}"
           chmod +x dist/*
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
+          version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           SUFFIX=$(echo "${{ matrix.artifact }}" | sed 's/^cli-//')
           cp target/${{ matrix.target }}/release/${{ matrix.binary }} \
-             dist/toloo-cli-${SUFFIX}.exe
+             "dist/toloo-cli-${version}-${SUFFIX}.exe"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -255,9 +269,11 @@ jobs:
 
       - name: Package
         run: |
+          version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           cp -r toloo-wasm/pkg dist/toloo-wasm
-          cd dist && zip -r toloo-wasm.zip toloo-wasm
+          (cd dist && zip -r "toloo-wasm-${version}.zip" toloo-wasm)
+          rm -rf dist/toloo-wasm
 
       - uses: actions/upload-artifact@v4
         with:
@@ -269,10 +285,14 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   release:
     name: Create Release
-    needs: [build-native, build-android, build-cli, build-wasm]
+    needs: [build-app, build-android, build-cli, build-wasm]
     if: ${{ !cancelled() && needs.build-android.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts/
@@ -280,23 +300,66 @@ jobs:
       - name: List artifacts
         run: find artifacts/ -type f | sort
 
+      - name: Build release notes
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          base="https://github.com/${REPO}/releases/download/${TAG}"
+          previous="$(git describe --tags --abbrev=0 --match 'v*' "${TAG}^" 2>/dev/null || true)"
+
+          row() {
+            local platform="$1"
+            shift
+            local cell=""
+            while [ "$#" -gt 0 ]; do
+              local label="$1"
+              local file="$2"
+              shift 2
+              if find artifacts -type f -name "$file" -print -quit | grep -q .; then
+                if [ -n "$cell" ]; then cell+=" · "; fi
+                cell+="[${label}](${base}/${file})"
+              fi
+            done
+            if [ -n "$cell" ]; then
+              printf '| %s | %s |\n' "$platform" "$cell"
+            fi
+          }
+
+          {
+            echo "## Binaries"
+            echo
+            echo "| Platform | Download |"
+            echo "|---|---|"
+            row "Linux x86_64" "App" "toloo-app-${version}-linux-x86_64" "CLI" "toloo-cli-${version}-linux-x86_64"
+            row "Linux arm64" "App" "toloo-app-${version}-linux-aarch64" "CLI" "toloo-cli-${version}-linux-aarch64"
+            row "Windows x86_64" "App" "toloo-app-${version}-windows-x86_64.exe" "CLI" "toloo-cli-${version}-windows-x86_64.exe"
+            row "Windows arm64" "CLI" "toloo-cli-${version}-windows-aarch64.exe"
+            row "macOS arm64" "App" "toloo-app-${version}-macos-aarch64" "CLI" "toloo-cli-${version}-macos-aarch64"
+            row "macOS x86_64" "CLI" "toloo-cli-${version}-macos-x86_64"
+            row "Android arm64" "APK" "toloo-app-${version}-android-arm64-v8a.apk"
+            row "Android armv7" "APK" "toloo-app-${version}-android-armeabi-v7a.apk"
+            row "Android universal" "APK" "toloo-app-${version}-android-universal.apk"
+            row "Browser" "Package" "toloo-wasm-${version}.zip"
+            echo
+            echo "## Changelog"
+            echo
+            if [ -n "$previous" ]; then
+              git log --no-merges --pretty=format:"- [%h](https://github.com/${REPO}/commit/%H) %s" "${previous}..${TAG}"
+            else
+              echo "_Initial release._"
+            fi
+            echo
+          } > release-notes.md
+
+          cat release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           name: "Toloo ${{ github.ref_name }}"
           prerelease: ${{ contains(github.ref_name, '-') }}
-          body: |
-            ## Toloo ${{ github.ref_name }}
-
-            | Platform | File | Notes |
-            |---|---|---|
-            | Linux x86_64 | `toloo-native` | Slint native client — no WebView |
-            | Linux aarch64 | `toloo-native` | Slint native client — no WebView |
-            | Windows x86_64 | `toloo-native.exe` | Slint native client — no WebView |
-            | macOS arm64 | `toloo-native` | Slint native client — no WebView |
-            | Linux CLI (x86_64) | `toloo-cli-linux-x86_64` | Static musl binary, zero system deps |
-            | Linux CLI (aarch64) | `toloo-cli-linux-aarch64` | Static musl binary, cross-compiled |
-            | Browser | `toloo-wasm.zip` | ESM JS + TypeScript types + wasm32 package (`toloo-wasm/`) |
-            | Android arm64 | `toloo-native-arm64-v8a.apk` | API 26+; preferred, signed with the `toloo` release key |
-            | Android armv7 | `toloo-native-armeabi-v7a.apk` | API 26+; signed with the `toloo` release key |
-            | Android universal | `toloo-native-universal.apk` | API 26+, both ABIs; slower install |
+          body_path: release-notes.md
           files: artifacts/**/*

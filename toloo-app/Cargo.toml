@@ -1,17 +1,17 @@
 [package]
-name = "toloo-native"
+name = "toloo-app"
 version = "0.1.7"
 edition = "2021"
-description = "Toloo native client — Slint UI over the native Rust engine"
+description = "Toloo application — Slint UI over the native Rust engine"
 publish = false
 
 [lib]
-name = "toloo_native"
+name = "toloo_app"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "toloo-native"
+name = "toloo-app"
 path = "src/main.rs"
 
 [build-dependencies]
