@@ -1,6 +1,6 @@
 [package]
 name = "toloo-bench"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 publish = false
 description = "Benchmark-only harness: Toloo Criterion benches and cross-protocol comparisons. Not part of the relay."

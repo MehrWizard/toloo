@@ -159,7 +159,7 @@ toloo-core  ←  toloo-lib  ←  toloo-cli
   current.
 - **Releases are `v0.1.N` tags.** Pushing a tag runs
   `.github/workflows/release.yml`; every release asset name includes the
-  version (for example `toloo-app-0.1.8-linux-x86_64`).
+  version (for example `toloo-app-0.1.9-linux-x86_64`).
 
 ---
 
