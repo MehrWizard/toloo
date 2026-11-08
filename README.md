@@ -1,13 +1,12 @@
 # toloo
 
-Rust implementation of the [Toloo Protocol v0.2](../toloo-docs/).
-Targets **Relay conformance** — the highest level defined in
-[`D-conformance.md`](../toloo-docs/D-conformance.md) §D.6.
+Rust implementation and normative specification of the
+[Toloo Protocol v0.2](specs/). Targets **Relay conformance** — the highest
+level defined in [`specs/D-conformance.md`](specs/D-conformance.md) §D.6.
 
 ```
-toloo/      ← This: Rust relay + Slint native app + wasm browser core   ← you are here
-toloo-docs/ ← Protocol specification (the contract)
-toloo-js/   ← Legacy browser JS client (being replaced by toloo-wasm)
+toloo/      ← Rust relay + Slint app + wasm browser core + protocol specs
+specs/      ← Normative protocol specification (RFCs, the contract)
 ```
 
 ---
@@ -16,19 +15,42 @@ toloo-js/   ← Legacy browser JS client (being replaced by toloo-wasm)
 
 `toloo` is the reference implementation of the Toloo messaging protocol.
 It contains everything needed to run a relay, host rooms, and exchange messages
-— as a CLI daemon, as a library, in the native Slint client, or in the browser
+— as a CLI daemon, as a library, in the Toloo app (Slint), or in the browser
 client.
 
 Browser support is the same `toloo-core` compiled to WebAssembly (`toloo-wasm`),
-so there is one protocol implementation for native and web. The older
-hand-written [`toloo-js`](../toloo-js/) client is legacy and is being retired.
+so there is one protocol implementation for native and web. The normative
+protocol specification lives in this repository under [`specs/`](specs/).
+
+The historical Python and JavaScript prototypes are retired and archived
+outside this repository. The last Tauri app snapshot is preserved as the
+`toloo-app-legacy` tag.
+
+---
+
+## Documentation map
+
+- [`specs/`](specs/) — normative protocol RFCs; start at
+  [`specs/0-index.md`](specs/0-index.md).
+- [`app/README.md`](app/README.md) — application architecture,
+  data directory, desktop/Android builds.
+- [`web/README.md`](web/README.md) — browser client development
+  and current limitations.
+- [`TODO.md`](TODO.md) — current roadmap and open work.
+- [`THROUGHPUT_AUDIT.md`](THROUGHPUT_AUDIT.md) — historical optimization
+  audit and measurement history.
+- [`design/contract.json`](design/contract.json) — shared UI theme, copy, and
+  icon contract.
 
 ---
 
 ## Project layout
 
 ```
-toloo-core/           Portable protocol core — no I/O, native + wasm
+specs/                Normative protocol specification (RFCs, the contract)
+  0-index.md          Document map, status, and reading order
+
+core/           Portable protocol core — no I/O, native + wasm
   src/
     types.rs          All wire types: Envelope, DatumBody, LocalNode, LocalRoom,
                         EndpointDescriptor, …
@@ -46,7 +68,7 @@ toloo-core/           Portable protocol core — no I/O, native + wasm
     discovery.rs      toloo: URI and .toloo file encode/decode
     fixtures.rs       deterministic identities/events (test/fixtures feature)
 
-toloo-lib/            Native stateful runtime — depends on toloo-core
+lib/            Native stateful runtime — depends on toloo-core
   src/
     pool.rs           Append-only event log + in-memory indexes; membership
                         reconstruction; TOFU pins, blocklist, blobs, pruning
@@ -65,7 +87,7 @@ toloo-lib/            Native stateful runtime — depends on toloo-core
   tests/
     vectors.rs        cross-implementation test vector assertions
 
-toloo-wasm/           Browser bindings — same core compiled to wasm32
+wasm/           Browser bindings — same core compiled to wasm32
   src/
     contract.rs       JSON-in/JSON-out contract: identities, all event builders,
                         request builders, chain verification/batching, private
@@ -76,23 +98,27 @@ toloo-wasm/           Browser bindings — same core compiled to wasm32
     wasm.rs           wasm-bindgen-test suite (Node)
   build.sh            Release build + generated JS/TS package in pkg/
 
-toloo-web/            SolidJS + TypeScript browser client
+bench/          Benchmark-only crate + scripts, templates, and assets
+  benches/        Toloo Criterion benches and cross-protocol comparisons
+  scripts/        Aggregation, dashboard, and OG helpers
+
+web/            SolidJS + TypeScript browser client
   src/lib/
     wasm.ts           Typed bridge to the generated wasm package
     transport.ts      WebSocket/HTTP adapters + page-scheme policy
     db.ts             IndexedDB identity/relay/room/envelope stores
     client.ts         Sync, verification, membership, room authority
   src/components/     Onboarding, sidebar, chat, settings, modals
-  scripts/            Builds and copies toloo-wasm/pkg before Vite
+  scripts/            Builds and copies wasm/pkg before Vite
 
-toloo-app/         Toloo app — Slint UI over toloo-lib, no WebView
+app/         Toloo app — Slint UI over toloo-lib, no WebView
   ui/app.slint        Declarative UI (identity, relays, rooms, chat)
   src/engine.rs       Engine thread: native transports, pool, room authority
   src/lib.rs          Slint bridge and snapshot polling
   src/main.rs         Desktop entry point
   build.rs            Slint UI compiler
 
-toloo-cli/            Headless Toloo protocol — servers and physical nodes
+cli/            Headless Toloo protocol — servers and physical nodes
   src/
     main.rs           keygen, relay, create-room, import, send, sync, vectors
 
@@ -128,6 +154,9 @@ toloo-core  ←  toloo-lib  ←  toloo-cli
 - **One protocol implementation.** Envelope, crypto, membership, discovery,
   and event logic live in `toloo-core`; clients must not duplicate it.
   `toloo-ffi` is intentionally not used.
+- **Specs live in this repo.** The normative RFC documents are in `specs/`;
+  update code and specification together, and keep the spec index and links
+  current.
 - **Releases are `v0.1.N` tags.** Pushing a tag runs
   `.github/workflows/release.yml`; every release asset name includes the
   version (for example `toloo-app-0.1.8-linux-x86_64`).
@@ -148,12 +177,11 @@ the same process.
 | Linux aarch64 | glibc 2.17+ | Raspberry Pi 4/5, Ampere, AWS Graviton |
 | Windows x86_64 | Windows 10 | `toloo-app.exe` |
 | macOS arm64 | macOS 11+ | Slint winit backend |
-| Android | **API 26 / Android 8.0+** | Rust + Slint + Skia/OpenGL ES; arm64-v8a and armeabi-v7a; experimental APK workflow |
+| Android | **API 26 / Android 8.0+** | Rust + Slint + Skia/OpenGL ES; arm64-v8a and armeabi-v7a; experimental support |
 | iOS | not yet shipped | Slint iOS support is version-dependent; verify before planning |
 
-The old Tauri/WebView app has been removed from `main`; its last snapshot is
-preserved as the `toloo-app-legacy` tag. Android 7 / API 24–25 devices are not
-supported by the Slint backend; they require a separate native-UI path.
+Android 7 / API 24–25 devices are not supported by the Slint backend; they
+require a separate native-UI path.
 
 ### CLI (`toloo-cli`)
 
@@ -176,9 +204,8 @@ and runs natively on Linux, Windows, and macOS.
 
 ### Prerequisites
 
-All platforms need [Rust stable](https://rustup.rs). The native Slint client
-additionally needs the platform windowing/OpenGL development libraries listed
-below.
+All platforms need [Rust stable](https://rustup.rs). The Toloo app additionally
+needs the platform windowing/OpenGL development libraries listed below.
 
 ### Library and CLI (any platform)
 
@@ -195,7 +222,7 @@ rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.126 --locked
 
 cargo test -p toloo-wasm --target wasm32-unknown-unknown   # wasm test suite (Node)
-./toloo-wasm/build.sh                                      # → toloo-wasm/pkg/ (JS + .d.ts + .wasm)
+./wasm/build.sh                                      # → wasm/pkg/ (JS + .d.ts + .wasm)
 ```
 
 `toloo-wasm` has no native I/O or TLS: the browser remains a client, and AWS-LC
@@ -203,17 +230,17 @@ is native-only, so wasm uses the dalek/RustCrypto path. WebAssembly is loaded
 from the generated `pkg/` by the web UI; hand-written protocol JavaScript is
 retired.
 
-Web client (`toloo-web/`):
+Web client (`web/`):
 
 ```sh
-cd toloo-web
+cd web
 npm install
 npm run dev       # wasm build + Vite dev server on :5173
 npm test          # transport policy and HTTP transport tests
 npm run build     # production bundle in dist/
 ```
 
-See [`toloo-web/README.md`](./toloo-web/README.md) for the local-relay workflow
+See [`web/README.md`](./web/README.md) for the local-relay workflow
 and current feature scope.
 
 CLI — platform-specific static builds:
@@ -276,17 +303,18 @@ rustup target add aarch64-linux-android armv7-linux-androideabi
 
 # Gradle + cargo-ndk packaging (Kotlin NativeActivity + AndroidX splash)
 cargo install cargo-ndk --version 4.1.2 --locked
-./toloo-app/android/build-native.sh
-(cd toloo-app/android && gradle assembleRelease)
+./app/android/build-native.sh
+(cd app/android && gradle assembleRelease)
 ```
 
 Set `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, and
 `ANDROID_KEYSTORE_ALIAS` to sign release APKs.
 
-The `Native` GitHub workflow builds both ABIs. It is marked experimental until
-an APK has been validated on a real API 26 device. Slint uses Skia with
-OpenGL ES or Vulkan on Android; there is no documented software-renderer
-fallback on that platform.
+The `App` GitHub workflow (`.github/workflows/native.yml`) and the release
+workflow build both ABIs. Android support remains experimental while device
+coverage and store packaging are completed. Slint uses Skia with OpenGL ES or
+Vulkan on Android; there is no documented software-renderer fallback on that
+platform.
 
 ### CLI
 
@@ -333,7 +361,9 @@ targets in parallel and creates a GitHub Release:
 
 Android APKs are built by the release workflow and the `App` CI workflow
 (API 26+, arm64 and armv7) and are currently experimental. All release assets
-include the Toloo version in their file name.
+include the Toloo version in their file name. Release notes contain a
+two-column Binaries table with direct download links and a changelog of every
+commit between the previous `v*` tag and the new tag.
 
 ### CI / Benchmarks
 
@@ -345,10 +375,10 @@ with a live static HTML dashboard. Full details in [`THROUGHPUT_AUDIT.md`](./THR
 
 ```sh
 # Run benchmarks locally (5 minutes, 20 iterations)
-cd toloo-lib && cargo bench --bench canonical_bench
+cargo bench -p toloo-bench --bench canonical_bench
 
 # Cross-protocol benchmarks (Signal, Matrix, Nostr)
-cargo bench -p toloo-protocol-bench --features protocols --bench protocols
+cargo bench -p toloo-bench --features protocols --bench protocols
 ```
 
 GitHub-hosted runner CPUs vary between runs, so absolute cross-run deltas can
@@ -387,7 +417,7 @@ same-run ratios; the dashboard keeps the per-commit history.
 
 ### Cross-protocol benchmarks (Signal, Matrix, Nostr)
 
-`toloo-protocol-bench/` is a benchmark-only crate (not published; heavy deps sit
+`bench/` is a benchmark-only crate `toloo-bench` (not published; heavy deps sit
 behind the non-default `protocols` feature). It measures the same ~2 KB message
 against real protocol implementations:
 
@@ -417,7 +447,7 @@ encrypt, decrypt, and round-trip latency. The remaining gap in public-envelope
 cost is Ed25519 single verification and canonicalization, not private messages.
 
 ```sh
-cargo test -p toloo-protocol-bench --features protocols   # round-trip smoke tests
+cargo test -p toloo-bench --features protocols   # round-trip smoke tests
 ```
 
 Notes: libsignal serializes protobuf at message construction, so only parsing is
@@ -432,7 +462,7 @@ distributed. Details and fairness caveats:
 
 ## Execution model
 
-### Native (Slint)
+### Toloo app (Slint)
 
 The Toloo app is one Rust process. Slint renders the UI; a dedicated engine
 thread owns `toloo-lib`'s pool, Tokio runtime, and native WebSocket/HTTP
@@ -448,13 +478,13 @@ Slint event-loop thread.
 ```
 
 The native engine can later host a relay in-process; the browser client cannot.
-A browser node connects to an external relay, while the native app can use raw
-transports, self-signed pinning, and OS storage.
+A browser node connects to an external relay, while the Toloo app can use
+native transports, self-signed TLS pinning, and OS storage.
 
 ### Browser (wasm)
 
 When running outside the Toloo app — in a browser or a web app — protocol logic is the
-same `toloo-core` compiled to WebAssembly by `toloo-wasm`. `toloo-web/` is the
+same `toloo-core` compiled to WebAssembly by `toloo-wasm`. `web/` is the
 SolidJS client: it loads the generated wasm package, owns WebSocket/HTTP
 transport and IndexedDB persistence, and keeps all signing, verification,
 private-message, membership, and room-rule logic in wasm. A browser cannot host
@@ -526,30 +556,36 @@ The commit can happen directly (relay holds the room key) or via a relay chain
 
 | File | Covers |
 |------|--------|
-| [`1-concepts.md`](../toloo-docs/1-concepts.md) | Mental model, terminology |
-| [`2-data-model.md`](../toloo-docs/2-data-model.md) | Envelope format, canonical JSON, eid, datum_id |
-| [`3-cryptography.md`](../toloo-docs/3-cryptography.md) | All algorithms and parameters |
-| [`4-identity.md`](../toloo-docs/4-identity.md) | Node keypairs, node.meta, toloo: URI |
-| [`5-rooms.md`](../toloo-docs/5-rooms.md) | Room keypairs, channels, membership, rules |
-| [`6-events.md`](../toloo-docs/6-events.md) | All event types, content schemas, lifecycle |
-| [`7-replication.md`](../toloo-docs/7-replication.md) | Pool model, commit flow, bisection sync |
-| [`9-transport.md`](../toloo-docs/9-transport.md) | Carrier model, endpoint descriptors, message framing |
-| [`10-endpoints.md`](../toloo-docs/10-endpoints.md) | All nine endpoint definitions |
-| [`11-storage.md`](../toloo-docs/11-storage.md) | Retention, pruning, archival |
-| [`12-discovery.md`](../toloo-docs/12-discovery.md) | Bootstrap, gossip, URI import |
-| [`13-moderation.md`](../toloo-docs/13-moderation.md) | Local blocking, spam, PoW enforcement |
-| [`A-registries.md`](../toloo-docs/A-registries.md) | Event types, field schemas, error codes, constants |
-| [`B-wire-examples.md`](../toloo-docs/B-wire-examples.md) | Annotated wire traces |
-| [`C-security-considerations.md`](../toloo-docs/C-security-considerations.md) | Threat model, crypto assumptions |
-| [`D-conformance.md`](../toloo-docs/D-conformance.md) | MUST/SHOULD/MAY requirements, validation checklist |
-| [`E-test-vectors.md`](../toloo-docs/E-test-vectors.md) | Deterministic test inputs and expected outputs |
+| [`specs/README.md`](specs/README.md) | Specification overview and start here |
+| [`specs/0-index.md`](specs/0-index.md) | Document map, status, reading order |
+| [`specs/1-concepts.md`](specs/1-concepts.md) | Mental model, terminology |
+| [`specs/2-data-model.md`](specs/2-data-model.md) | Envelope format, canonical JSON, eid, datum_id |
+| [`specs/3-cryptography.md`](specs/3-cryptography.md) | All algorithms and parameters |
+| [`specs/4-identity.md`](specs/4-identity.md) | Node keypairs, node.meta, toloo: URI |
+| [`specs/5-rooms.md`](specs/5-rooms.md) | Room keypairs, channels, membership, rules |
+| [`specs/6-events.md`](specs/6-events.md) | All event types, content schemas, lifecycle |
+| [`specs/7-replication.md`](specs/7-replication.md) | Pool model, commit flow, bisection sync |
+| [`specs/8-trust.md`](specs/8-trust.md) | Attestations, claims, trust and reputation |
+| [`specs/9-transport.md`](specs/9-transport.md) | Carrier model, endpoint descriptors, message framing |
+| [`specs/10-endpoints.md`](specs/10-endpoints.md) | All nine endpoint definitions |
+| [`specs/11-storage.md`](specs/11-storage.md) | Retention, pruning, archival |
+| [`specs/12-discovery.md`](specs/12-discovery.md) | Bootstrap, gossip, URI import |
+| [`specs/13-moderation.md`](specs/13-moderation.md) | Local blocking, spam, PoW enforcement |
+| [`specs/14-lifecycle.md`](specs/14-lifecycle.md) | Room key transfer, forking, migration, deprecation |
+| [`specs/A-registries.md`](specs/A-registries.md) | Event types, field schemas, error codes, constants |
+| [`specs/B-wire-examples.md`](specs/B-wire-examples.md) | Annotated wire traces |
+| [`specs/C-security-considerations.md`](specs/C-security-considerations.md) | Threat model, crypto assumptions |
+| [`specs/D-conformance.md`](specs/D-conformance.md) | MUST/SHOULD/MAY requirements, validation checklist |
+| [`specs/E-test-vectors.md`](specs/E-test-vectors.md) | Deterministic test inputs and expected outputs |
 
 ---
 
 ## Mobile
 
-Mobile uses the native Slint app: Android APKs are built in the `Native`
-GitHub workflow with Gradle + cargo-ndk for arm64 and armv7. Slint requires
-Android API 26+, so API 24–25 devices are out of scope for this UI. The Android
-build is experimental until validated on a real device. iOS is not shipped; Slint
-iOS support is version-dependent and requires a macOS/Xcode build.
+Mobile uses `toloo-app`: Android APKs are built by the release workflow and
+the `App` GitHub workflow (`.github/workflows/native.yml`) with Gradle +
+cargo-ndk for arm64 and armv7. Slint requires Android API 26+, so API 24–25
+devices are out of scope for this UI. Android builds are tested on physical
+Android 8+ devices as part of release validation but remain experimental
+overall. iOS is not shipped; Slint iOS support is version-dependent and
+requires a macOS/Xcode build.

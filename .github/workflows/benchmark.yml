@@ -82,16 +82,16 @@ jobs:
         id: ab_bench
         if: steps.ab_checkout.outcome == 'success'
         continue-on-error: true
-        working-directory: ab-baseline/toloo-lib
+        working-directory: ab-baseline
         run: |
           set -o pipefail
-          cargo bench --bench canonical_bench 2>&1 | tee ../../ab-baseline-results.txt
+          cargo bench -p toloo-bench --bench canonical_bench 2>&1 | tee ../ab-baseline-results.txt
 
       - name: Run benchmarks
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           set -o pipefail
-          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-bench --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Compare A/B results (same host)
         if: steps.ab_bench.outcome == 'success'
@@ -107,38 +107,38 @@ jobs:
 
       - name: Debug benchmark output
         if: always()
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           echo "=== Current directory ==="
           pwd
           echo "=== Workspace target/criterion structure ==="
-          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
           echo "=== Workspace target/criterion tree ==="
-          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           mkdir -p bench-json
           # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
           while IFS= read -r -d '' f; do
-            rel="${f#../target/criterion/}"
+            rel="${f#target/criterion/}"
             # Remove /new/estimates.json suffix
             rel="${rel%/new/estimates.json}"
             # Replace all / with __ for safe filename
             rel_safe="${rel//\//__}"
             cp "$f" "bench-json/${rel_safe}.json"
-          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
+          done < <(find target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: bench-linux-x86
           path: |
-            toloo-lib/bench-results.txt
-            toloo-lib/bench-json/
+            bench-results.txt
+            bench-json/
 
       - name: Upload A/B comparison
         if: steps.ab_bench.outcome == 'success'
@@ -152,7 +152,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────
   # Cross-protocol comparison (Signal, Matrix, Nostr) — Linux x86 only.
-  # Heavy/AGPL libraries stay in toloo-protocol-bench behind a feature.
+  # Heavy/AGPL libraries stay in toloo-bench behind a feature.
   # ────────────────────────────────────────────────────────────────────
   bench-protocols:
     name: Benchmark Cross-Protocol (Linux x86_64)
@@ -178,7 +178,7 @@ jobs:
       - name: Run cross-protocol benchmarks
         run: |
           set -o pipefail
-          cargo bench -p toloo-protocol-bench --features protocols --bench protocols -- \
+          cargo bench -p toloo-bench --features protocols --bench protocols -- \
             --warm-up-time 0.5 --measurement-time 2 2>&1 | tee bench-protocols-results.txt
 
       - name: Extract benchmark JSON
@@ -221,45 +221,45 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gnuplot
 
       - name: Run benchmarks
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           set -o pipefail
-          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-bench --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Debug benchmark output
         if: always()
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           echo "=== Current directory ==="
           pwd
           echo "=== Workspace target/criterion structure ==="
-          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
           echo "=== Workspace target/criterion tree ==="
-          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           mkdir -p bench-json
           # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
           while IFS= read -r -d '' f; do
-            rel="${f#../target/criterion/}"
+            rel="${f#target/criterion/}"
             # Remove /new/estimates.json suffix
             rel="${rel%/new/estimates.json}"
             # Replace all / with __ for safe filename
             rel_safe="${rel//\//__}"
             cp "$f" "bench-json/${rel_safe}.json"
-          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
+          done < <(find target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: bench-linux-arm
           path: |
-            toloo-lib/bench-results.txt
-            toloo-lib/bench-json/
+            bench-results.txt
+            bench-json/
 
 
 
@@ -281,33 +281,33 @@ jobs:
           target: x86_64-pc-windows-msvc
 
       - name: Run benchmarks
-        working-directory: toloo-lib
+        working-directory: .
         shell: pwsh
         run: |
-          cargo bench --bench canonical_bench 2>&1 | Tee-Object -FilePath ../bench-results.txt
+          cargo bench -p toloo-bench --bench canonical_bench 2>&1 | Tee-Object -FilePath bench-results.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Debug benchmark output
         if: always()
-        working-directory: toloo-lib
+        working-directory: .
         shell: pwsh
         run: |
           Write-Host "=== Current directory ==="
           Get-Location
           Write-Host "=== Workspace target/criterion structure ==="
-          Get-ChildItem ../target/criterion -Recurse -Filter "*.json" -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { $_.FullName }
-          if (-not (Test-Path "../target/criterion")) { Write-Host "No criterion dir" }
-          Get-ChildItem ../target/criterion -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
-          Get-ChildItem ../target/criterion/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
-          Get-ChildItem ../target/criterion/*/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Get-ChildItem target/criterion -Recurse -Filter "*.json" -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { $_.FullName }
+          if (-not (Test-Path "target/criterion")) { Write-Host "No criterion dir" }
+          Get-ChildItem target/criterion -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Get-ChildItem target/criterion/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          Get-ChildItem target/criterion/*/* -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
 
       - name: Extract benchmark JSON
-        working-directory: toloo-lib
+        working-directory: .
         shell: pwsh
         run: |
           mkdir bench-json
-          Get-ChildItem ../target/criterion -Recurse -Filter "estimates.json" | Where-Object { $_.FullName -match '\\new\\estimates\.json$' } | ForEach-Object {
-            $rel = $_.FullName.Replace((Resolve-Path ../target/criterion).Path + '\', '')
+          Get-ChildItem target/criterion -Recurse -Filter "estimates.json" | Where-Object { $_.FullName -match '\\new\\estimates\.json$' } | ForEach-Object {
+            $rel = $_.FullName.Replace((Resolve-Path target/criterion).Path + '\', '')
             $rel = $rel -replace '\\new\\estimates\.json$', ''
             $rel_safe = $rel -replace '\\', '__'
             Copy-Item $_ "bench-json/${rel_safe}.json"
@@ -318,8 +318,8 @@ jobs:
         with:
           name: bench-windows
           path: |
-            toloo-lib/bench-results.txt
-            toloo-lib/bench-json/
+            bench-results.txt
+            bench-json/
 
   # ────────────────────────────────────────────────────────────────────
   # Run benchmarks on macOS
@@ -339,45 +339,45 @@ jobs:
           target: x86_64-apple-darwin
 
       - name: Run benchmarks
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           set -o pipefail
-          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-bench --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Debug benchmark output
         if: always()
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           echo "=== Current directory ==="
           pwd
           echo "=== Workspace target/criterion structure ==="
-          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
           echo "=== Workspace target/criterion tree ==="
-          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           mkdir -p bench-json
           # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
           while IFS= read -r -d '' f; do
-            rel="${f#../target/criterion/}"
+            rel="${f#target/criterion/}"
             # Remove /new/estimates.json suffix
             rel="${rel%/new/estimates.json}"
             # Replace all / with __ for safe filename
             rel_safe="${rel//\//__}"
             cp "$f" "bench-json/${rel_safe}.json"
-          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
+          done < <(find target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: bench-macos-x86
           path: |
-            toloo-lib/bench-results.txt
-            toloo-lib/bench-json/
+            bench-results.txt
+            bench-json/
 
   bench-macos-arm:
     name: Benchmark macOS aarch64
@@ -398,45 +398,45 @@ jobs:
           key: bench-macos-arm-${{ github.sha }}
 
       - name: Run benchmarks
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           set -o pipefail
-          cargo bench --bench canonical_bench 2>&1 | tee ../bench-results.txt
+          cargo bench -p toloo-bench --bench canonical_bench 2>&1 | tee bench-results.txt
 
       - name: Debug benchmark output
         if: always()
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           echo "=== Current directory ==="
           pwd
           echo "=== Workspace target/criterion structure ==="
-          find ../target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
+          find target/criterion -name "*.json" 2>/dev/null | head -20 || echo "No JSON files found"
           echo "=== Workspace target/criterion tree ==="
-          ls -la ../target/criterion/ 2>/dev/null || echo "No criterion dir"
-          ls -la ../target/criterion/*/ 2>/dev/null || echo "No group dirs"
-          ls -la ../target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
+          ls -la target/criterion/ 2>/dev/null || echo "No criterion dir"
+          ls -la target/criterion/*/ 2>/dev/null || echo "No group dirs"
+          ls -la target/criterion/*/*/ 2>/dev/null || echo "No bench dirs"
 
       - name: Extract benchmark JSON
-        working-directory: toloo-lib
+        working-directory: .
         run: |
           mkdir -p bench-json
           # Handle all criterion output depths: 1-level (bench_function), 2-level (group/bench), 3-level (group/subgroup/bench)
           while IFS= read -r -d '' f; do
-            rel="${f#../target/criterion/}"
+            rel="${f#target/criterion/}"
             # Remove /new/estimates.json suffix
             rel="${rel%/new/estimates.json}"
             # Replace all / with __ for safe filename
             rel_safe="${rel//\//__}"
             cp "$f" "bench-json/${rel_safe}.json"
-          done < <(find ../target/criterion -name "estimates.json" -path "*/new/*" -print0)
+          done < <(find target/criterion -name "estimates.json" -path "*/new/*" -print0)
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: bench-macos-arm
           path: |
-            toloo-lib/bench-results.txt
-            toloo-lib/bench-json/
+            bench-results.txt
+            bench-json/
 
   # ────────────────────────────────────────────────────────────────────
   # Aggregate & Store Results + Deploy to GitHub Pages
@@ -549,7 +549,7 @@ jobs:
 
       - name: Generate static HTML in benchmark repo
         run: |
-          python3 substitute_template.py index.html.template benchmark-report.json bench-repo/index.html
+          python3 bench/scripts/substitute_template.py bench/templates/index.html.template benchmark-report.json bench-repo/index.html
 
       - name: Copy results to benchmark repo
         run: |
@@ -558,7 +558,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cp ../benchmark-report.json results/${{ github.sha }}.json
           cp ../benchmark-report.json results/latest.json
-          cp ../benchmark-og.png og.png
+          cp ../bench/assets/benchmark-og.png og.png
           git add results/${{ github.sha }}.json results/latest.json index.html og.png
           git commit -m "Benchmark: ${{ github.sha }} (${{ github.event.inputs.branch }})"
           git push

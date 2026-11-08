@@ -1,0 +1,46 @@
+[package]
+name = "toloo-app"
+version = "0.1.8"
+edition = "2021"
+description = "Toloo application — Slint UI over the native Rust engine"
+publish = false
+
+[lib]
+name = "toloo_app"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "toloo-app"
+path = "src/main.rs"
+
+[build-dependencies]
+slint-build = "1.18.0"
+
+[dependencies]
+toloo-lib = { path = "../lib", default-features = false, features = ["tls", "argon2"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "time", "sync"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = "3"
+slint = { version = "1.18.0", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-femtovg",
+    "renderer-software",
+    "accessibility",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+slint = { version = "1.18.0", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-android-activity-06",
+    "renderer-skia-opengl",
+    "accessibility",
+] }

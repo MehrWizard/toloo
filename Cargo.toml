@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "toloo-core",
-    "toloo-lib",
-    "toloo-cli",
-    "toloo-protocol-bench",
-    "toloo-wasm",
-    "toloo-app",
+    "app",
+    "bench",
+    "cli",
+    "core",
+    "lib",
+    "wasm",
 ]
 resolver = "2"
 

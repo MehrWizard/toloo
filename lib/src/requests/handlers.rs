@@ -1,0 +1,1418 @@
+/// Request handlers for all nine relay endpoints (spec §10.7–§10.8).
+///
+/// Dispatch table:
+///
+/// | d.t                | Handler            | Spec   |
+/// |--------------------|--------------------|--------|
+/// | `events.sync`      | incremental sync   | §10.7.1|
+/// | `room.sync`        | channel range sync | §10.7.2|
+/// | `room.compare`     | bisection compare  | §10.7.3|
+/// | `pool.exchange`    | diff-based sync    | §10.8.1|
+/// | `node.peers`       | peer directory     | §10.8.2|
+/// | `node.rooms`       | node room list     | §10.8.3|
+/// | `system.fetch`     | fetch by ID        | §10.8.4|
+/// | `blob.fetch`       | binary blob data   | §10.8.5|
+/// | `room.summary`     | lightweight status | §10.8.6|
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use serde_json::{json, Value};
+
+use crate::envelope::{
+    depth, envelope_to_json_bytes, innermost, make_envelope, parse_envelope_ref, verify_chain,
+    verify_chains_batch, wrap_commit,
+};
+use crate::ids::{datum_id, eid};
+use crate::pool::{ruleset_from_pool, Pool};
+use crate::pow::verify_pow;
+use crate::rules::string_array;
+use crate::transport::server::RelayConfig;
+use crate::types::Envelope;
+
+const DEFAULT_LIMIT: usize = 200;
+const MAX_LIMIT: usize = 1000;
+const MAX_SUMMARY_ROOMS: usize = 50;
+const MAX_FETCH_IDS: usize = 100;
+const MAX_OFFERS: usize = 256;
+
+// ---- Public entry point ----
+
+/// Dispatch an inbound request envelope and return a list of JSON response bytes.
+///
+/// Each value in the returned vec is a raw JSON envelope (or error object) as bytes.
+pub async fn handle_request(
+    envelope: Envelope,
+    pool: &Arc<Pool>,
+    config: &RelayConfig,
+) -> Result<Vec<Vec<u8>>> {
+    // Verify request signature.
+    if let Err(e) = verify_chain(&envelope) {
+        return Ok(vec![error_bytes("invalid_signature", &e.to_string())]);
+    }
+
+    handle_request_verified(envelope, pool, config).await
+}
+
+/// Dispatch an already-verified request envelope.
+///
+/// The batch processor verifies a whole batch of request envelopes together
+/// and then calls this per request to avoid a second single-signature check.
+pub(crate) async fn handle_request_verified(
+    envelope: Envelope,
+    pool: &Arc<Pool>,
+    config: &RelayConfig,
+) -> Result<Vec<Vec<u8>>> {
+    let d = &innermost(&envelope).d;
+    let responses = match d.t.as_str() {
+        "events.sync" => handle_events_sync(d.c.as_ref(), pool),
+        "room.sync" => handle_room_sync(d.c.as_ref(), pool),
+        "room.compare" => handle_room_compare(d.c.as_ref(), pool, config),
+        "pool.exchange" => handle_pool_exchange(d.c.as_ref(), pool, config),
+        "node.peers" => handle_node_peers(d.c.as_ref(), pool),
+        "node.rooms" => handle_node_rooms(d.c.as_ref(), pool),
+        "system.fetch" => handle_system_fetch(d.c.as_ref(), pool),
+        "blob.fetch" => handle_blob_fetch(d.c.as_ref(), Arc::clone(pool)).await,
+        "room.summary" => handle_room_summary(d.c.as_ref(), pool, config),
+        _ => Ok(vec![error_bytes(
+            "invalid_request",
+            &format!("unknown endpoint: {}", d.t),
+        )]),
+    };
+
+    responses
+}
+
+// ---- §10.7.1 events.sync ----
+
+fn handle_events_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "events.sync")?;
+    let rooms = string_array(c.get("rooms"));
+    let after = c.get("after").and_then(Value::as_u64).unwrap_or(0);
+    let limit = clamp_limit(c.get("limit").and_then(Value::as_u64));
+
+    let room_refs: Vec<&str> = rooms.iter().map(String::as_str).collect();
+    let mut entries = pool.get_wanted(&room_refs, &[], after, limit)?;
+    // Key holders discover uncommitted events through sync (§7.7.3).
+    let mut remaining = limit.saturating_sub(entries.len());
+    for room in &rooms {
+        if remaining == 0 {
+            break;
+        }
+        let pending = pool.get_pending(room, &[], remaining)?;
+        remaining = remaining.saturating_sub(pending.len());
+        entries.extend(pending);
+    }
+    Ok(envelopes_json_bytes(entries))
+}
+
+// ---- §10.7.2 room.sync ----
+
+fn handle_room_sync(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "room.sync")?;
+    let room = require_string(c, "r", "room.sync")?;
+    let channel = c.get("channel").and_then(Value::as_i64).unwrap_or(0) as i32;
+    let start_tc = c.get("start_tc").and_then(Value::as_u64).unwrap_or(0);
+    let end_tc = c.get("end_tc").and_then(Value::as_u64);
+    let limit = clamp_limit(c.get("limit").and_then(Value::as_u64));
+
+    let entries = pool.get_room_channel_range(room, channel, start_tc, end_tc, limit)?;
+    let mut out: Vec<Vec<u8>> = entries
+        .into_iter()
+        .map(|e| envelope_to_json_bytes(&e.env))
+        .collect();
+    // Room watermark, first in the response: latest commit time across
+    // room-internal channels (ch < 0). Advisory — clients compare against
+    // their known value to detect a stale room-state view (§5). Enforcement
+    // of posting eligibility remains at commit time.
+    let watermark = pool.room_watermark(room).unwrap_or(0);
+    let watermark_json = format!("{{\"wr\":{}}}", watermark).into_bytes();
+    out.insert(0, watermark_json);
+    Ok(out)
+}
+
+// ---- §10.7.3 room.compare ----
+
+fn handle_room_compare(
+    c: Option<&Value>,
+    pool: &Pool,
+    config: &RelayConfig,
+) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "room.compare")?;
+    let room = require_string(c, "r", "room.compare")?;
+    let channel = c.get("channel").and_then(Value::as_i64).unwrap_or(0) as i32;
+    let samples = match c.get("samples").and_then(Value::as_array) {
+        Some(s) => s,
+        None => {
+            return Ok(vec![error_bytes(
+                "invalid_request",
+                "room.compare requires c.samples",
+            )])
+        }
+    };
+
+    // Get the max seq requested so we know how many events to fetch.
+    let max_seq = samples
+        .iter()
+        .filter_map(|s| s.get("seq").and_then(Value::as_u64))
+        .max()
+        .unwrap_or(0) as usize;
+
+    // Fetch committed events for room+channel up to max_seq.
+    let entries = pool.get_room_channel_range(room, channel, 0, None, max_seq + 1)?;
+
+    // Build seq→eid map (seq is 1-based position in tc-ordered list).
+    let local_eids: Vec<String> = entries.iter().map(|e| eid(&e.env)).collect();
+
+    // Compare samples: note matches and mismatches.
+    let mut match_results: Vec<Value> = Vec::new();
+    for sample in samples {
+        let seq = match sample.get("seq").and_then(Value::as_u64) {
+            Some(s) => s as usize,
+            None => continue,
+        };
+        let client_eid = sample.get("eid").and_then(Value::as_str).unwrap_or("");
+        let idx = seq.saturating_sub(1);
+        let our_eid = local_eids.get(idx).map(String::as_str).unwrap_or("");
+        match_results.push(json!({
+            "seq": seq,
+            "eid": our_eid,
+            "match": our_eid == client_eid,
+        }));
+    }
+
+    // Sign a room.compare.result envelope.
+    let content = json!({
+        "r": room,
+        "channel": channel,
+        "results": match_results,
+    });
+    let result_env = make_envelope("room.compare.result", Some(content), &config.node, None)?;
+    Ok(vec![envelope_to_json_bytes(&result_env)])
+}
+
+// ---- §10.8.1 pool.exchange ----
+
+fn handle_pool_exchange(
+    c: Option<&Value>,
+    pool: &Pool,
+    config: &RelayConfig,
+) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "pool.exchange")?;
+    let mut offered_ids: HashSet<String> = HashSet::new();
+
+    // Process offer: collect full envelopes for batch verification, then store valid ones.
+    let mut offer_envelopes: Vec<Envelope> = Vec::new();
+    let mut datum_id_offers: Vec<String> = Vec::new();
+
+    if let Some(offer_arr) = c.get("offer").and_then(Value::as_array) {
+        if offer_arr.len() > MAX_OFFERS {
+            return Ok(vec![error_bytes(
+                "invalid_request",
+                &format!("offer array exceeds {MAX_OFFERS} entries"),
+            )]);
+        }
+        for item in offer_arr {
+            if let Some(obj) = item.as_object() {
+                if obj.contains_key("d") && obj.contains_key("p") {
+                    // Full envelope submission — parse and collect for batch verification.
+                    if let Ok(env) = parse_envelope_ref(item) {
+                        offer_envelopes.push(env);
+                    }
+                } else if let Some(id) = obj.get("datum_id").and_then(Value::as_str) {
+                    datum_id_offers.push(id.to_owned());
+                }
+            }
+        }
+    }
+
+    // Batch-verify every signature layer across all offered chains. Only the
+    // envelopes with an `Ok` verdict are stored — anything that could not be
+    // prepared or verified is dropped (fail closed).
+    if !offer_envelopes.is_empty() {
+        let refs: Vec<&Envelope> = offer_envelopes.iter().collect();
+        let verdicts = verify_chains_batch(&refs);
+
+        for (env, verdict) in offer_envelopes.into_iter().zip(verdicts) {
+            if verdict.is_err() {
+                continue;
+            }
+            let inner = innermost(&env);
+
+            // §13.3 — reject events from locally blocked nodes.
+            if pool.is_blocked(&inner.d.n).unwrap_or(false) {
+                continue;
+            }
+
+            // Route side-events to their dedicated stores.
+            match inner.d.t.as_str() {
+                "side.attestation" => {
+                    let _ = pool.put_attestation(&env);
+                    continue;
+                }
+                "room.flag" => {
+                    let _ = pool.put_flag(&env);
+                    // Also store in main pool for replication.
+                }
+                _ => {}
+            }
+
+            // Track the original datum_id (what this peer already has).
+            // If the relay auto-commits it (depth-1 → depth-2), the committed
+            // envelope has a DIFFERENT datum_id and must NOT be excluded from
+            // the response — so the peer receives the commit in this same
+            // pool.exchange roundtrip instead of waiting for the next sync.
+            let original_id = datum_id(&env);
+            let stored_env = maybe_commit(env, pool, config);
+            if pool.put(&stored_env).is_ok() {
+                offered_ids.insert(original_id);
+            }
+        }
+    }
+
+    // Add datum_id offers.
+    offered_ids.extend(datum_id_offers);
+
+    // Process want.
+    let mut responses: Vec<Vec<u8>> = Vec::new();
+    if let Some(want) = c.get("want").and_then(Value::as_object) {
+        let rooms = string_array(want.get("rooms"));
+        let types = string_array(want.get("types"));
+        let after = want.get("after").and_then(Value::as_u64).unwrap_or(0);
+        let limit = clamp_limit(want.get("limit").and_then(Value::as_u64));
+
+        let room_refs: Vec<&str> = rooms.iter().map(String::as_str).collect();
+        let type_refs: Vec<&str> = types.iter().map(String::as_str).collect();
+        let entries = pool.get_wanted(&room_refs, &type_refs, after, limit)?;
+
+        for entry in entries {
+            // Exclude events the peer already has and events from blocked nodes.
+            if !offered_ids.contains(entry.id.as_ref())
+                && !pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
+            {
+                responses.push(envelope_to_json_bytes(&entry.env));
+            }
+        }
+
+        // Key holders poll for uncommitted room events via pool.exchange.
+        let mut remaining = limit.saturating_sub(responses.len());
+        for room in &rooms {
+            if remaining == 0 {
+                break;
+            }
+            for entry in pool.get_pending(room, &type_refs, remaining)? {
+                if remaining == 0 {
+                    break;
+                }
+                if offered_ids.contains(entry.id.as_ref())
+                    || pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
+                {
+                    continue;
+                }
+                responses.push(envelope_to_json_bytes(&entry.env));
+                remaining -= 1;
+            }
+        }
+    }
+
+    // Bonus: include node.meta for known peers (pool gossip, §10.8.1, §12.4).
+    let peer_metas = pool.get_wanted(&[], &["node.meta"], 0, 20)?;
+    for entry in peer_metas {
+        let id = datum_id(&entry.env);
+        if !offered_ids.contains(&id) {
+            let env_bytes = envelope_to_json_bytes(&entry.env);
+            if !responses.iter().any(|r| r == &env_bytes) {
+                responses.push(env_bytes);
+            }
+        }
+    }
+
+    Ok(responses)
+}
+
+// ---- §10.8.2 node.peers ----
+
+fn handle_node_peers(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
+    let limit = c
+        .and_then(Value::as_object)
+        .and_then(|o| o.get("limit"))
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .unwrap_or(20)
+        .min(MAX_LIMIT);
+
+    let entries = pool.get_wanted(&[], &["node.meta"], 0, limit)?;
+    Ok(envelopes_json_bytes(entries))
+}
+
+// ---- §10.8.3 node.rooms ----
+
+fn handle_node_rooms(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "node.rooms")?;
+    let target = require_string(c, "node", "node.rooms")?;
+    let limit = clamp_limit(c.get("limit").and_then(Value::as_u64));
+
+    let rooms = pool.get_node_rooms(target)?;
+    let mut responses: Vec<Vec<u8>> = Vec::new();
+
+    for room_pub in rooms.iter().take(limit) {
+        // Return room.create (channel -1, the oldest metadata event).
+        let meta_events = pool.get_room_channel(room_pub, -1)?;
+        for entry in meta_events.iter().filter(|e| e.tc.is_some()).take(1) {
+            responses.push(envelope_to_json_bytes(&entry.env));
+        }
+        // Also return the latest room.update if any (last channel -1 after create).
+        if let Some(latest) = meta_events.iter().rev().find(|e| e.tc.is_some()) {
+            let latest_bytes = envelope_to_json_bytes(&latest.env);
+            if !responses.iter().any(|r| r == &latest_bytes) {
+                responses.push(latest_bytes);
+            }
+        }
+    }
+
+    Ok(responses)
+}
+
+// ---- §10.8.4 system.fetch ----
+
+fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "system.fetch")?;
+    let ids = string_array(c.get("datum_ids"));
+    if ids.is_empty() {
+        return Ok(vec![error_bytes(
+            "invalid_request",
+            "system.fetch requires c.datum_ids",
+        )]);
+    }
+    if ids.len() > MAX_FETCH_IDS {
+        return Ok(vec![error_bytes(
+            "payload_too_large",
+            &format!("datum_ids limit is {MAX_FETCH_IDS}"),
+        )]);
+    }
+
+    let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let entries = pool.get_by_datum_ids(&id_refs)?;
+    Ok(envelopes_json_bytes(entries))
+}
+
+// ---- §10.8.5 blob.fetch ----
+
+async fn handle_blob_fetch(c: Option<&Value>, pool: Arc<Pool>) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "blob.fetch")?;
+    let blob_id = require_string(c, "blob_id", "blob.fetch")?.to_owned();
+    let blob_id_for_task = blob_id.clone();
+    let piece_index = c.get("piece_index").and_then(Value::as_u64);
+
+    // Blob storage is on disk; keep it off the single-threaded executor.
+    let (data, count) = tokio::task::spawn_blocking(move || -> Result<(Option<Vec<u8>>, u32)> {
+        match piece_index {
+            Some(idx) => Ok((pool.get_blob_piece(&blob_id_for_task, idx as u32)?, 0)),
+            None => Ok((None, pool.blob_piece_count(&blob_id_for_task)?)),
+        }
+    })
+    .await
+    .context("blob fetch task")??;
+
+    match piece_index {
+        Some(idx) => match data {
+            Some(data) => {
+                let encoded = crate::base64url::encode(&data);
+                let json = format!(
+                    "{{\"blob_id\":\"{}\",\"piece_index\":{},\"data\":\"{}\"}}",
+                    blob_id, idx, encoded
+                );
+                Ok(vec![json.into_bytes()])
+            }
+            None => Ok(vec![error_bytes("not_found", "blob piece not found")]),
+        },
+        None => {
+            // Return piece count (metadata query).
+            if count == 0 {
+                Ok(vec![error_bytes("not_found", "blob not found")])
+            } else {
+                let json = format!("{{\"blob_id\":\"{}\",\"pieces\":{}}}", blob_id, count);
+                Ok(vec![json.into_bytes()])
+            }
+        }
+    }
+}
+
+// ---- §10.8.6 room.summary ----
+
+fn handle_room_summary(
+    c: Option<&Value>,
+    pool: &Pool,
+    config: &RelayConfig,
+) -> Result<Vec<Vec<u8>>> {
+    let c = require_object(c, "room.summary")?;
+    let rooms = string_array(c.get("rooms"));
+    if rooms.is_empty() {
+        return Ok(vec![error_bytes(
+            "invalid_request",
+            "room.summary requires c.rooms",
+        )]);
+    }
+
+    let mut responses: Vec<Vec<u8>> = Vec::new();
+    for room_pub in rooms.iter().take(MAX_SUMMARY_ROOMS) {
+        // Room name from latest channel -1.
+        let meta = pool.get_room_channel(room_pub, -1)?;
+        let name = meta
+            .iter()
+            .rev()
+            .find(|e| e.tc.is_some())
+            .and_then(|e| innermost(&e.env).d.c.as_ref())
+            .and_then(|c| c.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
+
+        // Member count from channel -2.
+        let membership = pool.build_membership(room_pub)?;
+        let member_count = membership.members.len() as u64;
+
+        // Per-channel stats (ch, count, latest_tc).
+        let stats = pool.get_room_channel_stats(room_pub)?;
+        let channels: Vec<Value> = stats
+            .iter()
+            .map(|(ch, count, ltc)| json!({"ch": ch, "latest_tc": ltc, "count": count}))
+            .collect();
+
+        // Skip rooms we know nothing about.
+        if name.is_empty() && member_count == 0 && channels.is_empty() {
+            continue;
+        }
+
+        let content = json!({
+            "r": room_pub,
+            "name": name,
+            "members": member_count,
+            "channels": channels,
+        });
+        let result_env = make_envelope("room.summary.result", Some(content), &config.node, None)?;
+        responses.push(envelope_to_json_bytes(&result_env));
+    }
+
+    Ok(responses)
+}
+
+// ---- §10.6 Room Authority (Phase 12) ----
+
+/// If the relay holds the private key for the room this envelope targets,
+/// validate the event against room rules and auto-commit it (depth 1 → depth 2).
+/// Returns the (possibly committed) envelope to store.
+fn maybe_commit(env: Envelope, pool: &Pool, config: &RelayConfig) -> Envelope {
+    // Only auto-commit depth-1 events.
+    if depth(&env) != 1 {
+        return env;
+    }
+
+    let inner = innermost(&env);
+    let room_pub = match inner.d.r.as_deref() {
+        Some(r) => r.to_owned(),
+        None => return env, // not a room event
+    };
+
+    let local_room = match config.rooms.get(&room_pub) {
+        Some(r) => r.clone(),
+        None => return env, // relay is not a key holder for this room
+    };
+
+    // Validate against room rules — but only when the pool has committed metadata.
+    // If the pool has no room.create yet (relay just started, room.create not synced yet),
+    // the key-holder has implicit authority and we skip the check rather than deny everything.
+    let has_committed_meta = pool
+        .get_room_channel(&room_pub, -1)
+        .map(|v| v.iter().any(|e| e.tc.is_some()))
+        .unwrap_or(false);
+    if has_committed_meta && validate_room_rules(&env, &room_pub, pool).is_err() {
+        return env;
+    }
+
+    // Auto-commit: wrap in depth-2 commit envelope.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    // tc must be >= max existing tc in this room.
+    let latest = pool.latest_tc(&room_pub).unwrap_or(0);
+    let tc = now.max(latest + 1);
+
+    match wrap_commit(env.clone(), &local_room, tc) {
+        Ok(committed) => committed,
+        Err(_) => env, // wrap failed — store uncommitted
+    }
+}
+
+/// Validate a depth-1 room event against the room's current rule set.
+///
+/// Checks (in order):
+/// 1. Author is not banned
+/// 2. Author can post (join/post rules)
+/// 3. PoW requirement (if any)
+/// 4. Invite-only: must have committed room.invite first
+/// 5. Rate limit
+///
+/// Key-holder administrative events (`room.create`, `room.update`, `room.ban`,
+/// `room.unban`, `room.invite`) bypass content rules — the key holder vouches for
+/// these by committing them.
+fn validate_room_rules(env: &Envelope, room_pub: &str, pool: &Pool) -> Result<()> {
+    let inner = innermost(env);
+    let author = &inner.d.n;
+    let event_type = inner.d.t.as_str();
+
+    // Administrative events skip content rules (key holder controls these directly).
+    const ADMIN_EVENTS: &[&str] = &[
+        "room.create",
+        "room.update",
+        "room.ban",
+        "room.unban",
+        "room.invite",
+    ];
+    if ADMIN_EVENTS.contains(&event_type) {
+        return Ok(());
+    }
+
+    let ruleset = ruleset_from_pool(pool, room_pub)?;
+    let membership = pool.build_membership(room_pub)?;
+    let members: Vec<&str> = membership.members.iter().map(String::as_str).collect();
+
+    // 1. Banned check.
+    if membership.banned.contains(author) {
+        anyhow::bail!("author is banned");
+    }
+
+    // 2. Can post/join check.
+    match event_type {
+        "room.join" => {
+            if !ruleset.can_join_node(author, &members) {
+                anyhow::bail!("join not allowed by rules");
+            }
+            // Invite-only: must have an existing committed room.invite for this author.
+            if ruleset.is_invite_only() {
+                let ch_minus2 = pool.get_room_channel(room_pub, -2)?;
+                let has_invite = ch_minus2.iter().any(|e| {
+                    let inner_e = innermost(&e.env);
+                    inner_e.d.t == "room.invite"
+                        && inner_e
+                            .d
+                            .c
+                            .as_ref()
+                            .and_then(|c| c.get("node"))
+                            .and_then(|v| v.as_str())
+                            == Some(author.as_str())
+                });
+                if !has_invite {
+                    anyhow::bail!("invite-only: no invite found for author");
+                }
+            }
+        }
+        _ => {
+            if !ruleset.can_post_node(author, &members) {
+                anyhow::bail!("post not allowed by rules");
+            }
+        }
+    }
+
+    // 3. PoW check.
+    let required_bits = if event_type == "room.join" {
+        ruleset.required_join_pow()
+    } else {
+        ruleset.required_post_pow()
+    };
+    if let Some(bits) = required_bits {
+        verify_pow(&inner.d, bits)?;
+    }
+
+    // 4. Rate limit (committed events on member chat channels, ch >= 1).
+    if ruleset.max_events_per_hour().is_some() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let one_hour_ago = now.saturating_sub(3_600_000);
+        let count = pool.count_author_events_since(room_pub, author, one_hour_ago, 1) as u32;
+        if !ruleset.check_rate_limit(author, count) {
+            anyhow::bail!("rate limit exceeded: {} events in window", count);
+        }
+    }
+
+    Ok(())
+}
+
+// ---- Helpers ----
+
+/// Serialize pool entries as the JSON envelope stream a response carries (bytes).
+fn envelopes_json_bytes(entries: Vec<Arc<crate::pool::PoolEntry>>) -> Vec<Vec<u8>> {
+    entries
+        .into_iter()
+        .map(|e| envelope_to_json_bytes(&e.env))
+        .collect()
+}
+
+pub(crate) fn error_bytes(code: &str, message: &str) -> Vec<u8> {
+    format!("{{\"error\":\"{}\",\"message\":\"{}\"}}", code, message).into_bytes()
+}
+
+fn require_object<'a>(
+    c: Option<&'a Value>,
+    endpoint: &str,
+) -> Result<&'a serde_json::Map<String, Value>> {
+    c.and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("{endpoint} requires content object"))
+}
+
+fn require_string<'a>(
+    obj: &'a serde_json::Map<String, Value>,
+    field: &str,
+    endpoint: &str,
+) -> Result<&'a str> {
+    obj.get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("{endpoint} requires c.{field}"))
+}
+
+fn clamp_limit(v: Option<u64>) -> usize {
+    v.map(|n| n as usize)
+        .unwrap_or(DEFAULT_LIMIT)
+        .min(MAX_LIMIT)
+}
+
+// ---- Tests ----
+
+#[cfg(test)]
+mod tests {
+    use crate::fixtures::*;
+    use std::sync::Arc;
+
+    use super::handle_request;
+
+    use crate::envelope::{innermost, make_envelope, wrap_commit};
+    use crate::events::{make_node_meta, make_room_create, make_room_join, make_room_message};
+    use crate::ids::datum_id;
+    use crate::pool::Pool;
+    use crate::transport::server::RelayConfig;
+    use crate::types::{LocalNode, LocalRoom};
+    use serde_json::{json, Value};
+    fn mk_config(node: LocalNode, pool: Arc<Pool>) -> RelayConfig {
+        RelayConfig {
+            node,
+            endpoints: vec![],
+            pool,
+            rooms: std::collections::HashMap::new(),
+            metrics: None,
+            batch_processor: None,
+        }
+    }
+
+    fn make_request(
+        node: &LocalNode,
+        t: &str,
+        content: serde_json::Value,
+    ) -> crate::types::Envelope {
+        make_envelope(t, Some(content), node, None).expect("request envelope")
+    }
+
+    /// Parse response bytes to Value for test assertions.
+    fn parse_response(bytes: &[u8]) -> Value {
+        serde_json::from_slice(bytes).expect("response should be valid JSON")
+    }
+
+    /// Parse response bytes as envelope for test assertions.
+    fn parse_envelope_response(bytes: &[u8]) -> anyhow::Result<crate::types::Envelope> {
+        let mut bytes = bytes.to_vec();
+        crate::envelope::parse_envelope_bytes(&mut bytes)
+    }
+
+    #[tokio::test]
+    async fn invalid_signature_returns_error() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let requester = mk_node();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        // Tamper with a valid request.
+        let mut env = make_request(&requester, "events.sync", json!({"rooms": [], "after": 0}));
+        env.p = "a".repeat(86); // invalid signature
+
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(parse_response(&result[0])["error"], "invalid_signature");
+    }
+
+    #[tokio::test]
+    async fn unknown_endpoint_returns_error() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let requester = mk_node();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let env = make_request(&requester, "unknown.endpoint", json!({}));
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert_eq!(parse_response(&result[0])["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn events_sync_returns_committed_events() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let (_d1, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
+        pool.put(&commit).unwrap();
+
+        let env = make_request(
+            &node,
+            "events.sync",
+            json!({"rooms": [room.sig.pub_key], "after": 0}),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert!(!result.is_empty(), "should return the room.create commit");
+        assert!(result
+            .iter()
+            .all(|v| parse_response(v).get("error").is_none()));
+    }
+
+    #[tokio::test]
+    async fn events_sync_filters_by_after() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let (_d1, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
+        let tc = commit.d.tc.unwrap();
+        pool.put(&commit).unwrap();
+
+        // after = tc should exclude that event (strictly greater than).
+        let env = make_request(
+            &node,
+            "events.sync",
+            json!({"rooms": [room.sig.pub_key], "after": tc}),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert!(result.is_empty(), "after=tc should exclude that event");
+    }
+
+    #[tokio::test]
+    async fn system_fetch_returns_envelope_by_id() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let (_d1, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
+        let id = pool.put(&commit).unwrap();
+
+        let env = make_request(&node, "system.fetch", json!({"datum_ids": [id]}));
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(parse_response(&result[0]).get("error").is_none());
+    }
+
+    #[tokio::test]
+    async fn system_fetch_missing_id_returns_empty() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let env = make_request(
+            &node,
+            "system.fetch",
+            json!({"datum_ids": ["a".repeat(64)]}),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn node_peers_returns_node_meta_envelopes() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let peer = mk_node();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let meta = make_node_meta(&peer, vec![]).unwrap();
+        // node.meta is depth-1, store directly.
+        pool.put(&meta).unwrap();
+
+        let requester = mk_node();
+        let env = make_request(&requester, "node.peers", json!({"limit": 10}));
+        // node.peers uses get_wanted with tc filter — node.meta is uncommitted (tc=NULL)
+        // so get_wanted won't return it. This is by design: only committed events are served.
+        // node.meta has no commit wrapper — relay stores and serves its own node.meta directly.
+        // For now, node.peers returns empty (node.meta is not committed).
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert!(result
+            .iter()
+            .all(|v| parse_response(v).get("error").is_none()));
+    }
+
+    #[tokio::test]
+    async fn pool_exchange_accepts_full_envelope_submission() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        // Create a committed event to submit.
+        let (_d1, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
+        let commit_val = serde_json::to_value(&commit).unwrap();
+
+        // Offer it as a full envelope in pool.exchange.
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [commit_val],
+                "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
+            }),
+        );
+        let _ = handle_request(env, &pool, &config).await.unwrap();
+
+        // Verify the submitted envelope is now in the pool.
+        let id = datum_id(&commit);
+        let stored = pool.get(&id).unwrap();
+        assert!(stored.is_some(), "submitted envelope should be in pool");
+    }
+
+    #[tokio::test]
+    async fn pool_exchange_stores_only_verified_envelopes() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let requester = mk_node();
+        let valid_author = mk_node();
+        let bad_author = mk_node();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let valid = make_node_meta(&valid_author, vec![]).unwrap();
+
+        // Structurally valid envelope whose signature cannot verify.
+        let mut bad = make_node_meta(&bad_author, vec![]).unwrap();
+        bad.p = crate::base64url::encode(&[0u8; 64]);
+
+        let valid_val = serde_json::to_value(&valid).unwrap();
+        let bad_val = serde_json::to_value(&bad).unwrap();
+
+        let req = make_request(
+            &requester,
+            "pool.exchange",
+            json!({"offer": [valid_val, bad_val], "want": {}}),
+        );
+        handle_request(req, &pool, &config).await.unwrap();
+
+        assert!(
+            pool.get(&datum_id(&valid)).unwrap().is_some(),
+            "valid envelope must be stored"
+        );
+        assert!(
+            pool.get(&datum_id(&bad)).unwrap().is_none(),
+            "SECURITY: unverified envelope must never be stored"
+        );
+    }
+
+    #[tokio::test]
+    async fn pool_exchange_returns_wanted_events() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let (_d1, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
+        pool.put(&commit).unwrap();
+
+        let requester = mk_node();
+        let env = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "offer": [],
+                "want": {
+                    "rooms": [room.sig.pub_key],
+                    "types": [],
+                    "after": 0,
+                    "limit": 100
+                }
+            }),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert!(!result.is_empty());
+        assert!(result
+            .iter()
+            .all(|v| parse_response(v).get("error").is_none()));
+    }
+
+    #[tokio::test]
+    async fn sync_returns_uncommitted_room_events_for_key_holders() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let author = mk_node();
+        let requester = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let message = make_room_message(&author, &room.sig.pub_key, 1, "pending", vec![]).unwrap();
+        let offer = make_request(
+            &author,
+            "pool.exchange",
+            json!({ "offer": [serde_json::to_value(&message).unwrap()], "want": {"rooms": []} }),
+        );
+        handle_request(offer, &pool, &config).await.unwrap();
+
+        let expected = datum_id(&message);
+        let exchange = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "offer": [],
+                "want": {"rooms": [room.sig.pub_key], "after": 0, "limit": 100}
+            }),
+        );
+        let responses = handle_request(exchange, &pool, &config).await.unwrap();
+        let returned = responses
+            .iter()
+            .filter_map(|value| parse_envelope_response(value).ok())
+            .find(|envelope| innermost(envelope).d.t == "room.message");
+        assert_eq!(
+            returned.map(|envelope| datum_id(&envelope)),
+            Some(expected.clone()),
+            "pool.exchange must expose uncommitted events to key holders"
+        );
+
+        let sync = make_request(
+            &requester,
+            "events.sync",
+            json!({"rooms": [room.sig.pub_key], "after": 0, "limit": 100}),
+        );
+        let responses = handle_request(sync, &pool, &config).await.unwrap();
+        let found = responses.iter().any(|value| {
+            parse_envelope_response(value)
+                .map(|envelope| datum_id(&envelope) == expected)
+                .unwrap_or(false)
+        });
+        assert!(found, "events.sync must expose uncommitted room events");
+    }
+
+    #[tokio::test]
+    async fn pool_exchange_excludes_offered_ids() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let (_d1, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
+        let id = pool.put(&commit).unwrap();
+
+        let requester = mk_node();
+        let env = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "offer": [{"datum_id": id}],
+                "want": {
+                    "rooms": [room.sig.pub_key],
+                    "types": [],
+                    "after": 0,
+                    "limit": 100
+                }
+            }),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        // The offered datum_id should be excluded from the response.
+        for val in &result {
+            if parse_response(val).get("error").is_none() {
+                // It's an envelope — check its datum_id doesn't match.
+                if let Ok(env) = parse_envelope_response(val) {
+                    let returned_id = datum_id(&env);
+                    assert_ne!(returned_id, id, "offered event should not be returned");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn room_sync_returns_channel_range() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        // Put two messages in channel 1.
+        let msg1 = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
+        let tc1 = msg1.d.ts;
+        let c1 = wrap_commit(msg1, &room, tc1).unwrap();
+        pool.put(&c1).unwrap();
+
+        let msg2 = make_room_message(&node, &room.sig.pub_key, 1, "world", vec![]).unwrap();
+        // Explicit distinct commit timestamps; wall-clock milliseconds can collide.
+        let tc2 = (tc1 + 1).max(msg2.d.ts);
+        let c2 = wrap_commit(msg2, &room, tc2).unwrap();
+        pool.put(&c2).unwrap();
+
+        // Ask for only tc >= tc2.
+        let env = make_request(
+            &node,
+            "room.sync",
+            json!({
+                "r": room.sig.pub_key,
+                "channel": 1,
+                "start_tc": tc2,
+                "limit": 100
+            }),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert_eq!(result.len(), 2, "watermark frame + one event");
+        assert_eq!(
+            parse_response(&result[0]).get("wr").and_then(Value::as_u64),
+            Some(0),
+            "no system events yet → watermark 0"
+        );
+        assert!(
+            parse_response(&result[1]).get("d").is_some(),
+            "second frame is the event envelope"
+        );
+    }
+
+    #[tokio::test]
+    async fn room_sync_watermark_reflects_system_channels() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        // A membership commit advances the watermark; a content commit does not.
+        let join = make_room_join(&node, &room.sig.pub_key, None).unwrap();
+        let join_tc = join.d.ts;
+        pool.put(&wrap_commit(join, &room, join_tc).unwrap())
+            .unwrap();
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hi", vec![]).unwrap();
+        let msg_tc = msg.d.ts;
+        pool.put(&wrap_commit(msg, &room, msg_tc).unwrap()).unwrap();
+
+        let env = make_request(
+            &node,
+            "room.sync",
+            json!({
+                "r": room.sig.pub_key,
+                "channel": 1,
+                "start_tc": 0,
+                "limit": 100
+            }),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert_eq!(
+            parse_response(&result[0]).get("wr").and_then(Value::as_u64),
+            Some(join_tc),
+            "watermark tracks latest system-channel commit, not content"
+        );
+    }
+
+    #[tokio::test]
+    async fn room_compare_returns_signed_result() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hi", vec![]).unwrap();
+        let tc = msg.d.ts;
+        let c = wrap_commit(msg, &room, tc).unwrap();
+        pool.put(&c).unwrap();
+
+        let env = make_request(
+            &node,
+            "room.compare",
+            json!({
+                "r": room.sig.pub_key,
+                "channel": 1,
+                "samples": [{"seq": 1, "eid": "intentionally_wrong"}]
+            }),
+        );
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert_eq!(result.len(), 1);
+        // Result is a room.compare.result envelope signed by the relay.
+        let result_env = parse_envelope_response(&result[0]).unwrap();
+        assert_eq!(result_env.d.t, "room.compare.result");
+        assert_eq!(result_env.d.n, config.node.sig.pub_key);
+        let c = result_env.d.c.unwrap();
+        let results = c.get("results").unwrap().as_array().unwrap();
+        assert_eq!(results[0]["match"], false); // eid mismatch
+    }
+
+    #[tokio::test]
+    async fn room_summary_returns_signed_result() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let (_d1, commit) =
+            make_room_create(&node, &room, Some("Test Room"), Some(json!([]))).unwrap();
+        pool.put(&commit).unwrap();
+
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
+        let tc = commit.d.tc.unwrap() + 1000;
+        let c = wrap_commit(msg, &room, tc).unwrap();
+        pool.put(&c).unwrap();
+
+        let env = make_request(&node, "room.summary", json!({"rooms": [room.sig.pub_key]}));
+        let result = handle_request(env, &pool, &config).await.unwrap();
+        assert_eq!(result.len(), 1);
+        let result_env = parse_envelope_response(&result[0]).unwrap();
+        assert_eq!(result_env.d.t, "room.summary.result");
+        let c = result_env.d.c.unwrap();
+        assert_eq!(c["name"], "Test Room");
+        assert!(!c["channels"].as_array().unwrap().is_empty());
+    }
+
+    // ---- Phase 12: Room Authority tests ----
+
+    fn mk_config_with_room(node: LocalNode, pool: Arc<Pool>, room: &LocalRoom) -> RelayConfig {
+        let mut rooms = std::collections::HashMap::new();
+        rooms.insert(room.sig.pub_key.clone(), room.clone());
+        RelayConfig {
+            node,
+            endpoints: vec![],
+            pool,
+            rooms,
+            metrics: None,
+            batch_processor: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn key_holder_auto_commits_submitted_depth1_event() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        // Relay holds the room key.
+        let config = mk_config_with_room(relay, Arc::clone(&pool), &room);
+
+        // First, seed the room with a committed room.create (relay is key holder so it auto-commits too).
+        let (d1, _) = make_room_create(&node, &room, Some("Auth Room"), Some(json!([]))).unwrap();
+        let d1_val = serde_json::to_value(&d1).unwrap();
+
+        // Submit d1 via pool.exchange — relay should auto-commit it.
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [d1_val],
+                "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
+            }),
+        );
+        handle_request(env, &pool, &config).await.unwrap();
+
+        // The event should now be in the pool as a committed (depth-2) envelope.
+        let all = pool.get_room_channel(&room.sig.pub_key, -1).unwrap();
+        let committed = all.iter().any(|e| e.tc.is_some());
+        assert!(committed, "relay should auto-commit depth-1 room.create");
+    }
+
+    #[tokio::test]
+    async fn non_key_holder_does_not_auto_commit() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        // Relay does NOT hold the room key.
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let (d1, _) = make_room_create(&node, &room, Some("No-Key Room"), Some(json!([]))).unwrap();
+        let d1_val = serde_json::to_value(&d1).unwrap();
+
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [d1_val],
+                "want": {"rooms": [], "types": [], "after": 0, "limit": 10}
+            }),
+        );
+        handle_request(env, &pool, &config).await.unwrap();
+
+        // Event is stored but uncommitted (tc = None).
+        let all = pool.get_room_channel(&room.sig.pub_key, -1).unwrap();
+        assert!(!all.is_empty(), "event should still be stored");
+        let has_committed = all.iter().any(|e| e.tc.is_some());
+        assert!(
+            !has_committed,
+            "relay without room key must not auto-commit"
+        );
+    }
+
+    #[tokio::test]
+    async fn banned_author_is_rejected_by_key_holder() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let banned_node = mk_node();
+        let room = mk_room();
+        let config = mk_config_with_room(relay, Arc::clone(&pool), &room);
+
+        // Seed a committed room.create first.
+        let (d1, _) = make_room_create(&node, &room, Some("Banned Room"), Some(json!([]))).unwrap();
+        let d1_val = serde_json::to_value(&d1).unwrap();
+        let seed_req = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [d1_val], "want": {}
+            }),
+        );
+        handle_request(seed_req, &pool, &config).await.unwrap();
+
+        // Manually insert a committed room.ban for banned_node.
+        let ban_event = make_envelope(
+            "room.ban",
+            Some(json!({
+                "r": room.sig.pub_key,
+                "banned": banned_node.sig.pub_key
+            })),
+            &node,
+            Some(crate::envelope::DatumBodyExtra {
+                r: Some(room.sig.pub_key.clone()),
+                to: None,
+                tc: None,
+                exp: None,
+                nonce: None,
+            }),
+        )
+        .unwrap();
+        let ban_tc = ban_event.d.ts;
+        let ban_commit = wrap_commit(ban_event, &room, ban_tc).unwrap();
+        pool.put(&ban_commit).unwrap();
+
+        // Rebuild membership to confirm the ban took effect.
+        let membership = pool.build_membership(&room.sig.pub_key).unwrap();
+        assert!(membership.banned.contains(&banned_node.sig.pub_key));
+
+        // Now banned_node tries to post a message.
+        let msg = make_room_message(&banned_node, &room.sig.pub_key, 1, "spam", vec![]).unwrap();
+        let msg_val = serde_json::to_value(&msg).unwrap();
+        let req = make_request(
+            &banned_node,
+            "pool.exchange",
+            json!({
+                "offer": [msg_val], "want": {}
+            }),
+        );
+        handle_request(req, &pool, &config).await.unwrap();
+
+        // The banned_node's message should be stored uncommitted (validate fails, wrap_commit not called).
+        let chat = pool.get_room_channel(&room.sig.pub_key, 1).unwrap();
+        let banned_committed = chat
+            .iter()
+            .filter(|e| innermost(&e.env).d.n == banned_node.sig.pub_key)
+            .any(|e| e.tc.is_some());
+        assert!(
+            !banned_committed,
+            "banned author's event must not be auto-committed"
+        );
+    }
+
+    #[tokio::test]
+    async fn key_holder_returns_committed_envelope_in_same_response() {
+        // When a key-holder relay auto-commits a submitted depth-1 event, the
+        // committed (depth-2) envelope must appear in the pool.exchange response
+        // so the sender can confirm the message in a single round-trip.
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config_with_room(relay, Arc::clone(&pool), &room);
+
+        // Seed committed room.create; allow all to post so the message passes rule validation.
+        let (d1_create, _) = make_room_create(
+            &node,
+            &room,
+            Some("RT Room"),
+            Some(json!([{"t": "post", "allow": "*"}])),
+        )
+        .unwrap();
+        let seed = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [serde_json::to_value(&d1_create).unwrap()],
+                "want": {}
+            }),
+        );
+        handle_request(seed, &pool, &config).await.unwrap();
+
+        // Now submit a depth-1 message and want back the room's events.
+        let msg = make_room_message(&node, &room.sig.pub_key, 1, "hello", vec![]).unwrap();
+        let msg_val = serde_json::to_value(&msg).unwrap();
+
+        let req = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [msg_val],
+                "want": {"rooms": [room.sig.pub_key], "types": [], "after": 0, "limit": 100}
+            }),
+        );
+        let result = handle_request(req, &pool, &config).await.unwrap();
+
+        // The response must contain the committed (depth-2) version of the message.
+        let has_committed_msg = result.iter().any(|v| {
+            if let Ok(env) = parse_envelope_response(v) {
+                let d = crate::envelope::depth(&env);
+                let t = &crate::envelope::innermost(&env).d.t;
+                d == 2 && t == "room.message"
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_committed_msg,
+            "pool.exchange response must include the auto-committed depth-2 message"
+        );
+    }
+
+    #[tokio::test]
+    async fn depth2_event_is_not_re_committed() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let node = mk_node();
+        let room = mk_room();
+        let config = mk_config_with_room(relay, Arc::clone(&pool), &room);
+
+        // Create a depth-2 event (already committed) and submit it.
+        let (_, commit) = make_room_create(&node, &room, Some("Room"), Some(json!([]))).unwrap();
+        let commit_val = serde_json::to_value(&commit).unwrap();
+
+        let env = make_request(
+            &node,
+            "pool.exchange",
+            json!({
+                "offer": [commit_val],
+                "want": {}
+            }),
+        );
+        handle_request(env, &pool, &config).await.unwrap();
+
+        // Should be stored as depth-2, not wrapped again into depth-3.
+        let all = pool.get_room_channel(&room.sig.pub_key, -1).unwrap();
+        let depth3 = all.iter().any(|e| crate::envelope::depth(&e.env) == 3);
+        assert!(
+            !depth3,
+            "committed events must not be re-committed to depth-3"
+        );
+    }
+}

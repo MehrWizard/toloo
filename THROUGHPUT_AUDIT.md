@@ -1,5 +1,11 @@
 # Toloo Throughput Optimization Audit
 
+> **Historical audit (October 2026).** Most P0/P1 findings below were
+> implemented; this document is retained for rationale and measurement
+> history, not as a statement of current performance. Current results live in
+> the [benchmark repo](https://github.com/MehrWizard/toloo-benchmarks) and the benchmark sections of [`README.md`](README.md);
+> remaining work is tracked in [`TODO.md`](TODO.md).
+
 **Target:** Old devices/browsers, millions of users, <$100 compute budget
 
 ## Executive Summary
@@ -303,23 +309,23 @@ The Toloo protocol is well-architected with sharded locking (16 shards), `Arc<En
 
 ## Files Modified (Phase 1 Complete)
 
-1. ✅ `toloo-lib/src/canonical.rs` — cached canonical via `OnceLock<Vec<u8>>` on `DatumBody`
-2. ✅ `toloo-lib/src/crypto.rs` — `VerifyingKey` cache using `dashmap` (lock-free reads)
-3. ✅ `toloo-lib/src/envelope.rs` — `signable_bytes` uses cache, `verify_single` uses non-cached path for security
-4. ✅ `toloo-lib/src/types.rs` — added `cached_canonical` field to `DatumBody`
-5. ✅ `toloo-lib/src/pow.rs` — uses non-cached canonical (nonce mutates)
-6. ✅ `toloo-lib/src/private.rs` — stack-allocated salt buffer (64 bytes)
+1. ✅ `lib/src/canonical.rs` — cached canonical via `OnceLock<Vec<u8>>` on `DatumBody`
+2. ✅ `lib/src/crypto.rs` — `VerifyingKey` cache using `dashmap` (lock-free reads)
+3. ✅ `lib/src/envelope.rs` — `signable_bytes` uses cache, `verify_single` uses non-cached path for security
+4. ✅ `lib/src/types.rs` — added `cached_canonical` field to `DatumBody`
+5. ✅ `lib/src/pow.rs` — uses non-cached canonical (nonce mutates)
+6. ✅ `lib/src/private.rs` — stack-allocated salt buffer (64 bytes)
 
 ## Files Modified (Phase 2 — Complete)
 
-7. ✅ `toloo-lib/src/envelope.rs` — manual JSON serialization (`envelope_to_json_bytes`, `envelope_to_json_string`, typed field writers)
-8. ✅ `toloo-lib/src/requests/handlers.rs` — `to_envelope_json` now uses manual serialization
-9. ✅ `toloo-lib/src/pool.rs` — pre-allocated `Vec` capacity in `get_wanted`, `select`, `get_room_channel`, `get_room_channel_range`
-10. ✅ `toloo-lib/src/pool.rs` — string interning for secondary indexes: `by_room_channel` uses `String` keys (fast `&str` lookup), `by_room_tc` and `by_author_room_tc` use `Arc<str>` keys (shared allocation). `PoolEntry` fields `room`, `n`, `to_node`, `event_type` use `Arc<str>` for zero-copy cloning.
-11. ✅ `toloo-lib/src/envelope.rs` — zero-copy parsing with `parse_envelope_bytes` using simd-json
-12. ✅ `toloo-lib/src/transport/server.rs` — `dispatch_common` now uses zero-copy parsing
-13. ✅ `toloo-lib/src/crypto.rs` — added `ed25519_verify_batch` using ed25519-dalek batch API (requires `batch` feature)
-14. ✅ `toloo-lib/src/requests/handlers.rs` — `handle_pool_exchange` now uses batch verification for offer processing
+7. ✅ `lib/src/envelope.rs` — manual JSON serialization (`envelope_to_json_bytes`, `envelope_to_json_string`, typed field writers)
+8. ✅ `lib/src/requests/handlers.rs` — `to_envelope_json` now uses manual serialization
+9. ✅ `lib/src/pool.rs` — pre-allocated `Vec` capacity in `get_wanted`, `select`, `get_room_channel`, `get_room_channel_range`
+10. ✅ `lib/src/pool.rs` — string interning for secondary indexes: `by_room_channel` uses `String` keys (fast `&str` lookup), `by_room_tc` and `by_author_room_tc` use `Arc<str>` keys (shared allocation). `PoolEntry` fields `room`, `n`, `to_node`, `event_type` use `Arc<str>` for zero-copy cloning.
+11. ✅ `lib/src/envelope.rs` — zero-copy parsing with `parse_envelope_bytes` using simd-json
+12. ✅ `lib/src/transport/server.rs` — `dispatch_common` now uses zero-copy parsing
+13. ✅ `lib/src/crypto.rs` — added `ed25519_verify_batch` using ed25519-dalek batch API (requires `batch` feature)
+14. ✅ `lib/src/requests/handlers.rs` — `handle_pool_exchange` now uses batch verification for offer processing
 
 ---
 
@@ -349,16 +355,16 @@ The Toloo protocol is well-architected with sharded locking (16 shards), `Arc<En
 
 ## Files Modified (Phase 6)
 
-19. ✅ `toloo-lib/src/canonical.rs` — `canonical_value_bytes_into()` writes directly to buffer, no reallocation
-20. ✅ `toloo-lib/src/envelope.rs` — `signable_bytes_verify` uses thread-local `VERIFY_PAYLOAD_BUF`; `batch_verify_layers` for depth ≥ 2
-21. ✅ `toloo-lib/src/envelope.rs` — `verify_chain` uses batch for depth ≥ 2, single-fast-path for depth 1
-22. ✅ `toloo-lib/src/crypto.rs` — `ed25519_verify_batch` added, `get_verifying_key` uses DashMap cache
-23. ✅ `toloo-lib/Cargo.toml` — upgraded `x25519-dalek` v2→v3 (eliminates `curve25519-dalek v4.1.3` build conflict)
+19. ✅ `lib/src/canonical.rs` — `canonical_value_bytes_into()` writes directly to buffer, no reallocation
+20. ✅ `lib/src/envelope.rs` — `signable_bytes_verify` uses thread-local `VERIFY_PAYLOAD_BUF`; `batch_verify_layers` for depth ≥ 2
+21. ✅ `lib/src/envelope.rs` — `verify_chain` uses batch for depth ≥ 2, single-fast-path for depth 1
+22. ✅ `lib/src/crypto.rs` — `ed25519_verify_batch` added, `get_verifying_key` uses DashMap cache
+23. ✅ `lib/Cargo.toml` — upgraded `x25519-dalek` v2→v3 (eliminates `curve25519-dalek v4.1.3` build conflict)
 24. ✅ `.cargo/config.toml` — removed (SIMD `simd` backend requires nightly; breaks stable CI on 3/5 platforms)
 25. ✅ `.github/workflows/benchmark.yml` — CI benchmark workflow (5 platforms, resilient to runner failures)
-26. ✅ `index.html.template` — static HTML template with log-scale bar visualization
-27. ✅ `substitute_template.py` — template substitution: protocol ratios, colors, parity labels, tooltips
-28. ✅ `results/latest.json` — aggregated benchmark results from CI run 40865941530 (5 platforms)
+26. ✅ `bench/templates/index.html.template` — static HTML template with log-scale bar visualization
+27. ✅ `bench/scripts/substitute_template.py` — template substitution: protocol ratios, colors, parity labels, tooltips
+28. ✅ `toloo-benchmarks/results/latest.json` — aggregated benchmark results from CI run 40865941530 (5 platforms)
 
 **SIMD backend root cause (build failures):** `curve25519-dalek v5`'s `simd` backend requires nightly Rust (the build script panics on stable when `--cfg curve25519_dalek_backend="simd"` is set). The `.cargo/config.toml` that enabled this for aarch64 targets was removed because: (1) it broke 3/5 CI platforms (macOS x86_64, macOS aarch64, Linux aarch64) due to a `curve25519-dalek v4.1.3` panic from the transitive `x25519-dalek v2` dependency — fixed by upgrading `x25519-dalek` to v3 which uses `curve25519-dalek v5`; (2) even after the upgrade, `curve25519-dalek v5`'s build script still panics on stable Rust because the `simd` backend requires nightly. On nightly toolchains, the ~20-34% NEON speedup would push single-signature closer to 2x on ARM — re-enable with `RUSTFLAGS='--cfg curve25519_dalek_backend="simd"'` and `cargo +nightly` for specific deployment targets.
 
@@ -426,14 +432,14 @@ The benchmark workflow runs on dispatch and tests across 5 platforms simultaneou
 
 ### CI Benchmark Process
 
-1. Each platform runs `cargo bench --bench canonical_bench` in `toloo-lib/`
+1. Each platform runs `cargo bench --bench canonical_bench` in `lib/`
 2. Criterion output is parsed: `estimates.json` files are extracted from `target/criterion/` at all nesting depths (1-level, 2-level, 3-level)
 3. Raw JSON artifacts are uploaded as `bench-{platform}` artifact
 4. The `aggregate` job downloads all artifacts (with `if: always()`), parses them into a unified `benchmark-report.json`
-5. Results are committed to the benchmark repo (`MehrWizard/toloo-benchmarks`) under `results/{sha}.json` and `results/latest.json`
+5. Results are committed to the benchmark repo (`MehrWizard/toloo-benchmarks`) under `results/{sha}.json` and `toloo-benchmarks/results/latest.json`
 6. The `compare` job (main branch only) diffs against the previous baseline and reports regressions (10% threshold for linux-x86, 20% for other platforms — non-blocking)
 
-### Benchmark Suite (`toloo-lib/benches/canonical_bench.rs`)
+### Benchmark Suite (`lib/benches/canonical_bench.rs`)
 
 The benchmark suite covers 22 benchmarks across 6 categories:
 
@@ -517,10 +523,10 @@ A zero-dependency Python script substitutes benchmark data into an HTML template
 
 ## Files Modified (Phase 5 — Complete)
 
-15. ✅ `toloo-lib/src/pool.rs` — `PoolEntry` fields use `Arc<str>` for zero-copy cloning
-16. ✅ `toloo-lib/src/pool.rs` — `by_room_tc` and `by_author_room_tc` use `Arc<str>` keys
-17. ✅ `toloo-lib/src/pool.rs` — `by_room_channel` uses `String` keys for fast lookup
-18. ✅ `toloo-lib/src/requests/handlers.rs` — updated `e.n.as_str()` → `e.n.as_ref()` for `Arc<str>` compatibility
+15. ✅ `lib/src/pool.rs` — `PoolEntry` fields use `Arc<str>` for zero-copy cloning
+16. ✅ `lib/src/pool.rs` — `by_room_tc` and `by_author_room_tc` use `Arc<str>` keys
+17. ✅ `lib/src/pool.rs` — `by_room_channel` uses `String` keys for fast lookup
+18. ✅ `lib/src/requests/handlers.rs` — updated `e.n.as_str()` → `e.n.as_ref()` for `Arc<str>` compatibility
 
 ---
 
@@ -647,7 +653,7 @@ authoritative comparison.
 
 The dashboard previously compared Toloo against hard-coded IRC/XMPP/Matrix
 estimates. Signal was absent and Matrix was not measured. Phase 9 adds a
-benchmark-only crate, `toloo-protocol-bench`, that links real protocol
+benchmark-only crate, `toloo-bench`, that links real protocol
 implementations and feeds measured rows into the same latency cards plus a new
 1:1 private-message card.
 
@@ -668,7 +674,7 @@ implementations and feeds measured rows into the same latency cards plus a new
   `--features protocols`.
 - Normal `cargo build/test --workspace` never compiles libsignal; release
   artifacts do not link AGPL code. Nothing combined is distributed.
-- `cargo test -p toloo-protocol-bench --features protocols` runs five adapter
+- `cargo test -p toloo-bench --features protocols` runs five adapter
   round-trip tests (Signal ratchet, Olm, Matrix sign/verify/canonical, Nostr
   event, NIP-44).
 
@@ -728,7 +734,7 @@ implementations and feeds measured rows into the same latency cards plus a new
 IRC and XMPP rows remain estimates (tagged `est`). Matrix rows become measured
 when `platforms.protocols` exists; without it the generator emits the old
 Matrix estimate row and omits the 1:1 card, so local generation from
-`results/latest.json` keeps working.
+`toloo-benchmarks/results/latest.json` keeps working.
 
 ### Fairness caveats
 

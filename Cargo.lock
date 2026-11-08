@@ -6947,6 +6947,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "toloo-bench"
+version = "0.1.8"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "criterion",
+ "ed25519-dalek",
+ "libsignal-protocol-syft",
+ "nostr",
+ "rand 0.9.2",
+ "ruma-common",
+ "ruma-signatures",
+ "serde_json",
+ "tokio",
+ "toloo-lib",
+ "vodozemac",
+]
+
+[[package]]
 name = "toloo-cli"
 version = "0.1.8"
 dependencies = [
@@ -6985,7 +7004,6 @@ dependencies = [
  "anyhow",
  "argon2",
  "const-oid",
- "criterion",
  "dashmap",
  "der",
  "ed25519-dalek",
@@ -7000,25 +7018,6 @@ dependencies = [
  "tokio-tungstenite",
  "toloo-core",
  "x509-cert",
-]
-
-[[package]]
-name = "toloo-protocol-bench"
-version = "0.1.8"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "criterion",
- "ed25519-dalek",
- "libsignal-protocol-syft",
- "nostr",
- "rand 0.9.2",
- "ruma-common",
- "ruma-signatures",
- "serde_json",
- "tokio",
- "toloo-lib",
- "vodozemac",
 ]
 
 [[package]]

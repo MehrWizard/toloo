@@ -4,6 +4,22 @@ The original spec-gap tracker (Feb 2026) is retired; all Relay-conformance
 gaps it tracked were implemented or consciously removed. History lives in
 git. Current remaining work, in priority order:
 
+## Documentation & repository hygiene
+
+- [x] Move the normative specification into `specs/`, including the pending
+      local edits from the old standalone spec repository.
+- [x] Archive retired Python/JS/TS prototypes, the old spec snapshot, branding
+      drafts, and the old binary archive out of tree with README notes.
+- [x] Document the isolated-compositor rule for native GUI tests and
+      screenshots.
+- [x] Rename source directories to `app/`, `cli/`, `core/`, `lib/`, `wasm/`,
+      and `web/`; product/package names remain `toloo-*`.
+- [x] Consolidate all benchmark code, scripts, templates, and assets under
+      `bench/`; results and the dashboard now live only in
+      `MehrWizard/toloo-benchmarks`.
+- [ ] Keep README, TODO, component docs, and spec indexes current with each
+      release.
+
 ## Client tier (constrained devices — Galaxy J5 2016 class)
 
 - [ ] `PoolConfig`: resident-event cap + cold-log fallback (stream old
@@ -20,13 +36,17 @@ git. Current remaining work, in priority order:
       WS/HTTP transports, local Pool, config persistence, room authority.
 - [x] Desktop build and engine tests (identity, restore, create room, send,
       committed status, WS and HTTP relay sync).
-- [x] `native.yml`: desktop release builds + experimental Android APK job;
-      release workflow now ships app binaries instead of Tauri.
+- [x] `native.yml` (App workflow): desktop release builds + experimental
+      Android APK job; release workflow now ships app binaries instead of
+      Tauri.
 - [x] Remove the Tauri app from `main`; its last snapshot is preserved as the
       `toloo-app-legacy` tag.
-- [ ] Validate Android APK on a real API 26 device; verify AWS-LC/Skia
-      cross-compilation, IME, TLS, renderer choice, APK size and RSS.
-- [ ] Android release signing/AAB and store packaging.
+- [x] Install and exercise release APKs on physical Android 8+ devices:
+      IME, emoji keyboard, selection handles, Back navigation, and upgrades.
+- [ ] Finish Android device validation across API 26-class hardware: TLS and
+      renderer coverage, APK size/RSS, and long-session behavior.
+- [ ] Android release signing/AAB and store packaging, including a Play Store
+      auto-publish workflow using a service-account secret for tagged builds.
 - [ ] Native feature parity: embedded relay hosting, private messages/UI,
       discovery import/export, keystore/encrypted identity, blobs, moderation,
       notifications and background sync (foreground service).
@@ -52,7 +72,7 @@ git. Current remaining work, in priority order:
       membership (shared core algorithm), room rules, discovery URI/file,
       PoW solve/verify, hashing/base64, envelope metadata.
 - [x] Core CI workflow: native workspace tests/checks + wasm tests/build.
-- [x] SolidJS browser client (`toloo-web/`): onboarding, identity persistence,
+- [x] SolidJS browser client (`web/`): onboarding, identity persistence,
       relay settings, create/join rooms, verified sync, IndexedDB envelope
       store, membership display, chat/send, invites, responsive UI.
 - [x] Browser store layer (IndexedDB) and JS transport (WebSocket/HTTP) using
@@ -65,7 +85,8 @@ git. Current remaining work, in priority order:
 - [x] Browser-compatible HTTP relay endpoint: CORS preflight/response headers,
       plus `toloo relay --http-port <port> --http-path <path>` for local HTTP
       testing.
-- [ ] Retire `toloo-js` (do not migrate it to v2).
+- [x] Retire `toloo-js`; the legacy client is archived out of tree and the
+      browser client uses `toloo-wasm` + `toloo-web`.
 - [ ] Web client: direct-message UI using `PairKeyCache.makeMessage/openMessage`.
 - [ ] Web client: encrypted-at-rest keystore for identity/room keys (currently
       plain IndexedDB).
@@ -81,7 +102,7 @@ git. Current remaining work, in priority order:
 
 ## Verification
 
-- [x] Transport unit tests (`toloo-web/src/lib/transport.test.ts`), web build
+- [x] Transport unit tests (`web/src/lib/transport.test.ts`), web build
       in core CI.
 - [ ] Automated browser E2E tests (identity → relay → create/join → send →
       commit) replacing ad-hoc local testing.
@@ -91,14 +112,14 @@ git. Current remaining work, in priority order:
 - [x] GitHub Actions benchmark workflow (`.github/workflows/benchmark.yml`)
       — 5 platforms (linux-x86, linux-arm, windows, macos-x86, macos-arm)
       with `continue-on-error: true` and `if: always()` resilience
-- [x] Aggregation into `results/latest.json` with per-platform `mean_ns`, `median_ns`, `std_dev_ns`
-- [x] Static HTML benchmark visualization (`index.html.template` + `substitute_template.py`)
+- [x] Aggregation into the external `toloo-benchmarks` results files with per-platform `mean_ns`, `median_ns`, `std_dev_ns`
+- [x] Static HTML benchmark visualization (`bench/templates/index.html.template` + `bench/scripts/substitute_template.py`)
       — log-scale bars, parity detection, CSS hover tooltips, equal-width columns
 - [x] Cross-repo push to `MehrWizard/toloo-benchmarks` with per-commit results
 - [x] Opt-in same-host A/B (`baseline_ref` input) on linux-x86, with a Criterion
       comparison report in the job summary and artifact
 - [x] Baseline comparison with 10%/20% regression thresholds (non-blocking)
-- [x] Cross-protocol benchmarks: `toloo-protocol-bench` measures Signal
+- [x] Cross-protocol benchmarks: `bench/` (`toloo-bench`) measures Signal
       (libsignal X3DH + Double Ratchet), Matrix (ruma signatures, vodozemac
       Olm) and Nostr (Schnorr, NIP-44). Feature-gated (`protocols`), Linux x86
       CI job, measured rows + 1:1 card on the dashboard, `est` tags for the
@@ -111,11 +132,11 @@ git. Current remaining work, in priority order:
 - [x] First-message economics: `signal_inbound` / `olm_inbound` measure
       responder pre-key processing; the 1:1 card shows setup-inclusive
       send → receive numbers.
-- [ ] Retire `toloo-js` instead of migrating it: the browser client moves to
-      `toloo-wasm` (v2 native) + SolidJS. Spec docs `3-cryptography`,
-      `4-identity`, `6-events`, `B-wire-examples`, `C-security`,
-      `D-conformance` are updated; a deterministic v2 vector is still needed
-      in `E-test-vectors`.
+- [x] Retire `toloo-js` instead of migrating it: the browser client moves to
+      `toloo-wasm` (v2 native) + SolidJS. The retired client and old spec
+      snapshot are archived out of tree.
+- [ ] Add a deterministic v2 private-message vector to
+      `specs/E-test-vectors.md`.
 - [x] Faster crypto backend: X25519, ChaCha20-Poly1305, and Ed25519 signing use
       `aws-lc-rs` (assembly + runtime CPU detection; already linked via rustls)
       with the dalek/RustCrypto fallback when TLS/aws-lc is disabled. Ed25519

@@ -102,18 +102,18 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d \
             > "$RUNNER_TEMP/android/toloo-release.jks"
       - name: Build Android native libraries
-        run: ./toloo-app/android/build-native.sh
+        run: ./app/android/build-native.sh
       - name: Build signed APKs
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/android/toloo-release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEYSTORE_ALIAS: toloo
-        run: gradle -p toloo-app/android --no-daemon assembleRelease
+        run: gradle -p app/android --no-daemon assembleRelease
       - name: Package APKs
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist/android
-          apkdir=toloo-app/android/app/build/outputs/apk/release
+          apkdir=app/android/app/build/outputs/apk/release
           cp "$apkdir/app-arm64-v8a-release.apk" \
             "dist/android/toloo-app-${version}-android-arm64-v8a.apk"
           cp "$apkdir/app-armeabi-v7a-release.apk" \
@@ -262,16 +262,16 @@ jobs:
         run: cargo binstall --no-confirm wasm-bindgen-cli --version 0.2.126
 
       - name: Build browser package
-        run: ./toloo-wasm/build.sh
+        run: ./wasm/build.sh
 
       - name: Smoke-test generated package
-        run: node toloo-wasm/test-package.mjs
+        run: node wasm/test-package.mjs
 
       - name: Package
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
-          cp -r toloo-wasm/pkg dist/toloo-wasm
+          cp -r wasm/pkg dist/toloo-wasm
           (cd dist && zip -r "toloo-wasm-${version}.zip" toloo-wasm)
           rm -rf dist/toloo-wasm
 

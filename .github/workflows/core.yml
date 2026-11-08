@@ -20,8 +20,8 @@ jobs:
           key: native
       - name: Test core and runtime
         run: cargo test -p toloo-core -p toloo-lib -p toloo-wasm
-      # Native Slint builds run in native.yml. This job covers the portable
-      # core, runtime, CLI, and wasm crates.
+      # Toloo app and Android builds run in native.yml. This job covers the
+      # portable core, runtime, CLI, and wasm crates.
       - name: Check all targets
         run: cargo check -p toloo-core -p toloo-lib -p toloo-cli -p toloo-wasm --all-targets
 
@@ -50,23 +50,23 @@ jobs:
       - name: Run wasm tests
         run: cargo test -p toloo-wasm --target wasm32-unknown-unknown
       - name: Build browser package
-        run: ./toloo-wasm/build.sh
+        run: ./wasm/build.sh
       - name: Smoke-test generated package
-        run: node toloo-wasm/test-package.mjs
+        run: node wasm/test-package.mjs
       - name: Install web dependencies
-        working-directory: toloo-web
+        working-directory: web
         run: npm ci
       - name: Test web client
-        working-directory: toloo-web
+        working-directory: web
         run: npm test
       - name: Build web client
-        working-directory: toloo-web
+        working-directory: web
         run: npm run build
       - uses: actions/upload-artifact@v4
         with:
           name: toloo-wasm-pkg
-          path: toloo-wasm/pkg/
+          path: wasm/pkg/
       - uses: actions/upload-artifact@v4
         with:
           name: toloo-web-dist
-          path: toloo-web/dist/
+          path: web/dist/

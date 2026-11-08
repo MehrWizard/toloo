@@ -180,12 +180,12 @@ export type IconName = keyof typeof ICONS;
 `;
 }
 
-emit("toloo-app/ui/theme.slint", themeSlint());
-emit("toloo-app/ui/design-copy.slint", copySlint());
-emit("toloo-web/src/generated/design.css", designCss());
-emit("toloo-web/src/generated/design.ts", designTs());
+emit("app/ui/theme.slint", themeSlint());
+emit("app/ui/design-copy.slint", copySlint());
+emit("web/src/generated/design.css", designCss());
+emit("web/src/generated/design.ts", designTs());
 if (existsSync(path.join(here, "icons"))) {
-    emit("toloo-web/src/generated/icons.ts", iconsTs());
+    emit("web/src/generated/icons.ts", iconsTs());
 }
 
 let failed = false;

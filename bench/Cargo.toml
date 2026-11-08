@@ -1,0 +1,49 @@
+[package]
+name = "toloo-bench"
+version = "0.1.8"
+edition = "2021"
+publish = false
+description = "Benchmark-only harness: Toloo Criterion benches and cross-protocol comparisons. Not part of the relay."
+license = "AGPL-3.0-only"
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+toloo-lib = { path = "../lib" }
+
+# Heavy protocol libraries are optional so normal workspace builds/tests never
+# compile them.
+base64 = { version = "0.22", optional = true }
+ed25519-dalek = { version = "3", features = ["pkcs8"] }
+libsignal-protocol-syft = { version = "=0.85.3-beta.5", optional = true }
+nostr = { version = "0.45", features = ["nip44", "os-rng"], optional = true }
+rand = { version = "0.9", optional = true }
+ruma-common = { version = "0.20", default-features = false, optional = true }
+ruma-signatures = { version = "0.22", optional = true }
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+vodozemac = { version = "0.11", optional = true }
+
+[features]
+default = []
+protocols = [
+    "dep:base64",
+    "dep:libsignal-protocol-syft",
+    "dep:nostr",
+    "dep:rand",
+    "dep:ruma-common",
+    "dep:ruma-signatures",
+    "dep:tokio",
+    "dep:vodozemac",
+]
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "protocols"
+harness = false
+required-features = ["protocols"]
+
+[[bench]]
+name = "canonical_bench"
+harness = false
