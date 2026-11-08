@@ -1,6 +1,6 @@
 [package]
 name = "toloo-protocol-bench"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 publish = false
 description = "Benchmark-only cross-protocol harness (Signal, Matrix, Nostr). Not part of the relay."

@@ -1,6 +1,6 @@
 [package]
 name = "toloo-core"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "Toloo Protocol v0.2 — portable protocol core (no I/O; native + wasm)"
 

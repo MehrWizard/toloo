@@ -6933,7 +6933,7 @@ dependencies = [
 
 [[package]]
 name = "toloo-app"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6948,7 +6948,7 @@ dependencies = [
 
 [[package]]
 name = "toloo-cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "clap",
@@ -6961,7 +6961,7 @@ dependencies = [
 
 [[package]]
 name = "toloo-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -6980,7 +6980,7 @@ dependencies = [
 
 [[package]]
 name = "toloo-lib"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "argon2",
@@ -7004,7 +7004,7 @@ dependencies = [
 
 [[package]]
 name = "toloo-protocol-bench"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7023,7 +7023,7 @@ dependencies = [
 
 [[package]]
 name = "toloo-wasm"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "serde",
