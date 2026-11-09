@@ -4,10 +4,10 @@
   "version": "0.1.9",
   "type": "module",
   "scripts": {
-    "design": "node ../design/generate.mjs",
+    "assets": "node ../assets/generate.mjs",
     "wasm": "node scripts/build-wasm.mjs",
-    "dev": "npm run design && npm run wasm && vite",
-    "build": "npm run design && npm run wasm && tsc --noEmit && vite build",
+    "dev": "npm run assets && npm run wasm && vite",
+    "build": "npm run assets && npm run wasm && tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preview": "vite preview"

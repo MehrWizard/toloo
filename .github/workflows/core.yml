@@ -37,7 +37,7 @@ jobs:
         with:
           node-version: 22
       - name: Check shared design contract
-        run: node design/generate.mjs --check
+        run: node assets/generate.mjs --check
       - uses: Swatinem/rust-cache@v2
         with:
           key: wasm

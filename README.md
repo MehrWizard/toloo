@@ -39,7 +39,7 @@ outside this repository. The last Tauri app snapshot is preserved as the
 - [`TODO.md`](TODO.md) — current roadmap and open work.
 - [`THROUGHPUT_AUDIT.md`](THROUGHPUT_AUDIT.md) — historical optimization
   audit and measurement history.
-- [`design/contract.json`](design/contract.json) — shared UI theme, copy, and
+- [`assets/contract.json`](assets/contract.json) — shared UI theme, copy, and
   icon contract.
 
 ---
@@ -49,6 +49,8 @@ outside this repository. The last Tauri app snapshot is preserved as the
 ```
 specs/                Normative protocol specification (RFCs, the contract)
   0-index.md          Document map, status, and reading order
+
+assets/         Shared design contract, icon sources, logo, and generator
 
 core/           Portable protocol core — no I/O, native + wasm
   src/
@@ -149,7 +151,7 @@ toloo-core  ←  toloo-lib  ←  toloo-cli
 - **Android APKs are built in GitHub Actions**, not on development machines.
 - **Native UI is canonical.** `toloo-web` mirrors the Slint client 1:1 (only
   the accent color differs); theme, copy, and icons come from
-  `design/contract.json` via `node design/generate.mjs`. Do not hand-edit
+  `assets/contract.json` via `node assets/generate.mjs`. Do not hand-edit
   generated files.
 - **One protocol implementation.** Envelope, crypto, membership, discovery,
   and event logic live in `toloo-core`; clients must not duplicate it.

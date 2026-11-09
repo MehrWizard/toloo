@@ -22,4 +22,4 @@ codegen-units = 1
 strip = true
 
 [patch.crates-io]
-i-slint-backend-android-activity = { path = "vendor/i-slint-backend-android-activity-1.18.1" }
+i-slint-backend-android-activity = { path = "app/vendor/i-slint-backend-android-activity-1.18.1" }

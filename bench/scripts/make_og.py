@@ -10,7 +10,7 @@ from PIL import Image
 BENCH = Path(__file__).resolve().parent.parent
 REPO = BENCH.parent
 OUT = BENCH / 'assets' / 'benchmark-og.png'
-LOGO = REPO / 'toloo-logo.svg'
+LOGO = REPO / 'assets' / 'toloo-logo.svg'
 SVG_PATH = Path(tempfile.gettempdir()) / 'toloo-og.svg'
 BASE_PNG = Path(tempfile.gettempdir()) / 'toloo-og-base.png'
 

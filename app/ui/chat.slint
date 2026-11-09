@@ -112,7 +112,7 @@ export component ChatPane inherits Rectangle {
                 cross-axis-alignment: center;
 
                 if root.show-back : IconButton {
-                    icon: @image-url("../../design/icons/back.svg");
+                    icon: @image-url("../../assets/icons/back.svg");
                     tint: Theme.text-2;
                     layout-order: root.rtl ? 10 : 0;
                     clicked => { root.back(); }
@@ -155,22 +155,22 @@ export component ChatPane inherits Rectangle {
                     horizontal-stretch: 1;
                 }
                 if root.has-room && !root.show-back : IconButton {
-                    icon: @image-url("../../design/icons/sync.svg");
+                    icon: @image-url("../../assets/icons/sync.svg");
                     tint: Theme.text-2;
                     clicked => { root.sync-room(); }
                 }
                 if root.has-room && !root.show-back : IconButton {
-                    icon: @image-url("../../design/icons/share.svg");
+                    icon: @image-url("../../assets/icons/share.svg");
                     tint: Theme.text-2;
                     clicked => { root.share-room(); }
                 }
                 if root.has-room && !root.show-back : IconButton {
-                    icon: @image-url("../../design/icons/export.svg");
+                    icon: @image-url("../../assets/icons/export.svg");
                     tint: Theme.text-2;
                     clicked => { root.export-room(); }
                 }
                 if root.has-room : room-more := IconButton {
-                    icon: @image-url("../../design/icons/more.svg");
+                    icon: @image-url("../../assets/icons/more.svg");
                     tint: Theme.text-2;
                     clicked => {
                         root.room-menu-x = room-more.absolute-position.x - root.absolute-position.x
@@ -181,7 +181,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 IconButton {
-                    icon: @image-url("../../design/icons/settings.svg");
+                    icon: @image-url("../../assets/icons/settings.svg");
                     tint: Theme.muted;
                     clicked => { root.open-settings(); }
                 }
@@ -196,7 +196,7 @@ export component ChatPane inherits Rectangle {
                 cross-axis-alignment: center;
                 spacing: 10px;
                 AppIcon {
-                    source: @image-url("../../design/icons/user.svg");
+                    source: @image-url("../../assets/icons/user.svg");
                     icon-size: 48px;
                     tint: Theme.border;
                 }
@@ -301,7 +301,7 @@ export component ChatPane inherits Rectangle {
                                         font-size: Theme.font-xs;
                                     }
                                     message-more := IconButton {
-                                        icon: @image-url("../../design/icons/more.svg");
+                                        icon: @image-url("../../assets/icons/more.svg");
                                         tint: Theme.muted;
                                         button-size: 22px;
                                         clicked => {
@@ -363,7 +363,7 @@ export component ChatPane inherits Rectangle {
                 HorizontalLayout {
                     spacing: 8px;
                     emoji-button := IconButton {
-                        icon: @image-url("../../design/icons/emoji.svg");
+                        icon: @image-url("../../assets/icons/emoji.svg");
                         tint: Theme.text-2;
                         button-size: 40px;
                         layout-order: root.rtl ? 2 : 0;
@@ -412,7 +412,7 @@ export component ChatPane inherits Rectangle {
                         background: root.has-room && root.message-input != ""
                             ? Theme.accent : Theme.surface-2;
                         AppIcon {
-                            source: @image-url("../../design/icons/send.svg");
+                            source: @image-url("../../assets/icons/send.svg");
                             width: 19px;
                             height: 19px;
                             x: (parent.width - self.width) / 2;
@@ -446,7 +446,7 @@ export component ChatPane inherits Rectangle {
             cross-axis-alignment: center;
 
             IconButton {
-                icon: @image-url("../../design/icons/close.svg");
+                icon: @image-url("../../assets/icons/close.svg");
                 tint: Theme.text-2;
                 clicked => { root.clear-selected(); }
             }
@@ -459,7 +459,7 @@ export component ChatPane inherits Rectangle {
             }
             Rectangle { horizontal-stretch: 1; min-width: 1px; }
             IconButton {
-                icon: @image-url("../../design/icons/copy.svg");
+                icon: @image-url("../../assets/icons/copy.svg");
                 tint: Theme.text-2;
                 clicked => {
                     root.copy-selected(root.selected-eids);
@@ -467,7 +467,7 @@ export component ChatPane inherits Rectangle {
                 }
             }
             IconButton {
-                icon: @image-url("../../design/icons/trash.svg");
+                icon: @image-url("../../assets/icons/trash.svg");
                 tint: Theme.danger;
                 clicked => {
                     root.delete-selected(root.selected-eids);
@@ -506,7 +506,7 @@ export component ChatPane inherits Rectangle {
                 spacing: 2px;
 
                 DropdownItem {
-                    icon: @image-url("../../design/icons/copy.svg");
+                    icon: @image-url("../../assets/icons/copy.svg");
                     label: "Copy message text";
                     clicked => {
                         message-menu.close();
@@ -514,7 +514,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/flag.svg");
+                    icon: @image-url("../../assets/icons/flag.svg");
                     label: "Flag as spam";
                     tint: Theme.warn;
                     clicked => {
@@ -523,7 +523,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/block.svg");
+                    icon: @image-url("../../assets/icons/block.svg");
                     label: "Block author";
                     tint: Theme.danger;
                     clicked => {
@@ -532,7 +532,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/check.svg");
+                    icon: @image-url("../../assets/icons/check.svg");
                     label: "Attest +";
                     tint: Theme.success;
                     clicked => {
@@ -541,7 +541,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/close.svg");
+                    icon: @image-url("../../assets/icons/close.svg");
                     label: "Attest −";
                     tint: Theme.danger;
                     clicked => {
@@ -551,7 +551,7 @@ export component ChatPane inherits Rectangle {
                 }
                 if root.menu-mine : DropdownSeparator {}
                 if root.menu-mine : DropdownItem {
-                    icon: @image-url("../../design/icons/trash.svg");
+                    icon: @image-url("../../assets/icons/trash.svg");
                     label: "Delete message";
                     tint: Theme.danger;
                     clicked => {
@@ -586,7 +586,7 @@ export component ChatPane inherits Rectangle {
                 spacing: 2px;
 
                 DropdownItem {
-                    icon: @image-url("../../design/icons/edit.svg");
+                    icon: @image-url("../../assets/icons/edit.svg");
                     label: "Rename room";
                     enabled: root.room-has-key;
                     clicked => {
@@ -595,7 +595,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/sync.svg");
+                    icon: @image-url("../../assets/icons/sync.svg");
                     label: "Sync now";
                     clicked => {
                         room-actions-menu.close();
@@ -603,7 +603,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/share.svg");
+                    icon: @image-url("../../assets/icons/share.svg");
                     label: "Share invite";
                     clicked => {
                         room-actions-menu.close();
@@ -611,7 +611,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/export.svg");
+                    icon: @image-url("../../assets/icons/export.svg");
                     label: "Export messages";
                     clicked => {
                         room-actions-menu.close();
@@ -619,7 +619,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/copy.svg");
+                    icon: @image-url("../../assets/icons/copy.svg");
                     label: "Copy room key";
                     clicked => {
                         room-actions-menu.close();
@@ -628,7 +628,7 @@ export component ChatPane inherits Rectangle {
                 }
                 DropdownSeparator {}
                 DropdownItem {
-                    icon: @image-url("../../design/icons/logout.svg");
+                    icon: @image-url("../../assets/icons/logout.svg");
                     label: "Leave room";
                     tint: Theme.warn;
                     clicked => {
@@ -637,7 +637,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/trash.svg");
+                    icon: @image-url("../../assets/icons/trash.svg");
                     label: "Remove from this device";
                     tint: Theme.danger;
                     clicked => {

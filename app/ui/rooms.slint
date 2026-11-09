@@ -77,13 +77,13 @@ export component RoomsPane inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; min-width: 1px; layout-order: 2; }
                 IconButton {
-                    icon: @image-url("../../design/icons/inbox.svg");
+                    icon: @image-url("../../assets/icons/inbox.svg");
                     tint: Theme.text-2;
                     layout-order: root.rtl ? 1 : 3;
                     clicked => { root.import-room(); }
                 }
                 IconButton {
-                    icon: @image-url("../../design/icons/plus.svg");
+                    icon: @image-url("../../assets/icons/plus.svg");
                     tint: Theme.accent;
                     layout-order: root.rtl ? 0 : 4;
                     clicked => { root.add-room(); }
@@ -203,7 +203,7 @@ export component RoomsPane inherits Rectangle {
                             }
                         }
                         menu-button := IconButton {
-                            icon: @image-url("../../design/icons/more.svg");
+                            icon: @image-url("../../assets/icons/more.svg");
                             tint: Theme.muted;
                             button-size: 30px;
                             layout-order: root.rtl ? 0 : 3;
@@ -248,7 +248,7 @@ export component RoomsPane inherits Rectangle {
                 }
                 Rectangle { horizontal-stretch: 1; min-width: 1px; layout-order: 1; }
                 IconButton {
-                    icon: @image-url("../../design/icons/relay.svg");
+                    icon: @image-url("../../assets/icons/relay.svg");
                     tint: Theme.muted;
                     layout-order: root.rtl ? 0 : 2;
                     clicked => { root.open-relays(); }
@@ -280,7 +280,7 @@ export component RoomsPane inherits Rectangle {
                 spacing: 2px;
 
                 DropdownItem {
-                    icon: @image-url("../../design/icons/edit.svg");
+                    icon: @image-url("../../assets/icons/edit.svg");
                     label: "Rename room";
                     enabled: root.menu-has-key;
                     clicked => {
@@ -289,7 +289,7 @@ export component RoomsPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/sync.svg");
+                    icon: @image-url("../../assets/icons/sync.svg");
                     label: "Sync now";
                     clicked => {
                         room-menu.close();
@@ -297,7 +297,7 @@ export component RoomsPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/share.svg");
+                    icon: @image-url("../../assets/icons/share.svg");
                     label: "Share invite";
                     clicked => {
                         room-menu.close();
@@ -305,7 +305,7 @@ export component RoomsPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/export.svg");
+                    icon: @image-url("../../assets/icons/export.svg");
                     label: "Export messages";
                     clicked => {
                         room-menu.close();
@@ -313,7 +313,7 @@ export component RoomsPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/copy.svg");
+                    icon: @image-url("../../assets/icons/copy.svg");
                     label: "Copy room key";
                     clicked => {
                         room-menu.close();
@@ -322,7 +322,7 @@ export component RoomsPane inherits Rectangle {
                 }
                 DropdownSeparator {}
                 DropdownItem {
-                    icon: @image-url("../../design/icons/logout.svg");
+                    icon: @image-url("../../assets/icons/logout.svg");
                     label: "Leave room";
                     tint: Theme.warn;
                     clicked => {
@@ -331,7 +331,7 @@ export component RoomsPane inherits Rectangle {
                     }
                 }
                 DropdownItem {
-                    icon: @image-url("../../design/icons/trash.svg");
+                    icon: @image-url("../../assets/icons/trash.svg");
                     label: "Remove from this device";
                     tint: Theme.danger;
                     clicked => {
