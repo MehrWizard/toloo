@@ -311,9 +311,20 @@ jobs:
           base="https://github.com/${REPO}/releases/download/${TAG}"
           previous="$(git describe --tags --abbrev=0 --match 'v*' "${TAG}^" 2>/dev/null || true)"
 
+          data_uri() {
+            printf 'data:image/svg+xml;base64,%s' "$(base64 -w0 "assets/platforms/$1.svg")"
+          }
+
+          linux_icon="$(data_uri linux)"
+          windows_icon="$(data_uri windows)"
+          macos_icon="$(data_uri macos)"
+          android_icon="$(data_uri android)"
+          browser_icon="$(data_uri browser)"
+
           row() {
-            local platform="$1"
-            shift
+            local icon="$1"
+            local platform="$2"
+            shift 2
             local cell=""
             while [ "$#" -gt 0 ]; do
               local label="$1"
@@ -325,7 +336,7 @@ jobs:
               fi
             done
             if [ -n "$cell" ]; then
-              printf '| %s | %s |\n' "$platform" "$cell"
+              printf '| <img src="%s" width="14" height="14" alt=""> %s | %s |\n' "$icon" "$platform" "$cell"
             fi
           }
 
@@ -334,16 +345,16 @@ jobs:
             echo
             echo "| Platform | Download |"
             echo "|---|---|"
-            row "Linux x86_64" "App" "toloo-app-${version}-linux-x86_64" "CLI" "toloo-cli-${version}-linux-x86_64"
-            row "Linux arm64" "App" "toloo-app-${version}-linux-aarch64" "CLI" "toloo-cli-${version}-linux-aarch64"
-            row "Windows x86_64" "App" "toloo-app-${version}-windows-x86_64.exe" "CLI" "toloo-cli-${version}-windows-x86_64.exe"
-            row "Windows arm64" "CLI" "toloo-cli-${version}-windows-aarch64.exe"
-            row "macOS arm64" "App" "toloo-app-${version}-macos-aarch64" "CLI" "toloo-cli-${version}-macos-aarch64"
-            row "macOS x86_64" "CLI" "toloo-cli-${version}-macos-x86_64"
-            row "Android arm64" "APK" "toloo-app-${version}-android-arm64-v8a.apk"
-            row "Android armv7" "APK" "toloo-app-${version}-android-armeabi-v7a.apk"
-            row "Android universal" "APK" "toloo-app-${version}-android-universal.apk"
-            row "Browser" "Package" "toloo-wasm-${version}.zip"
+            row "$linux_icon" "Linux x86_64" "App" "toloo-app-${version}-linux-x86_64" "CLI" "toloo-cli-${version}-linux-x86_64"
+            row "$linux_icon" "Linux arm64" "App" "toloo-app-${version}-linux-aarch64" "CLI" "toloo-cli-${version}-linux-aarch64"
+            row "$windows_icon" "Windows x86_64" "App" "toloo-app-${version}-windows-x86_64.exe" "CLI" "toloo-cli-${version}-windows-x86_64.exe"
+            row "$windows_icon" "Windows arm64" "CLI" "toloo-cli-${version}-windows-aarch64.exe"
+            row "$macos_icon" "macOS arm64" "App" "toloo-app-${version}-macos-aarch64" "CLI" "toloo-cli-${version}-macos-aarch64"
+            row "$macos_icon" "macOS x86_64" "CLI" "toloo-cli-${version}-macos-x86_64"
+            row "$android_icon" "Android arm64" "APK" "toloo-app-${version}-android-arm64-v8a.apk"
+            row "$android_icon" "Android armv7" "APK" "toloo-app-${version}-android-armeabi-v7a.apk"
+            row "$android_icon" "Android universal" "APK" "toloo-app-${version}-android-universal.apk"
+            row "$browser_icon" "Browser" "Package" "toloo-wasm-${version}.zip"
             echo
             echo "## Changelog"
             echo
