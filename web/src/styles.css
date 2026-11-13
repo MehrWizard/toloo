@@ -100,6 +100,45 @@ p {
     white-space: pre-wrap;
 }
 
+/* ── Local vault ──────────────────────────────────────────────────────── */
+
+.lock-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: var(--bg);
+}
+
+.lock-card {
+    width: min(420px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 28px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--panel);
+    box-shadow: 0 24px 80px rgb(0 0 0 / 45%);
+}
+
+.lock-card .boot-logo {
+    align-self: center;
+}
+
+.lock-copy {
+    display: grid;
+    gap: 8px;
+    text-align: center;
+}
+
+.lock-copy h1 {
+    color: var(--text);
+    font-size: 23px;
+}
+
 /* ── Shared controls ──────────────────────────────────────────────────── */
 
 .primary-button,

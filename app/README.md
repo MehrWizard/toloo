@@ -20,8 +20,9 @@ Data lives in `$TOLOO_APP_DATA_DIR` (the old `$TOLOO_NATIVE_DATA_DIR` is still
 accepted), or the platform data directory (`~/.local/share/toloo-app`,
 `%APPDATA%/toloo-app`, `~/Library/Application Support/toloo-app`). An existing
 `toloo-native` data directory is migrated on first launch. It contains
-`config.json`, `pool.jsonl`, and pool side files. Identity private keys are
-currently plain JSON; a keystore is still TODO.
+`config.vault.json`, `pool.jsonl`, and pool side files. The vault encrypts the
+identity and room keys under a passphrase; a legacy plaintext `config.json` is
+migrated on first launch.
 
 ## Architecture
 

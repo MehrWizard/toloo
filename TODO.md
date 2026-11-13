@@ -47,9 +47,11 @@ git. Current remaining work, in priority order:
       renderer coverage, APK size/RSS, and long-session behavior.
 - [ ] Android release signing/AAB and store packaging, including a Play Store
       auto-publish workflow using a service-account secret for tagged builds.
+- [x] Encrypted local vault: setup/unlock passphrase, plaintext config
+      migration, and room keys encrypted with the identity.
 - [ ] Native feature parity: embedded relay hosting, private messages/UI,
-      discovery import/export, keystore/encrypted identity, blobs, moderation,
-      notifications and background sync (foreground service).
+      discovery import/export, blobs, moderation, notifications and background
+      sync (foreground service).
 - [ ] iOS feasibility spike with the pinned Slint version.
 - [ ] Android API 24–25 alternative is explicitly out of scope for Slint;
       it would require native Android UI + FFI or another WebView shell.
@@ -88,8 +90,8 @@ git. Current remaining work, in priority order:
 - [x] Retire `toloo-js`; the legacy client is archived out of tree and the
       browser client uses `toloo-wasm` + `toloo-web`.
 - [ ] Web client: direct-message UI using `PairKeyCache.makeMessage/openMessage`.
-- [ ] Web client: encrypted-at-rest keystore for identity/room keys (currently
-      plain IndexedDB).
+- [x] Web client: encrypted local vault for identity/room keys, with
+      setup/unlock and migration from plaintext IndexedDB records.
 - [ ] Web client: notifications, offline/service-worker shell, message
       reactions/edits UI, blob upload/download UI, moderation UI.
 - [ ] Deployment CSP for `toloo-web` (`connect-src` scheme-paired).

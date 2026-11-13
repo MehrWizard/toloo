@@ -108,8 +108,9 @@ web/            SolidJS + TypeScript browser client
   src/lib/
     wasm.ts           Typed bridge to the generated wasm package
     transport.ts      WebSocket/HTTP adapters + page-scheme policy
-    db.ts             IndexedDB identity/relay/room/envelope stores
-    client.ts         Sync, verification, membership, room authority
+    db.ts             IndexedDB vault/relay/room/envelope stores
+    vault.ts          Encrypted identity and room-key payload
+    client.ts         Unlock/setup, sync, verification, membership, room authority
   src/components/     Onboarding, sidebar, chat, settings, modals
   scripts/            Builds and copies wasm/pkg before Vite
 
@@ -156,6 +157,9 @@ toloo-core  ←  toloo-lib  ←  toloo-cli
 - **One protocol implementation.** Envelope, crypto, membership, discovery,
   and event logic live in `toloo-core`; clients must not duplicate it.
   `toloo-ffi` is intentionally not used.
+- **Identity and room keys are encrypted at rest.** Native uses
+  `config.vault.json`; web uses the passphrase vault in IndexedDB. Do not
+  reintroduce plaintext private-key fields.
 - **Specs live in this repo.** The normative RFC documents are in `specs/`;
   update code and specification together, and keep the spec index and links
   current.

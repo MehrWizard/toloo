@@ -242,6 +242,7 @@ export component TextField inherits Rectangle {
     in property <string> placeholder;
     in property <bool> enabled: true;
     in property <bool> rtl: false;
+    in property <bool> password: false;
     in property <length> field-height: 40px;
     callback edited();
     callback accepted();
@@ -264,6 +265,7 @@ export component TextField inherits Rectangle {
         enabled: root.enabled;
         color: Theme.text;
         font-size: Theme.font-ui;
+        input-type: root.password ? InputType.password : InputType.text;
         single-line: true;
         horizontal-alignment: root.rtl ? right : left;
         vertical-alignment: center;

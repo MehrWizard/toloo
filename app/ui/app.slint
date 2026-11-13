@@ -1,5 +1,6 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { PrimaryButton, TextField } from "components.slint";
 import { BlockedRow, MessageRow, RelayRow, RoomRow } from "models.slint";
 import { RoomsPane } from "rooms.slint";
 import { ChatPane } from "chat.slint";
@@ -38,6 +39,11 @@ export component AppWindow inherits Window {
     in property <bool> host-running: false;
     in property <string> host-address: "";
     in property <int> host-connections: 0;
+    in property <bool> locked: false;
+    in property <string> lock-mode: "none";
+    in property <string> lock-error: "";
+    in-out property <string> lock-passphrase: "";
+    in-out property <string> lock-confirm: "";
     in property <[RelayRow]> relays;
     in property <[BlockedRow]> blocked;
     in property <[RoomRow]> rooms;
@@ -70,6 +76,8 @@ export component AppWindow inherits Window {
     in-out property <string> selected-room-name: "";
     in-out property <bool> selected-room-has-key: false;
 
+    callback unlock-config(string);
+    callback setup-config(string);
     callback create-identity();
     callback restore-identity(string, string);
     callback load-identity-json(string);
@@ -604,6 +612,113 @@ export component AppWindow inherits Window {
                 AlertSheet {
                     message: root.feedback-message;
                     close => { root.feedback-open = false; }
+                }
+            }
+        }
+    }
+
+    if root.locked : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.bg;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+        }
+
+        Rectangle {
+            width: root.phone ? root.width - 32px : 420px;
+            height: root.lock-mode == "setup" ? 410px : 340px;
+            x: (parent.width - self.width) / 2;
+            y: max(root.inset-top,
+                root.inset-top + (root.content-height - self.height) / 2);
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.surface;
+
+            VerticalLayout {
+                padding: 24px;
+                spacing: 11px;
+
+                Text {
+                    text: "TOLOO";
+                    color: Theme.accent;
+                    font-size: 22px;
+                    font-weight: 700;
+                    letter-spacing: 2px;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: root.lock-mode == "setup" ? "Protect this device" : "Unlock Toloo";
+                    color: Theme.text;
+                    font-size: Theme.font-title;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: root.lock-mode == "setup"
+                        ? "Choose a passphrase to encrypt your identity and room keys on this device. It cannot be recovered."
+                        : "Enter your passphrase to decrypt your local identity and room keys.";
+                    color: Theme.muted;
+                    font-size: Theme.font-sm;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+
+                lock-field := TextField {
+                    text <=> root.lock-passphrase;
+                    placeholder: "Passphrase";
+                    password: true;
+                    rtl: root.rtl;
+                    accepted => {
+                        if root.lock-mode == "setup" {
+                            if root.lock-passphrase != ""
+                                && root.lock-passphrase == root.lock-confirm {
+                                root.setup-config(root.lock-passphrase);
+                            }
+                        } else if root.lock-passphrase != "" {
+                            root.unlock-config(root.lock-passphrase);
+                        }
+                    }
+                }
+                init => { lock-field.focus-field(); }
+
+                if root.lock-mode == "setup" : TextField {
+                    text <=> root.lock-confirm;
+                    placeholder: "Confirm passphrase";
+                    password: true;
+                    rtl: root.rtl;
+                    accepted => {
+                        if root.lock-passphrase != ""
+                            && root.lock-passphrase == root.lock-confirm {
+                            root.setup-config(root.lock-passphrase);
+                        }
+                    }
+                }
+
+                if root.lock-error != "" : Text {
+                    text: root.lock-error;
+                    color: Theme.danger;
+                    font-size: Theme.font-sm;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
+
+                PrimaryButton {
+                    text: root.lock-mode == "setup" ? "Encrypt and continue" : "Unlock";
+                    enabled: root.lock-passphrase != ""
+                        && (root.lock-mode != "setup" || root.lock-passphrase == root.lock-confirm);
+                    clicked => {
+                        if root.lock-mode == "setup" {
+                            root.setup-config(root.lock-passphrase);
+                        } else {
+                            root.unlock-config(root.lock-passphrase);
+                        }
+                    }
                 }
             }
         }

@@ -98,10 +98,26 @@ export async function getIdentity(): Promise<Identity | undefined> {
     return result?.value;
 }
 
-export async function saveIdentity(identity: Identity): Promise<void> {
+export async function getVault(): Promise<string | undefined> {
+    const db = await openDb();
+    const tx = db.transaction(KV, "readonly");
+    const result = await requestResult<{ key: string; value: string } | undefined>(
+        tx.objectStore(KV).get("vault"),
+    );
+    return result?.value;
+}
+
+export async function saveVault(blob: string): Promise<void> {
     const db = await openDb();
     const tx = db.transaction(KV, "readwrite");
-    tx.objectStore(KV).put({ key: "identity", value: identity });
+    tx.objectStore(KV).put({ key: "vault", value: blob });
+    await transactionDone(tx);
+}
+
+export async function deleteVault(): Promise<void> {
+    const db = await openDb();
+    const tx = db.transaction(KV, "readwrite");
+    tx.objectStore(KV).delete("vault");
     await transactionDone(tx);
 }
 
@@ -138,7 +154,9 @@ export async function listRooms(): Promise<RoomRecord[]> {
 export async function saveRoom(room: RoomRecord): Promise<void> {
     const db = await openDb();
     const tx = db.transaction(ROOMS, "readwrite");
-    tx.objectStore(ROOMS).put(room);
+    const metadata = { ...room };
+    delete metadata.roomIdentity;
+    tx.objectStore(ROOMS).put(metadata);
     await transactionDone(tx);
 }
 

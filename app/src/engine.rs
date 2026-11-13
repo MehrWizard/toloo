@@ -42,6 +42,8 @@ pub enum Command {
         blob: String,
         passphrase: String,
     },
+    UnlockConfig(String),
+    SetupConfig(String),
     RemoveIdentity,
     AddRelay(String),
     RemoveRelay(String),
@@ -115,6 +117,9 @@ pub struct Snapshot {
     pub host_address: String,
     pub host_connections: i32,
     pub host_port: String,
+    pub locked: bool,
+    pub lock_mode: String,
+    pub lock_error: String,
     pub rooms: Vec<RoomView>,
     pub messages: Vec<MessageView>,
 }
@@ -188,10 +193,19 @@ impl Default for Snapshot {
             host_address: String::new(),
             host_connections: 0,
             host_port: "17701".to_owned(),
+            locked: false,
+            lock_mode: "none".to_owned(),
+            lock_error: String::new(),
             rooms: Vec::new(),
             messages: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct EncryptedConfigFile {
+    version: u8,
+    blob: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -224,6 +238,12 @@ struct RoomConfig {
     room_create: Option<Envelope>,
 }
 
+impl Config {
+    fn has_secrets(&self) -> bool {
+        self.identity.is_some() || self.rooms.iter().any(|room| room.room_identity.is_some())
+    }
+}
+
 struct HostHandle {
     stop: tokio::sync::oneshot::Sender<()>,
     metrics: Arc<RelayMetrics>,
@@ -242,9 +262,19 @@ struct Engine {
     search: String,
     last_outgoing_ts: u64,
     host: Option<HostHandle>,
+    passphrase: Option<String>,
+    locked: bool,
+    lock_mode: String,
+    lock_error: String,
 }
 
-fn config_snapshot(config: &Config, status: &str) -> Snapshot {
+fn config_snapshot(
+    config: &Config,
+    status: &str,
+    locked: bool,
+    lock_mode: &str,
+    lock_error: &str,
+) -> Snapshot {
     let node_pub = config
         .identity
         .as_ref()
@@ -328,6 +358,9 @@ fn config_snapshot(config: &Config, status: &str) -> Snapshot {
             .as_ref()
             .map(|host| host.port.to_string())
             .unwrap_or_else(|| "17701".to_owned()),
+        locked,
+        lock_mode: lock_mode.to_owned(),
+        lock_error: lock_error.to_owned(),
         rooms,
         messages: Vec::new(),
     }
@@ -340,11 +373,20 @@ impl Engine {
         std::fs::create_dir_all(&data_dir)
             .with_context(|| format!("creating {}", data_dir.display()))?;
         let config_path = data_dir.join("config.json");
-        let config = if config_path.exists() {
-            serde_json::from_slice(&std::fs::read(&config_path)?)
-                .with_context(|| format!("parsing {}", config_path.display()))?
+        let vault_path = data_dir.join("config.vault.json");
+        let (config, locked, lock_mode) = if vault_path.exists() {
+            (Config::default(), true, "unlock".to_owned())
+        } else if config_path.exists() {
+            let config: Config = serde_json::from_slice(&std::fs::read(&config_path)?)
+                .with_context(|| format!("parsing {}", config_path.display()))?;
+            let locked = config.has_secrets();
+            (
+                config,
+                locked,
+                if locked { "setup" } else { "none" }.to_owned(),
+            )
         } else {
-            Config::default()
+            (Config::default(), false, "none".to_owned())
         };
         #[cfg(target_os = "android")]
         eprintln!(
@@ -352,7 +394,13 @@ impl Engine {
             load_started.elapsed().as_millis()
         );
         if let Some(updates) = updates {
-            let _ = updates.send(config_snapshot(&config, "Loading history…"));
+            let _ = updates.send(config_snapshot(
+                &config,
+                "Loading history…",
+                locked,
+                &lock_mode,
+                "",
+            ));
         }
         let pool_base = data_dir.join("pool");
         let pool = Arc::new(Pool::open(
@@ -380,6 +428,10 @@ impl Engine {
             search: String::new(),
             last_outgoing_ts: 0,
             host: None,
+            passphrase: None,
+            locked,
+            lock_mode,
+            lock_error: String::new(),
         };
         if engine.config.active.is_none() {
             engine.config.active = engine.config.rooms.first().map(|room| room.pub_key.clone());
@@ -388,11 +440,90 @@ impl Engine {
     }
 
     fn save_config(&self) -> Result<()> {
-        let path = self.data_dir.join("config.json");
-        let temp = self.data_dir.join("config.json.tmp");
-        std::fs::write(&temp, serde_json::to_vec_pretty(&self.config)?)?;
-        std::fs::rename(temp, path)?;
+        let config_path = self.data_dir.join("config.json");
+        let vault_path = self.data_dir.join("config.vault.json");
+        let temp = self.data_dir.join("config.tmp");
+        if self.config.has_secrets() {
+            let passphrase = self
+                .passphrase
+                .as_deref()
+                .ok_or_else(|| anyhow!("Unlock the local vault first"))?;
+            let encrypted = keystore::encrypt_key(&serde_json::to_vec(&self.config)?, passphrase)?;
+            let wrapper = EncryptedConfigFile {
+                version: 1,
+                blob: encrypted.blob,
+            };
+            std::fs::write(&temp, serde_json::to_vec_pretty(&wrapper)?)?;
+            std::fs::rename(&temp, &vault_path)?;
+            if config_path.exists() {
+                std::fs::remove_file(&config_path)?;
+            }
+        } else {
+            std::fs::write(&temp, serde_json::to_vec_pretty(&self.config)?)?;
+            std::fs::rename(&temp, &config_path)?;
+            if vault_path.exists() {
+                std::fs::remove_file(&vault_path)?;
+            }
+        }
         Ok(())
+    }
+
+    fn unlock_config(&mut self, passphrase: &str) -> Result<()> {
+        let result = (|| -> Result<()> {
+            let path = self.data_dir.join("config.vault.json");
+            let wrapper: EncryptedConfigFile = serde_json::from_slice(&std::fs::read(&path)?)
+                .with_context(|| format!("parsing {}", path.display()))?;
+            if wrapper.version != 1 {
+                bail!("Unsupported local vault version");
+            }
+            let plaintext = keystore::decrypt_key(&EncryptedKey { blob: wrapper.blob }, passphrase)
+                .context("Wrong passphrase or corrupted local vault")?;
+            let config: Config =
+                serde_json::from_slice(&plaintext).context("Local vault is corrupted")?;
+            self.config = config;
+            self.passphrase = Some(passphrase.to_owned());
+            self.locked = false;
+            self.lock_mode = "none".to_owned();
+            self.lock_error.clear();
+            let plain = self.data_dir.join("config.json");
+            if plain.exists() {
+                let _ = std::fs::remove_file(plain);
+            }
+            if self.config.active.is_none() {
+                self.config.active = self.config.rooms.first().map(|room| room.pub_key.clone());
+            }
+            self.status = "Unlocked".to_owned();
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            self.lock_error = format!("{error:#}");
+            self.lock_mode = "unlock".to_owned();
+        }
+        result
+    }
+
+    fn setup_config(&mut self, passphrase: &str) -> Result<()> {
+        if passphrase.is_empty() {
+            self.lock_error = "Enter a passphrase".to_owned();
+            bail!("Enter a passphrase");
+        }
+        self.passphrase = Some(passphrase.to_owned());
+        let result = self.save_config();
+        match result {
+            Ok(()) => {
+                self.locked = false;
+                self.lock_mode = "none".to_owned();
+                self.lock_error.clear();
+                self.status = "Local vault protected".to_owned();
+                Ok(())
+            }
+            Err(error) => {
+                self.passphrase = None;
+                self.lock_error = format!("{error:#}");
+                self.lock_mode = "setup".to_owned();
+                Err(error)
+            }
+        }
     }
 
     fn node(&self) -> Result<&LocalNode> {
@@ -408,7 +539,19 @@ impl Engine {
     }
 
     fn handle(&mut self, command: Command) -> Result<()> {
+        if self.locked {
+            return match command {
+                Command::UnlockConfig(passphrase) => self.unlock_config(&passphrase),
+                Command::SetupConfig(passphrase) => self.setup_config(&passphrase),
+                _ => {
+                    self.lock_error = "Unlock the local vault first".to_owned();
+                    bail!("Unlock the local vault first")
+                }
+            };
+        }
         match command {
+            Command::UnlockConfig(_) => bail!("The local vault is already unlocked"),
+            Command::SetupConfig(_) => bail!("The local vault is already protected"),
             Command::CreateIdentity => self.create_identity(),
             Command::RestoreIdentity { sig_seed, enc_priv } => {
                 self.restore_identity(&sig_seed, &enc_priv)
@@ -466,7 +609,7 @@ impl Engine {
         }
         let (sig_pub, sig_seed) = ed25519_generate();
         let (enc_pub, enc_priv) = x25519_generate();
-        self.config.identity = Some(LocalNode {
+        self.install_identity(LocalNode {
             sig: Keypair {
                 pub_key: base64url::encode(&sig_pub),
                 priv_key: base64url::encode(&sig_seed),
@@ -475,8 +618,7 @@ impl Engine {
                 pub_key: base64url::encode(&enc_pub),
                 priv_key: base64url::encode(&enc_priv),
             },
-        });
-        self.save_config()?;
+        })?;
         self.status = "Identity created".to_owned();
         Ok(())
     }
@@ -517,7 +659,13 @@ impl Engine {
             bail!("Encryption public key does not match the private key");
         }
         self.config.identity = Some(node);
-        self.save_config()?;
+        if self.passphrase.is_some() {
+            self.save_config()?;
+        } else {
+            self.locked = true;
+            self.lock_mode = "setup".to_owned();
+            self.lock_error.clear();
+        }
         Ok(())
     }
 
@@ -565,6 +713,9 @@ impl Engine {
 
     fn remove_identity(&mut self) -> Result<()> {
         self.config.identity = None;
+        if !self.config.has_secrets() {
+            self.passphrase = None;
+        }
         self.save_config()?;
         self.status = "Identity removed".to_owned();
         Ok(())
@@ -1657,6 +1808,9 @@ impl Engine {
                 .map(|host| host.port.to_string())
                 .or_else(|| self.config.host.as_ref().map(|host| host.port.to_string()))
                 .unwrap_or_else(|| "17701".to_owned()),
+            locked: self.locked,
+            lock_mode: self.lock_mode.clone(),
+            lock_error: self.lock_error.clone(),
             rooms,
             messages,
         }
@@ -1679,12 +1833,15 @@ pub fn run(data_dir: PathBuf, commands: Receiver<Command>, updates: Sender<Snaps
         match commands.recv_timeout(SYNC_INTERVAL) {
             Ok(command) => {
                 if let Err(error) = engine.handle(command) {
-                    engine.status = format!("Error: {error:#}");
+                    if !engine.locked {
+                        engine.status = format!("Error: {error:#}");
+                    }
                 }
                 let _ = updates.send(engine.snapshot());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if engine.config.identity.is_some()
+                if !engine.locked
+                    && engine.config.identity.is_some()
                     && engine.active_room().is_some()
                     && !engine.config.relays.is_empty()
                 {
@@ -1779,7 +1936,8 @@ mod tests {
             std::process::id(),
             now_ms()
         ));
-        let engine = Engine::load(dir.clone(), None).expect("engine load");
+        let mut engine = Engine::load(dir.clone(), None).expect("engine load");
+        engine.passphrase = Some("test passphrase".to_owned());
         (engine, dir)
     }
 
@@ -1806,7 +1964,8 @@ mod tests {
         assert_eq!(snapshot.messages[0].body, "hello native");
         assert!(snapshot.messages[0].mine);
         assert!(snapshot.messages[0].committed);
-        assert!(dir.join("config.json").exists());
+        assert!(dir.join("config.vault.json").exists());
+        assert!(!dir.join("config.json").exists());
 
         drop(engine);
         let _ = std::fs::remove_dir_all(dir);
@@ -2095,12 +2254,66 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_config_requires_unlock_on_restart() {
+        let (mut engine, dir) = temp_engine();
+        engine.handle(Command::CreateIdentity).unwrap();
+        assert!(dir.join("config.vault.json").exists());
+        drop(engine);
+
+        let mut reloaded = Engine::load(dir.clone(), None).unwrap();
+        assert!(reloaded.locked);
+        assert_eq!(reloaded.lock_mode, "unlock");
+        assert!(reloaded
+            .handle(Command::AddRelay("ws://127.0.0.1:1".to_owned()))
+            .is_err());
+        assert!(reloaded
+            .handle(Command::UnlockConfig("wrong".to_owned()))
+            .is_err());
+        assert!(reloaded.locked);
+
+        reloaded
+            .handle(Command::UnlockConfig("test passphrase".to_owned()))
+            .unwrap();
+        assert!(!reloaded.locked);
+        assert!(reloaded.config.identity.is_some());
+        drop(reloaded);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn first_identity_requires_a_vault_passphrase() {
+        let id = TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "toloo-app-setup-test-{}-{}-{id}",
+            std::process::id(),
+            now_ms()
+        ));
+        let mut engine = Engine::load(dir.clone(), None).unwrap();
+        engine.handle(Command::CreateIdentity).unwrap();
+        assert!(engine.locked);
+        assert_eq!(engine.lock_mode, "setup");
+        assert!(engine
+            .handle(Command::AddRelay("ws://127.0.0.1:1".to_owned()))
+            .is_err());
+        assert!(!dir.join("config.vault.json").exists());
+
+        engine
+            .handle(Command::SetupConfig("correct horse".to_owned()))
+            .unwrap();
+        assert!(!engine.locked);
+        assert!(dir.join("config.vault.json").exists());
+        drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     #[ignore = "manual UI fixture seeder; set TOLOO_SEED_DIR"]
     fn seed_ui_fixture() {
         let dir = std::env::var_os("TOLOO_SEED_DIR")
             .map(PathBuf::from)
             .expect("TOLOO_SEED_DIR");
         let mut engine = Engine::load(dir.clone(), None).unwrap();
+        engine.passphrase = Some("fixture passphrase".to_owned());
         if engine.config.identity.is_none() {
             engine.create_identity().unwrap();
         }

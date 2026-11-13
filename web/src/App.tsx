@@ -17,6 +17,7 @@ import {
 } from "./components/Modals";
 import { Sidebar } from "./components/Sidebar";
 import { FeedbackModal } from "./components/Modal";
+import { LockScreen } from "./components/LockScreen";
 import { LogoIcon } from "./components/Icons";
 
 export default function App(): JSX.Element {
@@ -37,7 +38,9 @@ export default function App(): JSX.Element {
         client
             .load()
             .then(() => {
-                if (client.activePub()) void client.syncRoom(undefined, true);
+                if (!client.locked() && client.activePub()) {
+                    void client.syncRoom(undefined, true);
+                }
             })
             .catch((error) => {
                 setBootError(
@@ -143,6 +146,16 @@ export default function App(): JSX.Element {
                         onClose={() => setInviteRoom(null)}
                     />
                 )}
+            </Show>
+            <Show when={client.locked()}>
+                <LockScreen
+                    client={client}
+                    onUnlocked={() => {
+                        if (client.activePub()) {
+                            void client.syncRoom(undefined, true);
+                        }
+                    }}
+                />
             </Show>
             <Show when={client.feedback()}>
                 {(message) => (

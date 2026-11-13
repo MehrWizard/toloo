@@ -7,6 +7,7 @@ import {
     type RelayEndpoint,
 } from "./transport";
 import { downloadText } from "./ui";
+import { decryptVault, encryptVault } from "./vault";
 import * as protocol from "./wasm";
 import type { Envelope, Identity, RoomIdentity } from "./wasm";
 
@@ -58,6 +59,11 @@ function previewOf(body: string): string {
 export function createTolooClient() {
     const [initialized, setInitialized] = createSignal(false);
     const [identity, setIdentity] = createSignal<Identity | null>(null);
+    const [locked, setLocked] = createSignal(false);
+    const [lockMode, setLockMode] = createSignal<"unlock" | "setup" | null>(
+        null,
+    );
+    const [lockError, setLockError] = createSignal("");
     const [relays, setRelays] = createSignal<RelayRecord[]>([]);
     const [rooms, setRooms] = createSignal<RoomRecord[]>([]);
     const [roomSummaries, setRoomSummaries] = createSignal<
@@ -78,6 +84,9 @@ export function createTolooClient() {
     );
 
     const connections = new Map<string, RelayConnection>();
+    const roomKeys = new Map<string, RoomIdentity>();
+    let vaultPassphrase: string | null = null;
+    let pendingRooms: RoomRecord[] = [];
 
     function notify(
         text: string,
@@ -130,42 +139,158 @@ export function createTolooClient() {
         }));
     }
 
+    function hydrateRoomKeys(records: RoomRecord[]): RoomRecord[] {
+        return records.map((room) => {
+            const key = roomKeys.get(room.pub) ?? room.roomIdentity;
+            return key ? { ...room, roomIdentity: key } : room;
+        });
+    }
+
+    async function persistVault(): Promise<void> {
+        const current = identity();
+        if (!current) return;
+        if (!vaultPassphrase) {
+            throw new Error("Unlock the local vault first.");
+        }
+        const keys = Object.fromEntries(roomKeys);
+        await db.saveVault(
+            await encryptVault(current, keys, vaultPassphrase),
+        );
+    }
+
+    async function applyLoadedRooms(
+        records: RoomRecord[],
+        active?: string,
+    ): Promise<void> {
+        const hydrated = hydrateRoomKeys(records);
+        setRooms(hydrated);
+        await Promise.all(hydrated.map((room) => refreshSummary(room.pub)));
+        const selected = active ?? activePub() ?? undefined;
+        if (selected && hydrated.some((room) => room.pub === selected)) {
+            setActivePub(selected);
+            await refreshRoom(selected);
+        }
+    }
+
     async function load(): Promise<void> {
-        const [savedIdentity, savedRelays, savedRooms, savedBlocklist, active] =
+        const [vault, legacyIdentity, savedRelays, savedRooms, savedBlocklist] =
             await Promise.all([
+                db.getVault(),
                 db.getIdentity(),
                 db.listRelays(),
                 db.listRooms(),
                 db.getSetting<string[]>("blocklist"),
-                db.getSetting<string>("activeRoom"),
             ]);
-        setIdentity(savedIdentity ?? null);
         setRelays(savedRelays);
-        setRooms(savedRooms);
         setBlocked(savedBlocklist ?? []);
-        await Promise.all(savedRooms.map((room) => refreshSummary(room.pub)));
-        if (active && savedRooms.some((room) => room.pub === active)) {
-            setActivePub(active);
-            await refreshRoom(active);
+        if (vault) {
+            for (const room of savedRooms) {
+                if (room.roomIdentity) await db.saveRoom(room);
+            }
+            await db.deleteIdentity();
+            setLockMode("unlock");
+            setLocked(true);
+            setInitialized(true);
+            return;
         }
+        if (legacyIdentity) {
+            setIdentity(legacyIdentity);
+            pendingRooms = savedRooms;
+            for (const room of savedRooms) {
+                if (room.roomIdentity) {
+                    roomKeys.set(room.pub, room.roomIdentity);
+                }
+            }
+            setLockMode("setup");
+            setLocked(true);
+            setInitialized(true);
+            return;
+        }
+        const active = await db.getSetting<string>("activeRoom");
+        await applyLoadedRooms(savedRooms, active || undefined);
         setInitialized(true);
     }
 
+    async function unlockVault(passphrase: string): Promise<void> {
+        setLockError("");
+        try {
+            const blob = await db.getVault();
+            if (!blob) throw new Error("No local vault exists.");
+            const payload = await decryptVault(blob, passphrase);
+            vaultPassphrase = passphrase;
+            roomKeys.clear();
+            for (const [pub, key] of Object.entries(payload.roomKeys)) {
+                roomKeys.set(pub, key);
+            }
+            setIdentity(payload.identity);
+            const savedRooms = await db.listRooms();
+            for (const room of savedRooms) {
+                if (room.roomIdentity) await db.saveRoom(room);
+            }
+            await db.deleteIdentity();
+            setLocked(false);
+            setLockMode(null);
+            const active = await db.getSetting<string>("activeRoom");
+            await applyLoadedRooms(savedRooms, active || undefined);
+            setInitialized(true);
+        } catch (error) {
+            setLockError(errorText(error));
+            throw error;
+        }
+    }
+
+    async function setupVault(passphrase: string): Promise<void> {
+        setLockError("");
+        try {
+            const current = identity();
+            if (!current) throw new Error("Create or restore an identity first.");
+            const records = pendingRooms.length > 0 ? pendingRooms : rooms();
+            for (const room of records) {
+                if (room.roomIdentity) {
+                    roomKeys.set(room.pub, room.roomIdentity);
+                }
+            }
+            vaultPassphrase = passphrase;
+            await persistVault();
+            await db.deleteIdentity();
+            for (const room of records) await db.saveRoom(room);
+            pendingRooms = [];
+            setLocked(false);
+            setLockMode(null);
+            const active = await db.getSetting<string>("activeRoom");
+            await applyLoadedRooms(records, active || undefined);
+            setInitialized(true);
+        } catch (error) {
+            setLockError(errorText(error));
+            throw error;
+        }
+    }
+
+    async function installIdentity(next: Identity): Promise<Identity> {
+        setIdentity(next);
+        if (vaultPassphrase) {
+            await persistVault();
+            pendingRooms = [];
+            return next;
+        }
+        pendingRooms = rooms();
+        setLockMode("setup");
+        setLocked(true);
+        setInitialized(true);
+        return next;
+    }
+
     async function createIdentity(): Promise<Identity> {
-        const generated = protocol.generateIdentity();
-        await db.saveIdentity(generated);
-        setIdentity(generated);
-        return generated;
+        return installIdentity(protocol.generateIdentity());
     }
 
     async function restoreIdentity(
         sigSeed: string,
         encPriv: string,
     ): Promise<Identity> {
-        const restored = protocol.importIdentity(sigSeed.trim(), encPriv.trim());
-        await db.saveIdentity(restored);
-        setIdentity(restored);
-        return restored;
+        return installIdentity(
+            protocol.importIdentity(sigSeed.trim(), encPriv.trim()),
+        );
     }
 
     async function restoreIdentityJson(raw: string): Promise<Identity> {
@@ -215,6 +340,13 @@ export function createTolooClient() {
     }
 
     async function updateRoomRecord(room: RoomRecord): Promise<void> {
+        if (
+            room.roomIdentity &&
+            roomKeys.get(room.pub) !== room.roomIdentity
+        ) {
+            roomKeys.set(room.pub, room.roomIdentity);
+            await persistVault();
+        }
         await db.saveRoom(room);
         setRooms((current) =>
             current.map((item) => (item.pub === room.pub ? room : item)),
@@ -542,6 +674,8 @@ export function createTolooClient() {
             roomIdentity,
             roomCreate: committedJson,
         };
+        roomKeys.set(room.pub, roomIdentity);
+        await persistVault();
         await db.saveRoom(room);
         setRooms((current) => [...current, room]);
         await storeEnvelopeJson(committedJson);
@@ -919,6 +1053,7 @@ export function createTolooClient() {
     }
 
     async function removeRoom(roomPub: string): Promise<void> {
+        if (roomKeys.delete(roomPub)) await persistVault();
         await db.deleteRoom(roomPub);
         setRoomSummaries((current) => {
             const next = { ...current };
@@ -950,8 +1085,15 @@ export function createTolooClient() {
     }
 
     async function removeIdentity(): Promise<void> {
+        await db.deleteVault();
         await db.deleteIdentity();
+        roomKeys.clear();
+        pendingRooms = [];
+        vaultPassphrase = null;
         setIdentity(null);
+        setLocked(false);
+        setLockMode(null);
+        setLockError("");
         notify("Identity removed from this device.", "info");
     }
 
@@ -966,6 +1108,9 @@ export function createTolooClient() {
 
     return {
         initialized,
+        locked,
+        lockMode,
+        lockError,
         identity,
         relays,
         rooms,
@@ -985,6 +1130,8 @@ export function createTolooClient() {
         syncing,
         lastSync,
         load,
+        unlockVault,
+        setupVault,
         createIdentity,
         restoreIdentity,
         restoreIdentityJson,

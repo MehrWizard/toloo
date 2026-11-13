@@ -325,6 +325,13 @@ fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
     ui.set_host_address(snapshot.host_address.into());
     ui.set_host_connections(snapshot.host_connections);
     ui.set_host_port(snapshot.host_port.into());
+    ui.set_locked(snapshot.locked);
+    ui.set_lock_mode(snapshot.lock_mode.into());
+    ui.set_lock_error(snapshot.lock_error.into());
+    if !snapshot.locked {
+        ui.set_lock_passphrase("".into());
+        ui.set_lock_confirm("".into());
+    }
     ui.set_warming(snapshot.warming);
     ui.set_export_text(snapshot.export_text.into());
     ui.set_export_kind(snapshot.export_kind.into());
@@ -444,6 +451,14 @@ fn run_ui(
 ) -> Result<()> {
     let ui = AppWindow::new()?;
 
+    let tx = command_tx.clone();
+    ui.on_unlock_config(move |passphrase| {
+        let _ = tx.send(engine::Command::UnlockConfig(passphrase.to_string()));
+    });
+    let tx = command_tx.clone();
+    ui.on_setup_config(move |passphrase| {
+        let _ = tx.send(engine::Command::SetupConfig(passphrase.to_string()));
+    });
     let tx = command_tx.clone();
     ui.on_create_identity(move || {
         let _ = tx.send(engine::Command::CreateIdentity);

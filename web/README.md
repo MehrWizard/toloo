@@ -45,16 +45,18 @@ and response headers for browser use.
 - **`src/lib/transport.ts`** — WebSocket/HTTP relay adapters and the strict
   page-scheme policy. WebSocket connections persist and serialize requests;
   HTTP uses one POST per request.
-- **`src/lib/db.ts`** — IndexedDB stores for identity, relays, rooms, and
-  envelopes.
-- **`src/lib/client.ts`** — sync, batch verification, envelope storage,
-  membership, room authority auto-commit, and message actions.
+- **`src/lib/db.ts`** — IndexedDB stores for the encrypted vault, relays,
+  rooms, and envelopes.
+- **`src/lib/vault.ts`** — encrypted identity/room-key payload.
+- **`src/lib/client.ts`** — unlock/setup, sync, batch verification, envelope
+  storage, membership, room authority auto-commit, and message actions.
 - **`src/components/`** — onboarding, sidebar, chat, settings, and room modals.
 
 ## Current scope and limitations
 
-- Identity and room private keys are stored unencrypted in IndexedDB. There is
-  no passphrase-wrapped keystore yet.
+- Identity and room private keys are stored in a passphrase-encrypted vault in
+  IndexedDB. The tab must be unlocked after reload; plaintext vault records
+  from older versions are migrated on setup.
 - A browser with a room key commits pending joins/messages while its tab is
   open (polling every 12 seconds). If the key-holder tab is offline, events
   stay uncommitted; the relay now exposes those events through `pool.exchange`
