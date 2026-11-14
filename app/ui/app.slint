@@ -37,6 +37,7 @@ export component AppWindow inherits Window {
     in property <string> export-text: "";
     in property <string> export-kind: "";
     in property <bool> host-running: false;
+    in property <bool> host-auto-start: false;
     in property <string> host-address: "";
     in property <int> host-connections: 0;
     in property <bool> locked: false;
@@ -109,6 +110,9 @@ export component AppWindow inherits Window {
     callback set-notifications(bool);
     callback start-host(string, string);
     callback stop-host();
+    callback set-host-auto-start(bool, string, string);
+    callback open-file();
+    callback save-file(string, string);
     callback copy-text(string);
     callback copy-selected([string]);
     callback delete-selected([string]);
@@ -515,6 +519,7 @@ export component AppWindow inherits Window {
                         root.import-discovery(value);
                         root.close-sheet();
                     }
+                    open-file => { root.open-file(); }
                 }
 
                 if root.sheet == 3 : SettingsSheet {
@@ -529,6 +534,7 @@ export component AppWindow inherits Window {
                     notifications-enabled: root.notifications-enabled;
                     network-label: root.network-label;
                     host-running: root.host-running;
+                    host-auto-start: root.host-auto-start;
                     host-address: root.host-address;
                     host-connections: root.host-connections;
                     relays: root.relays;
@@ -562,6 +568,9 @@ export component AppWindow inherits Window {
                     set-notifications(enabled) => { root.set-notifications(enabled); }
                     start-host(port, proto) => { root.start-host(port, proto); }
                     stop-host => { root.stop-host(); }
+                    set-host-auto-start(enabled, port, proto) => {
+                        root.set-host-auto-start(enabled, port, proto);
+                    }
                 }
 
                 if root.sheet == 4 : ExportSheet {
@@ -571,6 +580,7 @@ export component AppWindow inherits Window {
                     close => { root.close-sheet(); }
                     copy(value) => { root.copy-text(value); }
                     share(value) => { root.share-text(value); }
+                    save-file(value, kind) => { root.save-file(value, kind); }
                 }
 
                 if root.sheet == 6 : RenameSheet {

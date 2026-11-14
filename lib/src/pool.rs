@@ -368,6 +368,156 @@ fn flush_log_writer(writer: &mut Option<BufWriter<std::fs::File>>) -> Result<()>
     Ok(())
 }
 
+#[derive(Default)]
+struct ReplayScan {
+    chat_counts: HashMap<String, usize>,
+    state_count: usize,
+}
+
+/// If this envelope is ordinary room content (channel >= 0), return its room.
+/// Negative channels carry room state and are always retained on replay.
+fn replay_chat_room(env: &Envelope) -> Option<String> {
+    let inner = innermost(env);
+    let room = inner.d.r.as_ref()?;
+    match channel_of(&inner.d) {
+        Some(channel) if channel >= 0 => Some(room.clone()),
+        _ => None,
+    }
+}
+
+/// Count chat and state lines without retaining envelopes.
+fn scan_log_for_bounded_replay(events_path: &Path) -> Result<ReplayScan> {
+    let file = std::fs::File::open(events_path)
+        .with_context(|| format!("open hot log {}", events_path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut scan = ReplayScan::default();
+    let mut good_offset = 0u64;
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            good_offset += n as u64;
+            continue;
+        }
+        match serde_json::from_str::<Envelope>(trimmed) {
+            Ok(env) => {
+                if let Some(room) = replay_chat_room(&env) {
+                    *scan.chat_counts.entry(room).or_default() += 1;
+                } else {
+                    scan.state_count += 1;
+                }
+                good_offset += n as u64;
+            }
+            Err(_) if !line.ends_with('\n') => break,
+            Err(_) => anyhow::bail!(
+                "corrupt event log {} at byte {}",
+                events_path.display(),
+                good_offset
+            ),
+        }
+    }
+    Ok(scan)
+}
+
+/// Move all but the newest per-room tail (and all state events) to cold
+/// storage before the hot log is replayed.
+///
+/// The hot log is replaced atomically. Cold appends happen first, so a crash
+/// before the rename leaves the original hot log intact; a crash afterwards
+/// leaves the cold copy available for full-history sync.
+fn trim_hot_log_for_replay(
+    events_path: &Path,
+    cold_path: &Path,
+    config: &PoolConfig,
+) -> Result<()> {
+    if config.max_resident_blocks == 0 || !events_path.exists() {
+        return Ok(());
+    }
+
+    let scan = scan_log_for_bounded_replay(events_path)?;
+    let room_count = scan.chat_counts.len();
+    let chat_budget = config.max_resident_blocks.saturating_sub(scan.state_count);
+    let per_room = if room_count == 0 {
+        0
+    } else {
+        (chat_budget / room_count).min(config.tail_blocks_to_keep)
+    };
+    if !scan.chat_counts.values().any(|count| *count > per_room) {
+        return Ok(());
+    }
+
+    let tmp = events_path.with_extension("jsonl.replay.tmp");
+    let hot_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&tmp)
+        .with_context(|| format!("open replay temp {}", tmp.display()))?;
+    let mut hot = BufWriter::new(hot_file);
+    let mut cold = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cold_path)
+        .with_context(|| format!("open cold log {}", cold_path.display()))?;
+
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let file = std::fs::File::open(events_path)
+        .with_context(|| format!("open hot log {}", events_path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut good_offset = 0u64;
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line)?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            good_offset += n as u64;
+            continue;
+        }
+        match serde_json::from_str::<Envelope>(trimmed) {
+            Ok(env) => {
+                if let Some(room) = replay_chat_room(&env) {
+                    let seen_count = seen.entry(room.clone()).or_default();
+                    *seen_count += 1;
+                    let total = scan.chat_counts.get(&room).copied().unwrap_or(0);
+                    let keep_from = total.saturating_sub(per_room);
+                    if *seen_count > keep_from {
+                        hot.write_all(line.as_bytes())?;
+                    } else {
+                        cold.write_all(line.as_bytes())?;
+                    }
+                } else {
+                    hot.write_all(line.as_bytes())?;
+                }
+                good_offset += n as u64;
+            }
+            Err(_) if !line.ends_with('\n') => break,
+            Err(_) => anyhow::bail!(
+                "corrupt event log {} at byte {}",
+                events_path.display(),
+                good_offset
+            ),
+        }
+    }
+
+    hot.flush()?;
+    cold.flush()?;
+    drop(hot);
+    std::fs::rename(&tmp, events_path)
+        .with_context(|| format!("replace hot log {}", events_path.display()))?;
+    Ok(())
+}
+
 /// Write spilled lines to cold storage and rewrite the hot log without them.
 fn spill_rewrite(
     events_path: &Path,
@@ -446,6 +596,10 @@ impl Pool {
             .cold_storage_path
             .clone()
             .unwrap_or_else(|| base.with_extension("cold.jsonl"));
+
+        // Trim before starting the writer thread: the bounded replay rewrites
+        // the hot log, and the writer must not hold the old file handle yet.
+        trim_hot_log_for_replay(&events_path, &cold_path, &config)?;
 
         // The writer thread owns the hot-log file handle, so appends never
         // block the (single-threaded) relay executor on disk I/O.
@@ -706,13 +860,17 @@ impl Pool {
         let spill_batch = (p.config.max_resident_blocks / 4).max(1);
         let to_spill = total_live - p.config.max_resident_blocks + spill_batch;
 
-        // Collect the oldest entries across all shards.
+        // Collect the oldest chat entries across all shards. Room-state and
+        // room-less events stay resident: metadata/membership define the room,
+        // and private events have no room-scoped cold-history query.
         let spilled: Vec<Arc<PoolEntry>> = {
             let mut all_events: Vec<(u64, Arc<PoolEntry>)> = Vec::new();
             for shard in &self.shards {
                 for entry_opt in shard.events.read().expect("events lock poisoned").iter() {
                     if let Some(entry) = entry_opt {
-                        all_events.push((entry.ts, Arc::clone(entry)));
+                        if replay_chat_room(&entry.env).is_some() {
+                            all_events.push((entry.ts, Arc::clone(entry)));
+                        }
                     }
                 }
             }
@@ -778,7 +936,13 @@ impl Pool {
     }
 
     /// Read cold storage events after a given timestamp (for full history sync).
-    fn read_cold_after(&self, after_ts: u64, limit: usize) -> Result<Vec<Envelope>> {
+    fn read_cold_after(
+        &self,
+        rooms: &[&str],
+        types: &[&str],
+        after_ts: u64,
+        limit: usize,
+    ) -> Result<Vec<Envelope>> {
         let Some(p) = &self.persist else {
             return Ok(vec![]);
         };
@@ -797,7 +961,14 @@ impl Pool {
             }
             if let Ok(env) = serde_json::from_str::<Envelope>(trimmed) {
                 let inner = innermost(&env);
-                if inner.d.ts > after_ts {
+                let matches_room = rooms.is_empty()
+                    || inner
+                        .d
+                        .r
+                        .as_deref()
+                        .is_some_and(|room| rooms.contains(&room));
+                let matches_type = types.is_empty() || types.contains(&inner.d.t.as_str());
+                if inner.d.ts > after_ts && matches_room && matches_type {
                     events.push(env);
                     if events.len() >= limit {
                         break;
@@ -908,7 +1079,7 @@ impl Pool {
     }
 
     /// Compact cold storage by rewriting it to only contain events that
-    /// are still referenced (not in hot storage and not pruned).
+    /// are still referenced (not in hot storage) and within retention.
     fn compact_cold(&self) -> Result<()> {
         let Some(p) = &self.persist else {
             return Ok(());
@@ -916,6 +1087,7 @@ impl Pool {
         if !p.cold_path.exists() {
             return Ok(());
         }
+        let _lock = p.spill_lock.lock().map_err(lock_err)?;
 
         // Get all event IDs currently in hot storage
         let hot_ids: HashSet<String> = {
@@ -930,7 +1102,13 @@ impl Pool {
             ids
         };
 
-        // Read cold, filter out events that are now in hot
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| anyhow!("system clock error"))?
+            .as_millis() as u64;
+        let mut retention_by_room: HashMap<String, u64> = HashMap::new();
+
+        // Read cold, filtering events that are now hot or past retention.
         let file = std::fs::File::open(&p.cold_path)
             .with_context(|| format!("open cold log {}", p.cold_path.display()))?;
         let reader = BufReader::new(file);
@@ -950,7 +1128,25 @@ impl Pool {
                 }
                 if let Ok(env) = serde_json::from_str::<Envelope>(trimmed) {
                     let id = datum_id(&env);
-                    if !hot_ids.contains(&id) {
+                    if hot_ids.contains(&id) {
+                        continue;
+                    }
+                    let inner = innermost(&env);
+                    let keep = match (inner.d.r.as_deref(), channel_of(&inner.d)) {
+                        (Some(room), Some(channel)) if channel >= 0 => {
+                            let retention = if let Some(days) = retention_by_room.get(room) {
+                                *days
+                            } else {
+                                let days = self.get_room_retention(room)?;
+                                retention_by_room.insert(room.to_owned(), days);
+                                days
+                            };
+                            let cutoff = retention.saturating_mul(86_400_000);
+                            inner.d.ts >= now.saturating_sub(cutoff)
+                        }
+                        _ => true,
+                    };
+                    if keep {
                         f.write_all(line.as_bytes())?;
                         f.write_all(b"\n")?;
                     }
@@ -1454,7 +1650,7 @@ impl Pool {
 
         // If tiered storage enabled, also read from cold
         if self.config.max_resident_blocks > 0 {
-            let cold_events = self.read_cold_after(after_tc, limit)?;
+            let cold_events = self.read_cold_after(rooms, types, after_tc, limit)?;
             for env in cold_events {
                 let inner = innermost(&env);
                 let entry = PoolEntry {
@@ -1969,6 +2165,13 @@ impl Pool {
             .unwrap_or(RoomClass::Private))
     }
 
+    /// Whether an explicit class has been assigned to this room.
+    pub fn has_room_class(&self, room: &str) -> bool {
+        let shard0 = self.shard(None);
+        let meta = shard0.meta.read().expect("meta lock poisoned");
+        meta.room_meta.contains_key(room)
+    }
+
     /// Set custom retention override for a room (in days).
     pub fn set_room_retention(&self, room: &str, days: u64) -> Result<()> {
         let _guard = self.shards[0]
@@ -2083,6 +2286,11 @@ impl Pool {
         let mut total = 0u64;
         for room in rooms {
             total += self.prune_retention_configured(&room)?;
+        }
+        // Rooms whose history is entirely cold have no resident events, so
+        // compact cold storage even when the hot prune removed nothing.
+        if self.config.max_resident_blocks > 0 {
+            self.compact_cold()?;
         }
         Ok(total)
     }
@@ -3151,6 +3359,200 @@ mod tests {
                 .unwrap();
             assert_eq!(body, format!("msg{}", 6 + i));
         }
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn bounded_replay_trims_chat_and_preserves_state_and_history() {
+        let base = tmp_base("bounded_replay");
+        let path = base.to_str().unwrap().to_owned();
+        let room_key;
+
+        // Build an untrimmed hot log first.
+        {
+            let pool = Pool::open(&path, PoolConfig::default()).expect("open");
+            let node = mk_node();
+            let room = mk_room();
+            room_key = room.sig.pub_key.clone();
+            let (_, create) =
+                make_room_create(&node, &room, Some("Bounded"), None).expect("room.create");
+            pool.put(&create).expect("put create");
+
+            for i in 0..10 {
+                let env = mk_room_event(
+                    &node,
+                    &room,
+                    "room.message",
+                    1000 + i,
+                    json!({"ch": 1, "body": format!("msg{}", i)}),
+                );
+                pool.put(&wrap_commit(env, &room, 2000 + i).unwrap())
+                    .expect("put");
+            }
+        }
+
+        let config = PoolConfig {
+            max_resident_blocks: 5,
+            tail_blocks_to_keep: 3,
+            ..PoolConfig::default()
+        };
+        let pool = Pool::open(&path, config).expect("reopen");
+
+        let state = pool.get_room_channel(&room_key, -1).expect("state");
+        assert_eq!(state.len(), 1, "room.create must stay resident");
+
+        let chat = pool.get_room_channel(&room_key, 1).expect("chat");
+        assert_eq!(chat.len(), 3, "only the newest chat tail stays resident");
+        for (i, event) in chat.iter().enumerate() {
+            let inner = innermost(&event.env);
+            let body = inner
+                .d
+                .c
+                .as_ref()
+                .and_then(|c| c.get("body"))
+                .and_then(|value| value.as_str())
+                .unwrap();
+            assert_eq!(body, format!("msg{}", 7 + i));
+        }
+
+        let full = pool
+            .get_wanted_full(&[&room_key], &[], 0, 100)
+            .expect("full history");
+        let messages = full
+            .iter()
+            .filter(|entry| innermost(&entry.env).d.t == "room.message")
+            .count();
+        assert_eq!(messages, 10, "cold storage must preserve trimmed history");
+
+        let cold_path = base.with_extension("cold.jsonl");
+        let cold_lines = std::fs::read_to_string(&cold_path)
+            .expect("cold log")
+            .lines()
+            .count();
+        assert_eq!(cold_lines, 7);
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn bounded_replay_distributes_tails_and_filters_cold_history() {
+        let base = tmp_base("bounded_rooms");
+        let path = base.to_str().unwrap().to_owned();
+        let room_a;
+        let room_b;
+
+        {
+            let pool = Pool::open(&path, PoolConfig::default()).expect("open");
+            let node = mk_node();
+            let a = mk_room();
+            let b = mk_room();
+            room_a = a.sig.pub_key.clone();
+            room_b = b.sig.pub_key.clone();
+            for room in [&a, &b] {
+                let (_, create) =
+                    make_room_create(&node, room, Some("Room"), None).expect("room.create");
+                pool.put(&create).expect("put create");
+                for i in 0..6 {
+                    let env = mk_room_event(
+                        &node,
+                        room,
+                        "room.message",
+                        1000 + i,
+                        json!({"ch": 1, "body": format!("msg{}", i)}),
+                    );
+                    pool.put(&wrap_commit(env, room, 2000 + i).unwrap())
+                        .expect("put");
+                }
+            }
+        }
+
+        let config = PoolConfig {
+            max_resident_blocks: 6,
+            tail_blocks_to_keep: 10,
+            ..PoolConfig::default()
+        };
+        let pool = Pool::open(&path, config).expect("reopen");
+
+        assert_eq!(pool.get_room_channel(&room_a, 1).unwrap().len(), 2);
+        assert_eq!(pool.get_room_channel(&room_b, 1).unwrap().len(), 2);
+
+        let full_a = pool.get_wanted_full(&[&room_a], &[], 0, 100).unwrap();
+        assert!(full_a
+            .iter()
+            .all(|entry| innermost(&entry.env).d.r.as_deref() == Some(room_a.as_str())));
+        assert_eq!(
+            full_a
+                .iter()
+                .filter(|entry| innermost(&entry.env).d.t == "room.message")
+                .count(),
+            6,
+            "room A full history must include its cold tail"
+        );
+
+        let messages_a = pool
+            .get_wanted_full(&[&room_a], &["room.message"], 0, 100)
+            .unwrap();
+        assert_eq!(messages_a.len(), 6);
+        assert!(messages_a
+            .iter()
+            .all(|entry| innermost(&entry.env).d.t == "room.message"));
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn retention_prunes_expired_cold_history() {
+        let base = tmp_base("cold_retention");
+        let path = base.to_str().unwrap().to_owned();
+        let room_key;
+
+        let config = PoolConfig {
+            max_resident_blocks: 2,
+            tail_blocks_to_keep: 1,
+            ..PoolConfig::default()
+        };
+        {
+            let pool = Pool::open(&path, config.clone()).expect("open");
+            let node = mk_node();
+            let room = mk_room();
+            room_key = room.sig.pub_key.clone();
+            pool.set_room_retention(&room_key, 1).expect("retention");
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            for (i, ts) in [1_000u64, 2_000, now].into_iter().enumerate() {
+                let env = mk_room_event(
+                    &node,
+                    &room,
+                    "room.message",
+                    ts,
+                    json!({"ch": 1, "body": format!("msg{}", i)}),
+                );
+                pool.put(&wrap_commit(env, &room, ts).unwrap()).unwrap();
+            }
+        }
+
+        let pool = Pool::open(&path, config).expect("reopen");
+        pool.prune_all_rooms_retention().expect("retention prune");
+        let full = pool.get_wanted_full(&[&room_key], &[], 0, 100).unwrap();
+        let bodies: Vec<&str> = full
+            .iter()
+            .filter_map(|entry| {
+                let inner = innermost(&entry.env);
+                inner
+                    .d
+                    .c
+                    .as_ref()
+                    .and_then(|content| content.get("body"))
+                    .and_then(|value| value.as_str())
+            })
+            .collect();
+        assert_eq!(bodies, vec!["msg2"]);
+        assert!(!std::fs::read_to_string(base.with_extension("cold.jsonl"))
+            .unwrap_or_default()
+            .contains("msg0"));
 
         std::fs::remove_dir_all(&base).ok();
     }

@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -20,13 +20,56 @@ use toloo_lib::events::{
 };
 use toloo_lib::ids::eid;
 use toloo_lib::keystore::{self, EncryptedKey};
-use toloo_lib::pool::{Pool, PoolConfig};
+use toloo_lib::pool::{Pool, PoolConfig, RoomClass};
 use toloo_lib::transport::client::{pool_exchange, PoolExchangeConfig, TlsVerify, WantRoom};
 use toloo_lib::transport::server::{run_relay, EndpointConfig, RelayConfig, RelayMetrics};
 use toloo_lib::types::{Envelope, Keypair, LocalNode, LocalRoom};
 
 const SYNC_INTERVAL: Duration = Duration::from_secs(10);
+const BACKGROUND_SYNC_INTERVAL: Duration = Duration::from_secs(60);
+const RETENTION_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const MAX_VISIBLE_MESSAGES: usize = 300;
+
+#[cfg(target_os = "android")]
+fn native_pool_config() -> PoolConfig {
+    // Keep the Galaxy J5-class client bounded; tune with device RSS tests.
+    PoolConfig {
+        max_resident_blocks: 8_000,
+        tail_blocks_to_keep: 500,
+        ..PoolConfig::default()
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn native_pool_config() -> PoolConfig {
+    PoolConfig::default()
+}
+
+fn room_class_for(room: &RoomConfig) -> RoomClass {
+    if room.room_identity.is_some() {
+        return RoomClass::Personal;
+    }
+    let public_join = room.room_create.as_ref().is_some_and(|envelope| {
+        let inner = innermost(envelope);
+        inner
+            .d
+            .c
+            .as_ref()
+            .and_then(|content| content.get("rules"))
+            .and_then(|rules| rules.as_array())
+            .is_some_and(|rules| {
+                rules.iter().any(|rule| {
+                    rule.get("t").and_then(|value| value.as_str()) == Some("join")
+                        && rule.get("allow").and_then(|value| value.as_str()) == Some("*")
+                })
+            })
+    });
+    if public_join {
+        RoomClass::Public
+    } else {
+        RoomClass::Private
+    }
+}
 
 #[derive(Debug)]
 pub enum Command {
@@ -85,6 +128,11 @@ pub enum Command {
         port: u16,
         proto: String,
     },
+    SetHostAutoStart {
+        enabled: bool,
+        port: String,
+        proto: String,
+    },
     StopHost,
     Sync,
     SyncRoom(String),
@@ -114,6 +162,7 @@ pub struct Snapshot {
     pub relays: Vec<RelayView>,
     pub blocked: Vec<BlockedView>,
     pub host_running: bool,
+    pub host_auto_start: bool,
     pub host_address: String,
     pub host_connections: i32,
     pub host_port: String,
@@ -190,6 +239,7 @@ impl Default for Snapshot {
             relays: Vec::new(),
             blocked: Vec::new(),
             host_running: false,
+            host_auto_start: false,
             host_address: String::new(),
             host_connections: 0,
             host_port: "17701".to_owned(),
@@ -228,6 +278,8 @@ struct Config {
 struct HostConfig {
     port: u16,
     proto: String,
+    #[serde(default)]
+    auto_start: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +313,10 @@ struct Engine {
     export_kind: String,
     search: String,
     last_outgoing_ts: u64,
+    sync_cursors: HashMap<String, u64>,
+    background_sync_index: usize,
+    last_background_sync: Instant,
+    last_prune: Instant,
     host: Option<HostHandle>,
     passphrase: Option<String>,
     locked: bool,
@@ -347,6 +403,11 @@ fn config_snapshot(
             .collect(),
         blocked: Vec::new(),
         host_running: false,
+        host_auto_start: config
+            .host
+            .as_ref()
+            .map(|host| host.auto_start)
+            .unwrap_or(false),
         host_address: config
             .host
             .as_ref()
@@ -407,7 +468,7 @@ impl Engine {
             pool_base
                 .to_str()
                 .context("Toloo storage path is not valid UTF-8")?,
-            PoolConfig::default(),
+            native_pool_config(),
         )?);
         #[cfg(target_os = "android")]
         eprintln!(
@@ -427,6 +488,10 @@ impl Engine {
             export_kind: String::new(),
             search: String::new(),
             last_outgoing_ts: 0,
+            sync_cursors: HashMap::new(),
+            background_sync_index: 0,
+            last_background_sync: Instant::now(),
+            last_prune: Instant::now(),
             host: None,
             passphrase: None,
             locked,
@@ -436,6 +501,7 @@ impl Engine {
         if engine.config.active.is_none() {
             engine.config.active = engine.config.rooms.first().map(|room| room.pub_key.clone());
         }
+        engine.maybe_auto_start_host();
         Ok(engine)
     }
 
@@ -492,7 +558,9 @@ impl Engine {
             if self.config.active.is_none() {
                 self.config.active = self.config.rooms.first().map(|room| room.pub_key.clone());
             }
+            self.configure_room_retention();
             self.status = "Unlocked".to_owned();
+            self.maybe_auto_start_host();
             Ok(())
         })();
         if let Err(error) = &result {
@@ -514,7 +582,9 @@ impl Engine {
                 self.locked = false;
                 self.lock_mode = "none".to_owned();
                 self.lock_error.clear();
+                self.configure_room_retention();
                 self.status = "Local vault protected".to_owned();
+                self.maybe_auto_start_host();
                 Ok(())
             }
             Err(error) => {
@@ -536,6 +606,32 @@ impl Engine {
     fn active_room(&self) -> Option<&RoomConfig> {
         let active = self.config.active.as_deref()?;
         self.config.rooms.iter().find(|room| room.pub_key == active)
+    }
+
+    fn assign_room_class(&mut self, room: &RoomConfig) {
+        if self.pool.has_room_class(&room.pub_key) {
+            return;
+        }
+        if let Err(error) = self
+            .pool
+            .set_room_class(&room.pub_key, room_class_for(room))
+        {
+            eprintln!("[toloo] failed to assign room class: {error:#}");
+        }
+    }
+
+    fn assign_all_room_classes(&mut self) {
+        for room in self.config.rooms.clone() {
+            self.assign_room_class(&room);
+        }
+    }
+
+    fn configure_room_retention(&mut self) {
+        self.assign_all_room_classes();
+        if let Err(error) = self.pool.prune_all_rooms_retention() {
+            eprintln!("[toloo] retention cleanup failed: {error:#}");
+        }
+        self.last_prune = Instant::now();
     }
 
     fn handle(&mut self, command: Command) -> Result<()> {
@@ -596,6 +692,11 @@ impl Engine {
                 Ok(())
             }
             Command::StartHost { port, proto } => self.start_host(port, &proto),
+            Command::SetHostAutoStart {
+                enabled,
+                port,
+                proto,
+            } => self.set_host_auto_start(enabled, &port, &proto),
             Command::StopHost => self.stop_host(),
             Command::Sync => self.sync_active(),
             Command::SyncRoom(room_id) => self.sync_room(&room_id),
@@ -713,6 +814,8 @@ impl Engine {
 
     fn remove_identity(&mut self) -> Result<()> {
         self.config.identity = None;
+        self.sync_cursors.clear();
+        self.background_sync_index = 0;
         if !self.config.has_secrets() {
             self.passphrase = None;
         }
@@ -731,6 +834,7 @@ impl Engine {
         }
         if !self.config.relays.iter().any(|relay| relay == url) {
             self.config.relays.push(url.to_owned());
+            self.sync_cursors.clear();
             self.save_config()?;
         }
         self.status = "Relay added".to_owned();
@@ -743,6 +847,7 @@ impl Engine {
         if self.config.relays.len() == before {
             bail!("Unknown relay");
         }
+        self.sync_cursors.clear();
         self.save_config()?;
         self.status = "Relay removed".to_owned();
         Ok(())
@@ -782,8 +887,10 @@ impl Engine {
             room_identity: Some(room.clone()),
             room_create: Some(committed.clone()),
         };
+        let class = room_class_for(&room_config);
         self.config.rooms.push(room_config);
         self.config.active = Some(room.sig.pub_key.clone());
+        self.pool.set_room_class(&room.sig.pub_key, class)?;
         self.save_config()?;
 
         match self.exchange(vec![committed], &room.sig.pub_key) {
@@ -851,6 +958,7 @@ impl Engine {
             .clone()
             .map(|create| vec![create, join.clone()])
             .unwrap_or_else(|| vec![join]);
+        self.assign_all_room_classes();
         match self.exchange(offers, &active) {
             Ok(_) => self.status = "Join request sent".to_owned(),
             Err(error) => self.status = format!("Join saved locally: {error:#}"),
@@ -961,6 +1069,7 @@ impl Engine {
         }
         self.save_config()?;
         if self.config.relays.is_empty() {
+            self.sync_cursors.remove(room_id);
             self.status = "Left room".to_owned();
             return Ok(());
         }
@@ -973,6 +1082,7 @@ impl Engine {
             Ok(_) => self.status = "Left room".to_owned(),
             Err(error) => self.status = format!("Left room locally: {error:#}"),
         }
+        self.sync_cursors.remove(room_id);
         Ok(())
     }
 
@@ -983,6 +1093,7 @@ impl Engine {
             bail!("Unknown room");
         }
         self.config.read_marks.remove(room_id);
+        self.sync_cursors.remove(room_id);
         if self.config.active.as_deref() == Some(room_id) {
             self.config.active = self.config.rooms.first().map(|room| room.pub_key.clone());
         }
@@ -1089,7 +1200,11 @@ impl Engine {
                 _ => {}
             }
         }
+        if relays_added > 0 {
+            self.sync_cursors.clear();
+        }
         self.save_config()?;
+        self.assign_all_room_classes();
         self.status = format!(
             "Imported {imported} envelope(s), {rooms_added} room(s), {relays_added} relay(s)"
         );
@@ -1319,9 +1434,16 @@ impl Engine {
                     eprintln!("relay host stopped: {error:#}");
                 }
             })?;
+        let auto_start = self
+            .config
+            .host
+            .as_ref()
+            .map(|host| host.auto_start)
+            .unwrap_or(false);
         self.config.host = Some(HostConfig {
             port,
             proto: proto.to_owned(),
+            auto_start,
         });
         self.save_config()?;
         self.host = Some(HostHandle {
@@ -1343,6 +1465,57 @@ impl Engine {
         crate::platform::host_stopped();
         self.status = "Relay host stopped".to_owned();
         Ok(())
+    }
+
+    fn set_host_auto_start(&mut self, enabled: bool, port: &str, proto: &str) -> Result<()> {
+        let port = port
+            .trim()
+            .parse::<u16>()
+            .context("Relay port must be a number between 1 and 65535")?;
+        if port == 0 {
+            bail!("Port must be between 1 and 65535");
+        }
+        let proto = match proto {
+            "http" => "http",
+            "ws" | "" => "ws",
+            other => bail!("Unsupported relay protocol: {other}"),
+        };
+        let (port, proto) = if let Some(host) = &self.host {
+            (host.port, host.proto.clone())
+        } else {
+            (port, proto.to_owned())
+        };
+        self.config.host = Some(HostConfig {
+            port,
+            proto: proto.clone(),
+            auto_start: enabled,
+        });
+        self.save_config()?;
+        if enabled && self.host.is_none() && self.config.identity.is_some() {
+            self.start_host(port, &proto)?;
+        } else {
+            self.status = if enabled {
+                "Relay host will start automatically".to_owned()
+            } else {
+                "Relay host auto-start disabled".to_owned()
+            };
+        }
+        Ok(())
+    }
+
+    fn maybe_auto_start_host(&mut self) {
+        if self.locked || self.host.is_some() {
+            return;
+        }
+        let Some(host) = self.config.host.clone() else {
+            return;
+        };
+        if !host.auto_start || self.config.identity.is_none() {
+            return;
+        }
+        if let Err(error) = self.start_host(host.port, &host.proto) {
+            self.status = format!("Auto-start relay failed: {error:#}");
+        }
     }
 
     fn send_message(&mut self, body: &str) -> Result<()> {
@@ -1397,6 +1570,14 @@ impl Engine {
     }
 
     fn sync_room(&mut self, room_id: &str) -> Result<()> {
+        self.sync_room_with(room_id, 500, true)
+    }
+
+    fn sync_room_quiet(&mut self, room_id: &str, limit: usize) -> Result<()> {
+        self.sync_room_with(room_id, limit, false)
+    }
+
+    fn sync_room_with(&mut self, room_id: &str, limit: usize, announce: bool) -> Result<()> {
         let node = self.node()?.clone();
         let room = self
             .config
@@ -1406,10 +1587,13 @@ impl Engine {
             .cloned()
             .ok_or_else(|| anyhow!("Unknown room"))?;
         if self.config.relays.is_empty() {
-            self.status = "No relay configured".to_owned();
+            if announce {
+                self.status = "No relay configured".to_owned();
+            }
             return Ok(());
         }
 
+        let after = self.sync_cursors.get(room_id).copied().unwrap_or(0);
         let mut synced = 0usize;
         let mut reached = 0usize;
         let mut errors = Vec::new();
@@ -1418,8 +1602,8 @@ impl Engine {
                 offer: Vec::new(),
                 want_rooms: vec![WantRoom {
                     room_pub: room.pub_key.clone(),
-                    after: 0,
-                    limit: 500,
+                    after,
+                    limit,
                 }],
                 timeout: Some(Duration::from_secs(30)),
             };
@@ -1430,6 +1614,7 @@ impl Engine {
                 Ok(envelopes) => {
                     reached += 1;
                     synced += envelopes.len();
+                    self.advance_sync_cursor(room_id, &envelopes);
                     for envelope in envelopes {
                         let _ = self.pool.put(&envelope);
                     }
@@ -1446,15 +1631,32 @@ impl Engine {
         if reached == 0 {
             bail!("{}", errors.join("; "));
         }
-        self.status = if errors.is_empty() {
-            format!("Synced {synced} envelope(s); committed {committed}")
-        } else {
-            format!(
-                "Synced {synced} envelope(s); {reached} relay(s) reached; {} failed",
-                errors.len()
-            )
-        };
+        if announce {
+            self.status = if errors.is_empty() {
+                format!("Synced {synced} envelope(s); committed {committed}")
+            } else {
+                format!(
+                    "Synced {synced} envelope(s); {reached} relay(s) reached; {} failed",
+                    errors.len()
+                )
+            };
+        }
         Ok(())
+    }
+
+    fn advance_sync_cursor(&mut self, room_id: &str, envelopes: &[Envelope]) {
+        let mut highest = self.sync_cursors.get(room_id).copied().unwrap_or(0);
+        for envelope in envelopes {
+            if innermost(envelope).d.r.as_deref() != Some(room_id) {
+                continue;
+            }
+            if let Some(tc) = envelope.d.tc {
+                highest = highest.max(tc);
+            }
+        }
+        if highest > 0 {
+            self.sync_cursors.insert(room_id.to_owned(), highest);
+        }
     }
 
     fn exchange(&mut self, offers: Vec<Envelope>, room_pub: &str) -> Result<usize> {
@@ -1462,6 +1664,8 @@ impl Engine {
         if self.config.relays.is_empty() {
             bail!("No relay configured");
         }
+        let after = self.sync_cursors.get(room_pub).copied().unwrap_or(0);
+        self.advance_sync_cursor(room_pub, &offers);
         let mut total = 0usize;
         let mut reached = 0usize;
         let mut errors = Vec::new();
@@ -1470,7 +1674,7 @@ impl Engine {
                 offer: offers.clone(),
                 want_rooms: vec![WantRoom {
                     room_pub: room_pub.to_owned(),
-                    after: 0,
+                    after,
                     limit: 500,
                 }],
                 timeout: Some(Duration::from_secs(30)),
@@ -1482,6 +1686,7 @@ impl Engine {
                 Ok(envelopes) => {
                     reached += 1;
                     total += envelopes.len();
+                    self.advance_sync_cursor(room_pub, &envelopes);
                     for envelope in envelopes {
                         let _ = self.pool.put(&envelope);
                     }
@@ -1800,6 +2005,12 @@ impl Engine {
                 .collect(),
             blocked: blocked_views,
             host_running,
+            host_auto_start: self
+                .config
+                .host
+                .as_ref()
+                .map(|host| host.auto_start)
+                .unwrap_or(false),
             host_address,
             host_connections,
             host_port: self
@@ -1840,6 +2051,7 @@ pub fn run(data_dir: PathBuf, commands: Receiver<Command>, updates: Sender<Snaps
                 let _ = updates.send(engine.snapshot());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let mut changed = false;
                 if !engine.locked
                     && engine.config.identity.is_some()
                     && engine.active_room().is_some()
@@ -1848,6 +2060,39 @@ pub fn run(data_dir: PathBuf, commands: Receiver<Command>, updates: Sender<Snaps
                     if let Err(error) = engine.sync_active() {
                         engine.status = format!("Sync error: {error:#}");
                     }
+                    changed = true;
+                }
+                if !engine.locked
+                    && engine.config.identity.is_some()
+                    && !engine.config.relays.is_empty()
+                    && engine.last_background_sync.elapsed() >= BACKGROUND_SYNC_INTERVAL
+                {
+                    let background: Vec<String> = engine
+                        .config
+                        .rooms
+                        .iter()
+                        .filter(|room| Some(&room.pub_key) != engine.config.active.as_ref())
+                        .map(|room| room.pub_key.clone())
+                        .collect();
+                    if !background.is_empty() {
+                        let index = engine.background_sync_index % background.len();
+                        let room_id = background[index].clone();
+                        engine.background_sync_index = engine.background_sync_index.wrapping_add(1);
+                        if let Err(error) = engine.sync_room_quiet(&room_id, 200) {
+                            eprintln!("[toloo] background sync failed: {error:#}");
+                        }
+                        changed = true;
+                    }
+                    engine.last_background_sync = Instant::now();
+                }
+                if !engine.locked
+                    && engine.config.identity.is_some()
+                    && engine.last_prune.elapsed() >= RETENTION_INTERVAL
+                {
+                    engine.configure_room_retention();
+                    changed = true;
+                }
+                if changed {
                     let _ = updates.send(engine.snapshot());
                 }
             }
@@ -1942,6 +2187,91 @@ mod tests {
     }
 
     #[test]
+    fn classifies_owned_public_and_private_rooms() {
+        let (mut engine, dir) = temp_engine();
+        engine.handle(Command::CreateIdentity).unwrap();
+        let node = engine.node().unwrap().clone();
+        let (public_pub, public_seed) = ed25519_generate();
+        let public_room = LocalRoom {
+            sig: Keypair {
+                pub_key: base64url::encode(&public_pub),
+                priv_key: base64url::encode(&public_seed),
+            },
+        };
+        let (_, public_create) = make_room_create(
+            &node,
+            &public_room,
+            Some("Public"),
+            Some(json!([{"t": "join", "allow": "*"}])),
+        )
+        .unwrap();
+        let public = RoomConfig {
+            pub_key: public_room.sig.pub_key.clone(),
+            name: "Public".to_owned(),
+            room_identity: None,
+            room_create: Some(public_create),
+        };
+        assert_eq!(room_class_for(&public), RoomClass::Public);
+
+        let (_, private_create) =
+            make_room_create(&node, &public_room, Some("Private"), None).unwrap();
+        let private = RoomConfig {
+            room_create: Some(private_create),
+            ..public.clone()
+        };
+        assert_eq!(room_class_for(&private), RoomClass::Private);
+
+        let owned = RoomConfig {
+            room_identity: Some(public_room),
+            room_create: None,
+            ..public
+        };
+        assert_eq!(room_class_for(&owned), RoomClass::Personal);
+
+        drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sync_cursor_advances_only_for_room_commits() {
+        let (mut engine, dir) = temp_engine();
+        engine.handle(Command::CreateIdentity).unwrap();
+        engine.handle(Command::CreateRoom("A".to_owned())).unwrap();
+        engine.handle(Command::CreateRoom("B".to_owned())).unwrap();
+        let room_a = engine.config.rooms[0].clone();
+        let room_b = engine.config.rooms[1].clone();
+        let node = engine.node().unwrap().clone();
+
+        let future = now_ms() + 10_000;
+        let draft_a = make_room_message(&node, &room_a.pub_key, 1, "a", vec![]).unwrap();
+        let commit_a =
+            wrap_commit(draft_a, room_a.room_identity.as_ref().unwrap(), future).unwrap();
+        let draft_b = make_room_message(&node, &room_b.pub_key, 1, "b", vec![]).unwrap();
+        let commit_b =
+            wrap_commit(draft_b, room_b.room_identity.as_ref().unwrap(), future + 1).unwrap();
+
+        engine.advance_sync_cursor(&room_a.pub_key, &[commit_b, commit_a]);
+        assert_eq!(engine.sync_cursors.get(&room_a.pub_key), Some(&future));
+
+        let uncommitted =
+            make_room_message(&node, &room_a.pub_key, 1, "uncommitted", vec![]).unwrap();
+        engine.advance_sync_cursor(&room_a.pub_key, &[uncommitted]);
+        assert_eq!(engine.sync_cursors.get(&room_a.pub_key), Some(&future));
+
+        let newer = make_room_message(&node, &room_a.pub_key, 1, "newer", vec![]).unwrap();
+        let newer_commit =
+            wrap_commit(newer, room_a.room_identity.as_ref().unwrap(), future + 2).unwrap();
+        engine.advance_sync_cursor(&room_a.pub_key, &[newer_commit]);
+        assert_eq!(
+            engine.sync_cursors.get(&room_a.pub_key).copied(),
+            Some(future + 2)
+        );
+
+        drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn creates_identity_room_and_committed_message_locally() {
         let (mut engine, dir) = temp_engine();
         engine.handle(Command::CreateIdentity).unwrap();
@@ -1955,6 +2285,12 @@ mod tests {
         assert!(snapshot.rooms[0].has_key);
         assert_eq!(snapshot.active_room, "Test room");
         assert!(snapshot.identity_label.contains('…'));
+        let room_id = engine.config.rooms[0].pub_key.clone();
+        assert!(engine.pool.has_room_class(&room_id));
+        assert_eq!(
+            engine.pool.get_room_class(&room_id).unwrap(),
+            RoomClass::Personal
+        );
 
         engine
             .handle(Command::SendMessage("hello native".to_owned()))
@@ -2221,6 +2557,37 @@ mod tests {
         engine.handle(Command::StopHost).unwrap();
         assert!(!engine.snapshot().host_running);
         drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn relay_host_auto_starts_after_unlock() {
+        let (mut engine, dir) = temp_engine();
+        engine.handle(Command::CreateIdentity).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        engine
+            .handle(Command::SetHostAutoStart {
+                enabled: true,
+                port: port.to_string(),
+                proto: "ws".to_owned(),
+            })
+            .unwrap();
+        assert!(engine.snapshot().host_running);
+        assert!(engine.snapshot().host_auto_start);
+        engine.handle(Command::StopHost).unwrap();
+        drop(engine);
+
+        let mut reloaded = Engine::load(dir.clone(), None).unwrap();
+        assert!(reloaded.locked);
+        reloaded
+            .handle(Command::UnlockConfig("test passphrase".to_owned()))
+            .unwrap();
+        assert!(reloaded.snapshot().host_running);
+        assert!(reloaded.snapshot().host_auto_start);
+        reloaded.handle(Command::StopHost).unwrap();
+        drop(reloaded);
         let _ = std::fs::remove_dir_all(dir);
     }
 

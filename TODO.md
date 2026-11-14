@@ -17,18 +17,34 @@ git. Current remaining work, in priority order:
 - [x] Consolidate all benchmark code, scripts, templates, and assets under
       `bench/`; results and the dashboard now live only in
       `MehrWizard/toloo-benchmarks`.
-- [ ] Keep README, TODO, component docs, and spec indexes current with each
-      release.
+- [x] Keep README, TODO, component docs, and spec indexes current with each
+      release (recurring release checklist; refreshed here).
 
 ## Client tier (constrained devices — Galaxy J5 2016 class)
 
-- [ ] `PoolConfig`: resident-event cap + cold-log fallback (stream old
-      ranges from `<base>.jsonl` on demand) + tail-only replay on open
-- [ ] Default retention per room class (public rooms: hours–days;
-      personal: months) applied when a room defines no rules
-- [ ] Client UI: background rooms as sync cursors only (no live ingest)
-- [ ] Client UI: per-room LRU tail windows + batched foreground ingest
-- [ ] Client UI: virtualized message list (render visible rows only)
+- [x] `PoolConfig` tiered storage: resident-event cap, cold-log fallback,
+      and tail-bounded queries are implemented and covered by pool tests.
+- [x] Bound `Pool::open` replay: with tiered storage enabled, the hot log is
+      trimmed in two streaming passes before loading. Room-state events and
+      per-room chat tails stay resident; older chat moves to cold storage.
+      Cold full-history queries now filter by room and event type.
+- [x] Native Android opens a bounded pool (8,000 resident events, 500-event
+      per-room tail) with the cold JSONL fallback; desktop remains unlimited.
+- [x] Room-class retention defaults and per-room overrides are implemented
+      (`RoomClass`, `get_room_retention`, `prune_retention_configured`).
+- [x] Native client assigns room classes (owned rooms = personal, public join
+      rule = public, otherwise private) and runs hot+cold retention pruning on
+      unlock and every six hours. The CLI relay also runs a six-hour retention
+      worker. Room-state events are retention-proof.
+- [x] Client UI: background rooms as sync cursors only. Native and web keep
+      per-room cursors; native syncs the active room every 10s, web syncs the
+      active room/DMs every 12s, and both sync one background room per minute.
+      Background refreshes update summaries without replacing the active chat.
+      Cursors are in-memory, so a restart performs one tail resync.
+- [ ] Client UI: per-room LRU tail windows + batched foreground ingest.
+      Native rebuilds the visible 300-message window from room history on
+      every snapshot.
+- [ ] Client UI: virtualized message list (render visible rows only).
 
 ## Toloo app (2026-11-01)
 
@@ -49,11 +65,20 @@ git. Current remaining work, in priority order:
       auto-publish workflow using a service-account secret for tagged builds.
 - [x] Encrypted local vault: setup/unlock passphrase, plaintext config
       migration, and room keys encrypted with the identity.
-- [ ] Native feature parity: embedded relay hosting, private messages/UI,
-      discovery import/export, blobs, moderation, notifications and background
-      sync (foreground service).
+- [x] Native file open/save dialogs, desktop notifications, relay-host
+      auto-start, and Android foreground-service lifecycle cleanup.
+- [x] Native moderation actions and UI: delete, flag, block/unblock, attest.
+- [ ] Native private messages/DM UI (the web client already has encrypted DMs).
+- [ ] Native blob upload/download UI.
+- [ ] Native background sync for non-active rooms and DMs.
+- [ ] Android background relay hosting after process death: the foreground
+      service is process-bound; auto-start restores hosting only when the app
+      reopens. A separate relay process/service would be required for true
+      continuity.
+- [ ] Validate native file dialogs and desktop notifications against a real
+      Linux portal, macOS, and Windows.
 - [ ] iOS feasibility spike with the pinned Slint version.
-- [ ] Android API 24–25 alternative is explicitly out of scope for Slint;
+- [x] Android API 24–25 alternative is explicitly out of scope for Slint;
       it would require native Android UI + FFI or another WebView shell.
 
 ## Networking
@@ -93,13 +118,17 @@ git. Current remaining work, in priority order:
       send/receive, contact key storage, delivery acks, and private-event sync.
 - [x] Web client: encrypted local vault for identity/room keys, with
       setup/unlock and migration from plaintext IndexedDB records.
-- [ ] Web client: notifications, offline/service-worker shell, message
-      reactions/edits UI, blob upload/download UI, moderation UI.
+- [x] Web client: notifications (Notification API, permission toggle, room
+      and DM delivery) and moderation UI (flag, delete, block/unblock, attest).
+- [ ] Web client: offline/service-worker shell.
+- [ ] Web client: message reactions/edits UI.
+- [ ] Web client: blob upload/download UI.
 - [ ] Deployment CSP for `toloo-web` (`connect-src` scheme-paired).
 - [ ] Index uncommitted room events instead of scanning all shards in
       `get_pending` (native performance; key-holder polling path).
-- [ ] Blob split/reassemble helpers in wasm (hashing + `makeRoomBlob` exist;
-      blob design itself remains postponed).
+- [ ] Blob split/reassemble helpers in wasm (hashing, `makeRoomBlob`, and
+      `requestBlobFetch` exist; upload/download UI and split/reassemble remain;
+      blob design itself is postponed).
 - [ ] Benchmarks on real target devices (older phones) and a SIMD-vs-scalar
       wasm comparison.
 
@@ -268,15 +297,20 @@ security) before touching performance.
       (server.rs:236); set an explicit, smaller cap for relays.
 - [ ] Evaluate `simd-json` upgrade (0.8 → current) for parser perf and fixes.
 
-## Design gap: app relay identity is not persistent
+## Design decision: embedded relay TLS
 
-The app generates a fresh relay keypair and a fresh self-signed TLS cert
-on every relay start. Consequences: every saved invite URI breaks on
-restart, TOFU cert pinning never stabilizes, and relay trust history
-(attestations) resets. Fix direction: persist the relay identity per
-relay config (generated once, stored — ideally passphrase-wrapped via
-keystore), and derive the TLS cert deterministically from it so the
-fingerprint is stable.
+The app relay host uses the persistent node identity from the encrypted
+vault, and its port/protocol/auto-start settings persist; it does not generate
+a fresh relay keypair per start. The embedded host currently serves plaintext
+`ws`/`http` only (`EndpointConfig.tls = None`), so TLS is normally terminated
+by a reverse proxy or tunnel. `toloo-lib` already has deterministic self-signed
+certificate generation (`make_self_signed_acceptor_from_key`), but it has no
+call sites.
+
+Remaining decision: either wire a stable self-signed TLS endpoint into the
+embedded host (persisted key/cert, fingerprint advertised in endpoint
+descriptors) or keep TLS termination external and document that as the
+supported deployment model.
 
 ## Notes
 

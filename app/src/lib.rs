@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 
 use anyhow::Result;
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 use toloo_lib::avatar::AvatarSpec;
 
 mod engine;
@@ -154,6 +154,28 @@ fn android_call_strings(method: &str, first: &str, second: &str) {
 }
 
 #[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_irandawn_toloo_TolooActivity_nativeOnFilePicked(
+    mut env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    text: jni::objects::JString,
+) {
+    let value: String = env.get_string(&text).map(Into::into).unwrap_or_default();
+    platform::set_file_event(platform::FileEvent::Opened(value));
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_irandawn_toloo_TolooActivity_nativeOnFileStatus(
+    mut env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    text: jni::objects::JString,
+) {
+    let value: String = env.get_string(&text).map(Into::into).unwrap_or_default();
+    platform::set_file_event(platform::FileEvent::Status(value));
+}
+
+#[cfg(target_os = "android")]
 static FRAME_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(target_os = "android")]
 static CONTENT_SNAPSHOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -279,6 +301,17 @@ fn set_status(ui: &AppWindow, message: &str) {
     }
 }
 
+fn export_filename(kind: &str) -> String {
+    match kind {
+        "invite" => "toloo-invite.toloo",
+        "messages" => "toloo-messages.toloo",
+        "identity" => "toloo-identity.json",
+        "encrypted-identity" => "toloo-identity.toloo-key",
+        _ => "toloo-export.txt",
+    }
+    .to_owned()
+}
+
 fn avatar_for(public_key: &str) -> (String, i32) {
     match AvatarSpec::from_pubkey_b64(public_key) {
         Ok(spec) => (spec.to_svg_path(), spec.palette as i32),
@@ -322,6 +355,7 @@ fn apply_snapshot(ui: &AppWindow, snapshot: engine::Snapshot) {
     ui.set_rtl(snapshot.rtl);
     ui.set_notifications_enabled(snapshot.notifications_enabled);
     ui.set_host_running(snapshot.host_running);
+    ui.set_host_auto_start(snapshot.host_auto_start);
     ui.set_host_address(snapshot.host_address.into());
     ui.set_host_connections(snapshot.host_connections);
     ui.set_host_port(snapshot.host_port.into());
@@ -535,6 +569,32 @@ fn run_ui(
     ui.on_import_discovery(move |input| {
         let _ = tx.send(engine::Command::ImportDiscovery(input.to_string()));
     });
+    let open_weak = ui.as_weak();
+    ui.on_open_file(move || match platform::open_text_file() {
+        Ok(Some(text)) => {
+            if let Some(ui) = open_weak.upgrade() {
+                ui.set_import_input(text.into());
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            if let Some(ui) = open_weak.upgrade() {
+                set_status(&ui, &format!("Could not open file: {error:#}"));
+            }
+        }
+    });
+    let save_weak = ui.as_weak();
+    ui.on_save_file(move |text, kind| {
+        let name = export_filename(kind.as_str());
+        let message = match platform::save_text_file(&name, text.as_str()) {
+            Ok(Some(path)) => format!("Saved to {path}"),
+            Ok(None) => "Choose a destination for the export".to_owned(),
+            Err(error) => format!("Could not save file: {error:#}"),
+        };
+        if let Some(ui) = save_weak.upgrade() {
+            set_status(&ui, &message);
+        }
+    });
     let tx = command_tx.clone();
     ui.on_export_invite(move |room_id| {
         let _ = tx.send(engine::Command::ExportInvite(room_id.to_string()));
@@ -604,6 +664,14 @@ fn run_ui(
         let _ = tx.send(engine::Command::StopHost);
     });
     let tx = command_tx.clone();
+    ui.on_set_host_auto_start(move |enabled, port, proto| {
+        let _ = tx.send(engine::Command::SetHostAutoStart {
+            enabled,
+            port: port.to_string(),
+            proto: proto.to_string(),
+        });
+    });
+    let tx = command_tx.clone();
     ui.on_set_notifications(move |enabled| {
         if enabled {
             platform::enable_notifications();
@@ -666,6 +734,28 @@ fn run_ui(
             set_status(&ui, &message);
         }
     });
+
+    let file_weak = ui.as_weak();
+    let _file_timer = Timer::default();
+    _file_timer.start(
+        TimerMode::Repeated,
+        std::time::Duration::from_millis(200),
+        move || {
+            let Some(event) = platform::take_file_event() else {
+                return;
+            };
+            if let Some(ui) = file_weak.upgrade() {
+                match event {
+                    platform::FileEvent::Opened(text) => {
+                        ui.set_import_input(text.into());
+                    }
+                    platform::FileEvent::Status(message) => {
+                        set_status(&ui, &message);
+                    }
+                }
+            }
+        },
+    );
 
     if ui
         .window()

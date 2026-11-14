@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -525,6 +526,8 @@ async fn cmd_sync(
 // relay
 // ================================================================
 
+const RETENTION_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
 async fn cmd_relay(
     host: String,
     port: u16,
@@ -562,6 +565,17 @@ async fn cmd_relay(
             Arc::new(Pool::memory()?)
         }
     };
+
+    let retention_pool = Arc::clone(&pool);
+    std::thread::Builder::new()
+        .name("toloo-retention".to_owned())
+        .spawn(move || loop {
+            std::thread::sleep(RETENTION_INTERVAL);
+            if let Err(error) = retention_pool.prune_all_rooms_retention() {
+                eprintln!("[toloo] retention cleanup failed: {error:#}");
+            }
+        })
+        .context("failed to spawn retention worker")?;
 
     let mut rooms: HashMap<String, LocalRoom> = HashMap::new();
     for path in room_key_paths {

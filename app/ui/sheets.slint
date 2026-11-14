@@ -77,6 +77,7 @@ export component SettingsSheet inherits Rectangle {
     in property <bool> notifications-enabled: false;
     in property <string> network-label: "";
     in property <bool> host-running: false;
+    in property <bool> host-auto-start: false;
     in property <string> host-address: "";
     in property <int> host-connections: 0;
     in property <[RelayRow]> relays;
@@ -104,6 +105,7 @@ export component SettingsSheet inherits Rectangle {
     callback set-notifications(bool);
     callback start-host(string, string);
     callback stop-host();
+    callback set-host-auto-start(bool, string, string);
 
     background: transparent;
 
@@ -345,8 +347,15 @@ export component SettingsSheet inherits Rectangle {
                     text: "Start relay host";
                     clicked => { root.start-host(root.host-port, root.host-proto); }
                 }
+                SecondaryButton {
+                    text: root.host-auto-start ? "Auto-start relay: on" : "Auto-start relay: off";
+                    clicked => {
+                        root.set-host-auto-start(!root.host-auto-start,
+                            root.host-port, root.host-proto);
+                    }
+                }
                 Text {
-                    text: "The host serves the same pool this client uses. Keep the app open while hosting; use a reverse proxy or TLS tunnel for wss/https.";
+                    text: "The host serves the same pool this client uses. Keep the app open while hosting; auto-start resumes it after reopening. Use a reverse proxy or TLS tunnel for wss/https.";
                     color: Theme.muted;
                     font-size: Theme.font-xs;
                     wrap: word-wrap;
@@ -534,6 +543,7 @@ export component ExportSheet inherits Rectangle {
     callback close();
     callback copy(string);
     callback share(string);
+    callback save-file(string, string);
 
     background: transparent;
 
@@ -597,6 +607,10 @@ export component ExportSheet inherits Rectangle {
                 text: "Copy";
                 clicked => { root.copy(root.export-text); }
             }
+            SecondaryButton {
+                text: "Save file";
+                clicked => { root.save-file(root.export-text, root.export-kind); }
+            }
             PrimaryButton {
                 text: "Share";
                 clicked => { root.share(root.export-text); }
@@ -615,6 +629,7 @@ export component ImportSheet inherits Rectangle {
     in-out property <string> import-input: "";
     callback close();
     callback decode(string);
+    callback open-file();
 
     background: transparent;
 
@@ -654,6 +669,10 @@ export component ImportSheet inherits Rectangle {
                 text: "Decode";
                 enabled: root.import-input != "";
                 clicked => { root.decode(root.import-input); }
+            }
+            SecondaryButton {
+                text: "Open file";
+                clicked => { root.open-file(); }
             }
             SecondaryButton {
                 text: "Close";

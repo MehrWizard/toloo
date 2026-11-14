@@ -1,6 +1,6 @@
 [package]
 name = "toloo-app"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2021"
 description = "Toloo application — Slint UI over the native Rust engine"
 publish = false
@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["rt", "time", "sync"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = "3"
+rfd = "0.18"
 slint = { version = "1.18.0", default-features = false, features = [
     "std",
     "compat-1-2",
@@ -44,3 +45,9 @@ slint = { version = "1.18.0", default-features = false, features = [
     "renderer-skia-opengl",
     "accessibility",
 ] }
+
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
+notify-rust = "4"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri-winrt-notification = "0.8"

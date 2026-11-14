@@ -39,6 +39,25 @@ The UI never handles transports or keys directly. The engine uses native
 WebSocket/HTTP via `toloo-lib`; TLS currently uses the native `AcceptAny` mode
 to support self-signed relays and still needs a per-relay pinning policy.
 
+## Platform integration
+
+- File import/export uses native dialogs (XDG portal on Linux, native pickers
+  on Windows/macOS, Storage Access Framework on Android).
+- Desktop notifications use `notify-rust` on Unix/macOS and WinRT toasts on
+  Windows; Android uses notification channels and permission handling.
+- Relay hosting runs in-process. `Auto-start relay` persists the setting and
+  restarts the host after unlock or app launch. Android's foreground service
+  carries the notification; it is process-bound, so with auto-start enabled
+  hosting resumes when the app is reopened.
+- Android uses a bounded pool (8,000 resident events, 500-event per-room tail)
+  with a cold JSONL fallback; older chat is served on explicit full-history
+  sync. Desktop keeps the full log resident. On unlock and every six hours the
+  app assigns room classes and prunes expired chat from both tiers; room state
+  is always retained.
+- The active room syncs every 10 seconds using a per-room cursor. One
+  background room is synced incrementally per minute; background syncs update
+  room summaries but never replace the active chat.
+
 ## Tests
 
 ```sh

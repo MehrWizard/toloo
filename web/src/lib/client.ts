@@ -148,6 +148,8 @@ export function createTolooClient() {
 
     const connections = new Map<string, RelayConnection>();
     const roomKeys = new Map<string, RoomIdentity>();
+    const roomCursors = new Map<string, number>();
+    let backgroundRoomIndex = 0;
     const dmCache = new protocol.PairKeyCache(64);
     const dmBodyCache = new Map<string, string>();
     let dmReadMarks: Record<string, number> = {};
@@ -411,6 +413,7 @@ export function createTolooClient() {
             createdAt: Date.now(),
         };
         await db.saveRelay(record);
+        roomCursors.clear();
         setRelays((current) => [...current, record]);
         notify("Relay added.", "success");
         return record;
@@ -419,6 +422,7 @@ export function createTolooClient() {
     async function removeRelay(id: string): Promise<void> {
         closeConnection(id);
         await db.deleteRelay(id);
+        roomCursors.clear();
         setRelays((current) => current.filter((relay) => relay.id !== id));
     }
 
@@ -506,7 +510,16 @@ export function createTolooClient() {
             });
         }
         await db.putEnvelopes(records);
+        advanceRoomCursors(records);
         return records.length;
+    }
+
+    function advanceRoomCursors(records: EnvelopeRecord[]): void {
+        for (const record of records) {
+            if (!record.room || record.tc === null) continue;
+            const current = roomCursors.get(record.room) ?? 0;
+            if (record.tc > current) roomCursors.set(record.room, record.tc);
+        }
     }
 
     async function requestFromRelays(
@@ -546,6 +559,7 @@ export function createTolooClient() {
     async function refreshRoom(roomPub: string): Promise<void> {
         const records = await db.roomEnvelopes(roomPub);
         const currentIdentity = identity();
+        const isActive = activePub() === roomPub;
 
         const deleted = new Set<string>();
         for (const record of records) {
@@ -581,58 +595,63 @@ export function createTolooClient() {
                 mine: record.signer === currentIdentity?.sigPub,
             }))
             .sort((a, b) => a.ts - b.ts || a.eid.localeCompare(b.eid));
-        const previous = messages();
-        if (
-            document.hidden &&
-            previous.length > 0 &&
-            "Notification" in window &&
-            Notification.permission === "granted" &&
-            localStorage.getItem("toloo-notifications") !== "0"
-        ) {
-            const known = new Set(previous.map((message) => message.eid));
-            const roomName =
-                rooms().find((room) => room.pub === roomPub)?.name ?? "Toloo";
-            for (const message of list) {
-                if (known.has(message.eid) || message.mine) continue;
-                new Notification(`Toloo · ${roomName}`, {
-                    body: message.body.slice(0, 140),
+        if (isActive) {
+            const previous = messages();
+            if (
+                document.hidden &&
+                previous.length > 0 &&
+                "Notification" in window &&
+                Notification.permission === "granted" &&
+                localStorage.getItem("toloo-notifications") !== "0"
+            ) {
+                const known = new Set(previous.map((message) => message.eid));
+                const roomName =
+                    rooms().find((room) => room.pub === roomPub)?.name ??
+                    "Toloo";
+                for (const message of list) {
+                    if (known.has(message.eid) || message.mine) continue;
+                    new Notification(`Toloo · ${roomName}`, {
+                        body: message.body.slice(0, 140),
+                    });
+                }
+            }
+            setMessages(list);
+            const latestMessage = list.at(-1);
+            const roomRecord = rooms().find((room) => room.pub === roomPub);
+            if (
+                roomRecord &&
+                latestMessage &&
+                latestMessage.ts > (roomRecord.lastReadAt ?? 0)
+            ) {
+                await updateRoomRecord({
+                    ...roomRecord,
+                    lastReadAt: latestMessage.ts,
                 });
             }
-        }
-        setMessages(list);
-        const latestMessage = list.at(-1);
-        const roomRecord = rooms().find((room) => room.pub === roomPub);
-        if (
-            activePub() === roomPub &&
-            roomRecord &&
-            latestMessage &&
-            latestMessage.ts > (roomRecord.lastReadAt ?? 0)
-        ) {
-            await updateRoomRecord({
-                ...roomRecord!,
-                lastReadAt: latestMessage.ts,
-            });
+
+            const membershipEvents = records
+                .filter(
+                    (record) =>
+                        record.tc !== null &&
+                        record.channel === -2 &&
+                        [
+                            "room.join",
+                            "room.leave",
+                            "room.ban",
+                            "room.unban",
+                        ].includes(record.type),
+                )
+                .map((record) => JSON.parse(record.envelope) as Envelope);
+            try {
+                const state = protocol.membership(roomPub, membershipEvents);
+                setMembers(state.members);
+                setBanned(state.banned);
+            } catch {
+                setMembers([]);
+                setBanned([]);
+            }
         }
         await refreshSummary(roomPub);
-
-        const membershipEvents = records
-            .filter(
-                (record) =>
-                    record.tc !== null &&
-                    record.channel === -2 &&
-                    ["room.join", "room.leave", "room.ban", "room.unban"].includes(
-                        record.type,
-                    ),
-            )
-            .map((record) => JSON.parse(record.envelope) as Envelope);
-        try {
-            const state = protocol.membership(roomPub, membershipEvents);
-            setMembers(state.members);
-            setBanned(state.banned);
-        } catch {
-            setMembers([]);
-            setBanned([]);
-        }
 
         const metadata = records
             .filter(
@@ -707,7 +726,8 @@ export function createTolooClient() {
         }
 
         if (relays().length > 0) {
-            await requestFromRelays(commits, [room.pub], 0, 200);
+            const after = roomCursors.get(room.pub) ?? 0;
+            await requestFromRelays(commits, [room.pub], after, 200);
         }
         return commits.length;
     }
@@ -722,7 +742,8 @@ export function createTolooClient() {
         setSyncing(true);
         setSyncState("syncing");
         try {
-            await requestFromRelays([], [roomPub], 0, 500);
+            const after = roomCursors.get(roomPub) ?? 0;
+            await requestFromRelays([], [roomPub], after, 500);
             await refreshRoom(roomPub);
             const room = rooms().find((item) => item.pub === roomPub);
             if (room?.roomIdentity) {
@@ -843,7 +864,8 @@ export function createTolooClient() {
                 ? [(JSON.parse(roomCreate) as Envelope), join]
                 : [join];
             try {
-                await requestFromRelays(offers, [roomPub], 0, 500);
+                const after = roomCursors.get(roomPub) ?? 0;
+                await requestFromRelays(offers, [roomPub], after, 500);
                 await refreshRoom(roomPub);
                 notify("Join request sent.", "success");
             } catch (error) {
@@ -916,7 +938,10 @@ export function createTolooClient() {
         for (const room of additions) await db.saveRoom(room);
         for (const relay of newRelays) await db.saveRelay(relay);
         if (additions.length > 0) setRooms((current) => [...current, ...additions]);
-        if (newRelays.length > 0) setRelays((current) => [...current, ...newRelays]);
+        if (newRelays.length > 0) {
+            roomCursors.clear();
+            setRelays((current) => [...current, ...newRelays]);
+        }
         const first = additions[0];
         if (first) {
             setActivePub(first.pub);
@@ -964,7 +989,8 @@ export function createTolooClient() {
             ? [(JSON.parse(room.roomCreate) as Envelope), outgoing]
             : [outgoing];
         try {
-            await requestFromRelays(offers, [room.pub], 0, 200);
+            const after = roomCursors.get(room.pub) ?? 0;
+            await requestFromRelays(offers, [room.pub], after, 200);
             await refreshRoom(room.pub);
         } catch (error) {
             notify(`Could not reach a relay: ${errorText(error)}`, "error");
@@ -1131,13 +1157,15 @@ export function createTolooClient() {
             ? [(JSON.parse(room.roomCreate) as Envelope), ...envelopes]
             : envelopes;
         try {
-            await requestFromRelays(offers, [room.pub], 0, 200);
+            const after = roomCursors.get(room.pub) ?? 0;
+            await requestFromRelays(offers, [room.pub], after, 200);
         } catch (error) {
             notify(`Saved locally; relay publish failed: ${errorText(error)}`, "error");
         }
     }
 
     async function removeRoom(roomPub: string): Promise<void> {
+        roomCursors.delete(roomPub);
         if (roomKeys.delete(roomPub)) await persistVault();
         await db.deleteRoom(roomPub);
         setRoomSummaries((current) => {
@@ -1173,6 +1201,8 @@ export function createTolooClient() {
         await db.deleteVault();
         await db.deleteIdentity();
         roomKeys.clear();
+        roomCursors.clear();
+        backgroundRoomIndex = 0;
         pendingRooms = [];
         vaultPassphrase = null;
         setIdentity(null);
@@ -1479,7 +1509,27 @@ export function createTolooClient() {
             }
             void syncDms(true);
         }, intervalMs);
-        return () => window.clearInterval(timer);
+
+        const syncBackgroundRoom = () => {
+            if (syncing() || relays().length === 0) return;
+            const active = activePub();
+            const background = rooms().filter((room) => room.pub !== active);
+            if (background.length === 0) return;
+            const room = background[backgroundRoomIndex % background.length];
+            backgroundRoomIndex += 1;
+            void syncRoom(room.pub, true);
+        };
+        let backgroundTimer = 0;
+        const backgroundDelay = window.setTimeout(() => {
+            syncBackgroundRoom();
+            backgroundTimer = window.setInterval(syncBackgroundRoom, 60_000);
+        }, 25_000);
+
+        return () => {
+            window.clearInterval(timer);
+            window.clearTimeout(backgroundDelay);
+            if (backgroundTimer) window.clearInterval(backgroundTimer);
+        };
     }
 
     return {

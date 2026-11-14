@@ -29,7 +29,12 @@ class RelayHostService : Service() {
         val manager =
             getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, notification(address))
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
