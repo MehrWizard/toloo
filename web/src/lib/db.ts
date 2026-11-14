@@ -222,6 +222,14 @@ export async function allEnvelopes(): Promise<EnvelopeRecord[]> {
     return requestResult<EnvelopeRecord[]>(tx.objectStore(ENVELOPES).getAll());
 }
 
+export async function envelopesByType(type: string): Promise<EnvelopeRecord[]> {
+    const db = await openDb();
+    const tx = db.transaction(ENVELOPES, "readonly");
+    return requestResult<EnvelopeRecord[]>(
+        tx.objectStore(ENVELOPES).index("type").getAll(IDBKeyRange.only(type)),
+    );
+}
+
 export async function clearLocalData(): Promise<void> {
     const db = await openDb();
     const tx = db.transaction([KV, ROOMS, RELAYS, ENVELOPES], "readwrite");

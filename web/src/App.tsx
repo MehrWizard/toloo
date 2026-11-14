@@ -8,6 +8,8 @@ import {
 import { createTolooClient } from "./lib/client";
 import type { RoomRecord } from "./lib/db";
 import { Chat } from "./components/Chat";
+import { DmThread } from "./components/DmThread";
+import { NewDmModal } from "./components/NewDmModal";
 import {
     AddRoomModal,
     ImportModal,
@@ -28,6 +30,7 @@ export default function App(): JSX.Element {
     );
     const [settingsOpen, setSettingsOpen] = createSignal(false);
     const [addRoomOpen, setAddRoomOpen] = createSignal(false);
+    const [newDmOpen, setNewDmOpen] = createSignal(false);
     const [importOpen, setImportOpen] = createSignal(false);
     const [renameRoom, setRenameRoom] = createSignal<RoomRecord | null>(null);
     const [inviteRoom, setInviteRoom] = createSignal<RoomRecord | null>(null);
@@ -38,8 +41,11 @@ export default function App(): JSX.Element {
         client
             .load()
             .then(() => {
-                if (!client.locked() && client.activePub()) {
-                    void client.syncRoom(undefined, true);
+                if (!client.locked()) {
+                    if (client.activePub()) {
+                        void client.syncRoom(undefined, true);
+                    }
+                    void client.syncDms(true);
                 }
             })
             .catch((error) => {
@@ -49,9 +55,9 @@ export default function App(): JSX.Element {
             });
         const stop = client.startAutoSync();
         const onVisible = () => {
-            if (document.visibilityState === "visible" && client.activePub()) {
-                void client.syncRoom(undefined, true);
-            }
+            if (document.visibilityState !== "visible") return;
+            if (client.activePub()) void client.syncRoom(undefined, true);
+            void client.syncDms(true);
         };
         document.addEventListener("visibilitychange", onVisible);
         onCleanup(() => {
@@ -93,21 +99,38 @@ export default function App(): JSX.Element {
                     client={client}
                     onAddRoom={openAddRoom}
                     onImportRoom={() => setImportOpen(true)}
+                    onNewDm={() => setNewDmOpen(true)}
                     onSettings={() => setSettingsOpen(true)}
                     onRenameRoom={(room) => setRenameRoom(room)}
                     onShareRoom={(room) => setInviteRoom(room)}
                     onOpenChat={() => setMobilePage("chat")}
                 />
-                <Chat
-                    client={client}
-                    onBack={() => setMobilePage("rooms")}
-                    onInvite={() => {
-                        const room = client.activeRoom();
-                        if (room) setInviteRoom(room);
-                    }}
-                    onRenameRoom={(room) => setRenameRoom(room)}
-                    onSettings={() => setSettingsOpen(true)}
-                />
+                <Show
+                    when={client.activeDm()}
+                    fallback={
+                        <Chat
+                            client={client}
+                            onBack={() => setMobilePage("rooms")}
+                            onInvite={() => {
+                                const room = client.activeRoom();
+                                if (room) setInviteRoom(room);
+                            }}
+                            onRenameRoom={(room) => setRenameRoom(room)}
+                            onSettings={() => setSettingsOpen(true)}
+                        />
+                    }
+                >
+                    {(peer) => (
+                        <DmThread
+                            client={client}
+                            peer={peer()}
+                            onBack={() => {
+                                client.clearActiveDm();
+                                setMobilePage("rooms");
+                            }}
+                        />
+                    )}
+                </Show>
             </div>
 
             <Show when={settingsOpen()}>
@@ -121,6 +144,17 @@ export default function App(): JSX.Element {
                     client={client}
                     onClose={() => setAddRoomOpen(false)}
                     onCreated={() => setAddRoomOpen(false)}
+                />
+            </Show>
+            <Show when={newDmOpen()}>
+                <NewDmModal
+                    client={client}
+                    onClose={() => setNewDmOpen(false)}
+                    onCreated={(peer) => {
+                        setNewDmOpen(false);
+                        void client.selectDm(peer);
+                        setMobilePage("chat");
+                    }}
                 />
             </Show>
             <Show when={importOpen()}>
@@ -154,6 +188,7 @@ export default function App(): JSX.Element {
                         if (client.activePub()) {
                             void client.syncRoom(undefined, true);
                         }
+                        void client.syncDms(true);
                     }}
                 />
             </Show>

@@ -30,6 +30,27 @@ export interface RoomSummary {
     unread: number;
 }
 
+export interface DmContact {
+    sigPub: string;
+    encPub: string;
+    name: string;
+}
+
+export interface DmMessage {
+    eid: string;
+    peer: string;
+    body: string;
+    ts: number;
+    depth: number;
+    mine: boolean;
+}
+
+export interface DmConversation extends DmContact {
+    preview: string;
+    ts: number;
+    unread: number;
+}
+
 const CHAT_CHANNEL = 1;
 const DEFAULT_RULES = [
     { t: "join", allow: "*" },
@@ -49,6 +70,10 @@ function errorText(error: unknown): string {
 
 function shortRoomName(pub: string): string {
     return `Room ${pub.slice(0, 6)}`;
+}
+
+function shortNodeName(pub: string): string {
+    return `${pub.slice(0, 8)}…${pub.slice(-4)}`;
 }
 
 function previewOf(body: string): string {
@@ -71,6 +96,14 @@ export function createTolooClient() {
     >({});
     const [activePub, setActivePub] = createSignal<string | null>(null);
     const [messages, setMessages] = createSignal<Message[]>([]);
+    const [dmContacts, setDmContacts] = createSignal<DmContact[]>([]);
+    const [dmMessages, setDmMessages] = createSignal<
+        Record<string, DmMessage[]>
+    >({});
+    const [dmSummaries, setDmSummaries] = createSignal<
+        Record<string, RoomSummary>
+    >({});
+    const [activeDm, setActiveDm] = createSignal<string | null>(null);
     const [members, setMembers] = createSignal<string[]>([]);
     const [banned, setBanned] = createSignal<string[]>([]);
     const [syncState, setSyncState] = createSignal<SyncState>("idle");
@@ -82,9 +115,43 @@ export function createTolooClient() {
     const activeRoom = createMemo(
         () => rooms().find((room) => room.pub === activePub()) ?? null,
     );
+    const activeDmContact = createMemo(
+        () => dmContacts().find((contact) => contact.sigPub === activeDm()) ?? null,
+    );
+    const activeDmMessages = createMemo(
+        () => dmMessages()[activeDm() ?? ""] ?? [],
+    );
+    const dmConversations = createMemo<DmConversation[]>(() => {
+        const contacts = new Map(
+            dmContacts().map((contact) => [contact.sigPub, contact]),
+        );
+        for (const peer of Object.keys(dmMessages())) {
+            if (!contacts.has(peer)) {
+                contacts.set(peer, {
+                    sigPub: peer,
+                    encPub: "",
+                    name: shortNodeName(peer),
+                });
+            }
+        }
+        return [...contacts.values()]
+            .map((contact) => ({
+                ...contact,
+                ...(dmSummaries()[contact.sigPub] ?? {
+                    preview: "",
+                    ts: 0,
+                    unread: 0,
+                }),
+            }))
+            .sort((a, b) => b.ts - a.ts || a.name.localeCompare(b.name));
+    });
 
     const connections = new Map<string, RelayConnection>();
     const roomKeys = new Map<string, RoomIdentity>();
+    const dmCache = new protocol.PairKeyCache(64);
+    const dmBodyCache = new Map<string, string>();
+    let dmReadMarks: Record<string, number> = {};
+    let dmSyncInFlight = false;
     let vaultPassphrase: string | null = null;
     let pendingRooms: RoomRecord[] = [];
 
@@ -173,16 +240,27 @@ export function createTolooClient() {
     }
 
     async function load(): Promise<void> {
-        const [vault, legacyIdentity, savedRelays, savedRooms, savedBlocklist] =
-            await Promise.all([
-                db.getVault(),
-                db.getIdentity(),
-                db.listRelays(),
-                db.listRooms(),
-                db.getSetting<string[]>("blocklist"),
-            ]);
+        const [
+            vault,
+            legacyIdentity,
+            savedRelays,
+            savedRooms,
+            savedBlocklist,
+            savedContacts,
+            savedDmReads,
+        ] = await Promise.all([
+            db.getVault(),
+            db.getIdentity(),
+            db.listRelays(),
+            db.listRooms(),
+            db.getSetting<string[]>("blocklist"),
+            db.getSetting<DmContact[]>("dmContacts"),
+            db.getSetting<Record<string, number>>("dmReadMarks"),
+        ]);
         setRelays(savedRelays);
         setBlocked(savedBlocklist ?? []);
+        setDmContacts(savedContacts ?? []);
+        dmReadMarks = savedDmReads ?? {};
         if (vault) {
             for (const room of savedRooms) {
                 if (room.roomIdentity) await db.saveRoom(room);
@@ -208,6 +286,7 @@ export function createTolooClient() {
         }
         const active = await db.getSetting<string>("activeRoom");
         await applyLoadedRooms(savedRooms, active || undefined);
+        await refreshDms();
         setInitialized(true);
     }
 
@@ -223,6 +302,7 @@ export function createTolooClient() {
                 roomKeys.set(pub, key);
             }
             setIdentity(payload.identity);
+            resetDmState();
             const savedRooms = await db.listRooms();
             for (const room of savedRooms) {
                 if (room.roomIdentity) await db.saveRoom(room);
@@ -232,6 +312,7 @@ export function createTolooClient() {
             setLockMode(null);
             const active = await db.getSetting<string>("activeRoom");
             await applyLoadedRooms(savedRooms, active || undefined);
+            await refreshDms();
             setInitialized(true);
         } catch (error) {
             setLockError(errorText(error));
@@ -259,6 +340,7 @@ export function createTolooClient() {
             setLockMode(null);
             const active = await db.getSetting<string>("activeRoom");
             await applyLoadedRooms(records, active || undefined);
+            await refreshDms();
             setInitialized(true);
         } catch (error) {
             setLockError(errorText(error));
@@ -268,6 +350,7 @@ export function createTolooClient() {
 
     async function installIdentity(next: Identity): Promise<Identity> {
         setIdentity(next);
+        resetDmState();
         if (vaultPassphrase) {
             await persistVault();
             pendingRooms = [];
@@ -431,6 +514,7 @@ export function createTolooClient() {
         wantRooms: string[],
         after = 0,
         limit = 500,
+        types: string[] = [],
     ): Promise<number> {
         const currentIdentity = identity();
         if (!currentIdentity) throw new Error("Create an identity first.");
@@ -439,7 +523,7 @@ export function createTolooClient() {
 
         const request = protocol.poolExchangeRequest(currentIdentity, {
             offer: offers,
-            want: { rooms: wantRooms, after, limit },
+            want: { rooms: wantRooms, types, after, limit },
         });
         const results = await Promise.allSettled(
             configured.map((relay) => connectionFor(relay).request(request)),
@@ -571,6 +655,7 @@ export function createTolooClient() {
     }
 
     async function selectRoom(roomPub: string): Promise<void> {
+        setActiveDm(null);
         setActivePub(roomPub);
         await db.saveSetting("activeRoom", roomPub);
         setMessages([]);
@@ -1091,10 +1176,300 @@ export function createTolooClient() {
         pendingRooms = [];
         vaultPassphrase = null;
         setIdentity(null);
+        resetDmState();
         setLocked(false);
         setLockMode(null);
         setLockError("");
         notify("Identity removed from this device.", "info");
+    }
+
+    function resetDmState(): void {
+        dmCache.clear();
+        dmBodyCache.clear();
+        setActiveDm(null);
+        setDmMessages({});
+        setDmSummaries({});
+    }
+
+    async function addDmContact(
+        sigPubInput: string,
+        encPubInput: string,
+        nameInput = "",
+    ): Promise<DmContact> {
+        const sigPub = sigPubInput.trim();
+        const encPub = encPubInput.trim();
+        const keyPattern = /^[A-Za-z0-9_-]{43}$/;
+        if (!keyPattern.test(sigPub)) {
+            throw new Error("The signing key must be 43 base64url characters.");
+        }
+        if (!keyPattern.test(encPub)) {
+            throw new Error("The encryption key must be 43 base64url characters.");
+        }
+        if (sigPub === identity()?.sigPub) {
+            throw new Error("That is this device's own identity.");
+        }
+        const existing = dmContacts().find((contact) => contact.sigPub === sigPub);
+        const contact: DmContact = {
+            sigPub,
+            encPub,
+            name:
+                nameInput.trim() ||
+                existing?.name ||
+                shortNodeName(sigPub),
+        };
+        const next = existing
+            ? dmContacts().map((item) =>
+                  item.sigPub === sigPub ? contact : item,
+              )
+            : [...dmContacts(), contact];
+        setDmContacts(next);
+        await db.saveSetting("dmContacts", next);
+        await refreshDms();
+        return contact;
+    }
+
+    async function markDmRead(peer: string): Promise<void> {
+        const latest = dmMessages()[peer]?.at(-1)?.ts ?? 0;
+        if (latest <= (dmReadMarks[peer] ?? 0)) return;
+        dmReadMarks = { ...dmReadMarks, [peer]: latest };
+        await db.saveSetting("dmReadMarks", dmReadMarks);
+        setDmSummaries((current) => {
+            const summary = current[peer];
+            return summary
+                ? { ...current, [peer]: { ...summary, unread: 0 } }
+                : current;
+        });
+    }
+
+    async function selectDm(peer: string): Promise<void> {
+        setActiveDm(peer);
+        await markDmRead(peer);
+    }
+
+    function clearActiveDm(): void {
+        setActiveDm(null);
+    }
+
+    async function refreshDms(): Promise<void> {
+        const currentIdentity = identity();
+        if (!currentIdentity) {
+            setDmMessages({});
+            setDmSummaries({});
+            return;
+        }
+        const records = await db.envelopesByType("private.message");
+        const best = new Map<string, EnvelopeRecord>();
+        for (const record of records) {
+            const previous = best.get(record.eid);
+            if (!previous || record.depth > previous.depth) {
+                best.set(record.eid, record);
+            }
+        }
+
+        let contacts = [...dmContacts()];
+        let contactsChanged = false;
+        const acks: Envelope[] = [];
+        const threads: Record<string, DmMessage[]> = {};
+        for (const record of best.values()) {
+            let envelope: Envelope;
+            let info: protocol.EnvelopeInfo;
+            try {
+                envelope = JSON.parse(record.envelope) as Envelope;
+                info = protocol.info(envelope);
+            } catch {
+                continue;
+            }
+            const mine = info.signer === currentIdentity.sigPub;
+            const peer = mine ? info.to : info.signer;
+            if (!peer) continue;
+
+            const existingContact = contacts.find(
+                (contact) => contact.sigPub === peer,
+            );
+            if (!mine) {
+                const senderEncPub =
+                    typeof info.content?.from === "string"
+                        ? info.content.from
+                        : "";
+                if (senderEncPub && existingContact?.encPub !== senderEncPub) {
+                    if (existingContact) {
+                        existingContact.encPub = senderEncPub;
+                        contacts = [...contacts];
+                    } else {
+                        contacts = [
+                            ...contacts,
+                            {
+                                sigPub: peer,
+                                encPub: senderEncPub,
+                                name: shortNodeName(peer),
+                            },
+                        ];
+                    }
+                    contactsChanged = true;
+                }
+            }
+
+            let body = dmBodyCache.get(record.eid);
+            if (body === undefined) {
+                try {
+                    const contact = contacts.find(
+                        (item) => item.sigPub === peer,
+                    );
+                    const content = mine
+                        ? contact?.encPub
+                            ? protocol.openSentPrivateMessage(
+                                  dmCache,
+                                  envelope,
+                                  currentIdentity,
+                                  contact.encPub,
+                              )
+                            : null
+                        : protocol.openPrivateMessage(
+                              dmCache,
+                              envelope,
+                              currentIdentity,
+                          );
+                    body =
+                        typeof content?.body === "string"
+                            ? content.body
+                            : "(empty message)";
+                } catch {
+                    body = "(unable to decrypt)";
+                }
+                dmBodyCache.set(record.eid, body);
+            }
+
+            (threads[peer] ??= []).push({
+                eid: record.eid,
+                peer,
+                body,
+                ts: info.ts,
+                depth: record.depth,
+                mine,
+            });
+
+            if (!mine && record.depth === 1) {
+                try {
+                    const ack = protocol.wrapPrivateAck(
+                        envelope,
+                        currentIdentity,
+                    );
+                    await storeEnvelopeJson(JSON.stringify(ack));
+                    acks.push(ack);
+                } catch {
+                    // An ack failure must not hide the decrypted message.
+                }
+            }
+        }
+
+        for (const messages of Object.values(threads)) {
+            messages.sort((a, b) => a.ts - b.ts || a.eid.localeCompare(b.eid));
+        }
+
+        const summaries: Record<string, RoomSummary> = {};
+        let marksChanged = false;
+        for (const [peer, messages] of Object.entries(threads)) {
+            const latest = messages.at(-1);
+            if (!latest) continue;
+            let mark = dmReadMarks[peer] ?? 0;
+            if (activeDm() === peer && latest.ts > mark) {
+                mark = latest.ts;
+                dmReadMarks = { ...dmReadMarks, [peer]: mark };
+                marksChanged = true;
+            }
+            const unread = messages.filter(
+                (message) => !message.mine && message.ts > mark,
+            ).length;
+            summaries[peer] = {
+                preview: previewOf(latest.body),
+                ts: latest.ts,
+                unread,
+            };
+        }
+
+        if (contactsChanged) {
+            setDmContacts(contacts);
+            await db.saveSetting("dmContacts", contacts);
+        }
+        if (marksChanged) {
+            await db.saveSetting("dmReadMarks", dmReadMarks);
+        }
+        setDmMessages(threads);
+        setDmSummaries(summaries);
+        if (acks.length > 0 && relays().length > 0) {
+            try {
+                await requestFromRelays(
+                    acks,
+                    [],
+                    0,
+                    200,
+                    ["private.message"],
+                );
+            } catch {
+                // The ack remains stored locally if publishing fails.
+            }
+        }
+    }
+
+    async function syncDms(quiet = false): Promise<void> {
+        const currentIdentity = identity();
+        if (!currentIdentity || relays().length === 0 || dmSyncInFlight) {
+            return;
+        }
+        dmSyncInFlight = true;
+        try {
+            await requestFromRelays(
+                [],
+                [currentIdentity.sigPub],
+                0,
+                500,
+                ["private.message"],
+            );
+            await refreshDms();
+        } catch (error) {
+            if (!quiet) notify(errorText(error), "error");
+        } finally {
+            dmSyncInFlight = false;
+        }
+    }
+
+    async function sendDm(peer: string, bodyInput: string): Promise<void> {
+        const currentIdentity = identity();
+        const contact = dmContacts().find((item) => item.sigPub === peer);
+        const body = bodyInput.trim();
+        if (!currentIdentity) throw new Error("Create an identity first.");
+        if (!contact) throw new Error("Add the recipient first.");
+        if (!body) return;
+
+        const envelope = protocol.makePrivateMessage(
+            dmCache,
+            currentIdentity,
+            peer,
+            contact.encPub,
+            body,
+        );
+        const record = await storeEnvelopeJson(JSON.stringify(envelope));
+        dmBodyCache.set(record.eid, body);
+        setActiveDm(peer);
+        if (relays().length > 0) {
+            try {
+                await requestFromRelays(
+                    [envelope],
+                    [],
+                    0,
+                    200,
+                    ["private.message"],
+                );
+            } catch (error) {
+                notify(
+                    `Message saved locally; relay publish failed: ${errorText(error)}`,
+                    "error",
+                );
+            }
+        } else {
+            notify("Message saved locally. Add a relay to deliver it.", "info");
+        }
+        await refreshDms();
     }
 
     function startAutoSync(intervalMs = 12_000): () => void {
@@ -1102,6 +1477,7 @@ export function createTolooClient() {
             if (!syncing() && activePub() && relays().length > 0) {
                 void syncRoom(activePub() ?? undefined, true);
             }
+            void syncDms(true);
         }, intervalMs);
         return () => window.clearInterval(timer);
     }
@@ -1117,6 +1493,11 @@ export function createTolooClient() {
         roomSummaries,
         activePub,
         activeRoom,
+        activeDm,
+        activeDmContact,
+        activeDmMessages,
+        dmContacts,
+        dmConversations,
         messages,
         members,
         banned,
@@ -1141,6 +1522,11 @@ export function createTolooClient() {
         joinRoom,
         importDiscovery,
         selectRoom,
+        selectDm,
+        clearActiveDm,
+        addDmContact,
+        syncDms,
+        sendDm,
         syncRoom,
         sendMessage,
         renameRoom,

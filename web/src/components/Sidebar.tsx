@@ -16,12 +16,14 @@ import {
     ShareIcon,
     SyncIcon,
     TrashIcon,
+    UserIcon,
 } from "./Icons";
 
 export function Sidebar(props: {
     client: TolooClient;
     onAddRoom: () => void;
     onImportRoom: () => void;
+    onNewDm: () => void;
     onSettings: () => void;
     onRenameRoom: (room: RoomRecord) => void;
     onShareRoom: (room: RoomRecord) => void;
@@ -199,6 +201,7 @@ export function Sidebar(props: {
                                 class="room-row"
                                 classList={{
                                     active:
+                                        !props.client.activeDm() &&
                                         props.client.activePub() === room.pub,
                                 }}
                             >
@@ -260,6 +263,79 @@ export function Sidebar(props: {
                     }}
                 </For>
             </nav>
+
+            <section class="dm-section">
+                <div class="dm-section-head">
+                    <span>Direct messages</span>
+                    <button
+                        type="button"
+                        class="icon-button subtle"
+                        aria-label="New direct message"
+                        title="New direct message"
+                        onClick={props.onNewDm}
+                    >
+                        <UserIcon size={16} />
+                    </button>
+                </div>
+                <div class="dm-list">
+                    <Show
+                        when={props.client.dmConversations().length > 0}
+                        fallback={
+                            <p class="dm-empty">No direct messages yet.</p>
+                        }
+                    >
+                        <For each={props.client.dmConversations()}>
+                            {(dm) => (
+                                <button
+                                    type="button"
+                                    class="room-row-main dm-row-main"
+                                    classList={{
+                                        active:
+                                            props.client.activeDm() ===
+                                            dm.sigPub,
+                                    }}
+                                    onClick={() => {
+                                        void props.client
+                                            .selectDm(dm.sigPub)
+                                            .then(() => props.onOpenChat());
+                                    }}
+                                >
+                                    <Avatar
+                                        publicKey={dm.sigPub}
+                                        size={32}
+                                        label={dm.name}
+                                    />
+                                    <span class="room-row-copy">
+                                        <span class="room-row-name">
+                                            {dm.name}
+                                        </span>
+                                        <span class="room-row-preview">
+                                            {dm.preview ||
+                                                (dm.ts
+                                                    ? ""
+                                                    : "No messages yet")}
+                                        </span>
+                                    </span>
+                                    <span class="room-row-meta">
+                                        <span class="room-row-time">
+                                            {dm.ts
+                                                ? formatTime(dm.ts)
+                                                : ""}
+                                        </span>
+                                        <Show when={dm.unread > 0}>
+                                            <span class="room-row-unread">
+                                                {dm.unread > 99
+                                                    ? "99+"
+                                                    : dm.unread}
+                                            </span>
+                                        </Show>
+                                    </span>
+                                </button>
+                            )}
+                        </For>
+                    </Show>
+                </div>
+            </section>
 
             <footer class="sidebar-foot">
                 <span class="sidebar-network">{networkLabel()}</span>

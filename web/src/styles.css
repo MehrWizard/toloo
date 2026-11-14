@@ -773,6 +773,76 @@ textarea:focus {
     margin-right: 4px;
 }
 
+.dm-section {
+    flex: 0 1 38%;
+    min-height: 92px;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--line);
+}
+
+.dm-section-head {
+    flex: 0 0 auto;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px 0 12px;
+    color: var(--muted);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.dm-section-head span {
+    flex: 1;
+}
+
+.dm-list {
+    min-height: 0;
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+}
+
+.dm-empty {
+    padding: 2px 12px 10px;
+    color: var(--muted);
+    font-size: var(--font-sm);
+}
+
+.dm-row-main {
+    width: 100%;
+    min-height: 52px;
+    height: 52px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+}
+
+.dm-row-main:hover {
+    background: var(--panel-2);
+}
+
+.dm-row-main.active {
+    background: var(--panel-2);
+    box-shadow: inset 3px 0 var(--accent);
+}
+
+.dm-subline {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.composer-lock {
+    flex: 0 0 auto;
+    width: 30px;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+}
+
 .sidebar-foot {
     flex: 0 0 auto;
     height: 44px;

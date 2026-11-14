@@ -146,6 +146,29 @@ pub fn wrap_ack(commit: Envelope, node: &LocalNode) -> Result<Envelope> {
     sign_envelope(outer, &node.sig.priv_key)
 }
 
+/// Wrap a depth-1 private.message envelope in a depth-2 ack signed by the
+/// recipient. Private acks are not room commits and carry no `tc`.
+pub fn wrap_private_ack(inner: Envelope, node: &LocalNode) -> Result<Envelope> {
+    if depth(&inner) != 1 {
+        bail!("wrap_private_ack expects a depth-1 envelope");
+    }
+    if inner.d.t != "private.message" {
+        bail!("wrap_private_ack expects a private.message");
+    }
+    if inner.d.to.as_deref() != Some(node.sig.pub_key.as_str()) {
+        bail!("wrap_private_ack signer is not the message recipient");
+    }
+    let outer = DatumBody {
+        n: node.sig.pub_key.clone(),
+        v: VERSION.to_owned(),
+        t: "ack".to_owned(),
+        ts: now_ms()?,
+        env: Some(Box::new(inner)),
+        ..DatumBody::default()
+    };
+    sign_envelope(outer, &node.sig.priv_key)
+}
+
 /// Follow nested `d.env` pointers to the deepest envelope.
 pub fn innermost(env: &Envelope) -> &Envelope {
     let mut current = env;

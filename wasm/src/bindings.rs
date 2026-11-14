@@ -343,6 +343,11 @@ pub fn wrap_commit(envelope_json: &str, room_json: &str, tc: f64) -> Result<Stri
     contract::wrap_commit(envelope_json, room_json, req_u64(tc)?).map_err(js_err)
 }
 
+#[wasm_bindgen(js_name = wrapPrivateAck)]
+pub fn wrap_private_ack(envelope_json: &str, identity_json: &str) -> Result<String, JsError> {
+    contract::wrap_private_ack(envelope_json, identity_json).map_err(js_err)
+}
+
 #[wasm_bindgen(js_name = validateEvent)]
 pub fn validate_event(envelope_json: &str) -> String {
     contract::validate_event_result(envelope_json)
@@ -596,6 +601,18 @@ impl PairKeyCache {
     ) -> Result<String, JsError> {
         self.inner
             .open_message(envelope_json, identity_json)
+            .map_err(js_err)
+    }
+
+    #[wasm_bindgen(js_name = openSentMessage)]
+    pub fn open_sent_message(
+        &mut self,
+        envelope_json: &str,
+        identity_json: &str,
+        recipient_enc_pub: &str,
+    ) -> Result<String, JsError> {
+        self.inner
+            .open_sent_message(envelope_json, identity_json, recipient_enc_pub)
             .map_err(js_err)
     }
 

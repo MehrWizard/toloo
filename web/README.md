@@ -49,8 +49,10 @@ and response headers for browser use.
   rooms, and envelopes.
 - **`src/lib/vault.ts`** — encrypted identity/room-key payload.
 - **`src/lib/client.ts`** — unlock/setup, sync, batch verification, envelope
-  storage, membership, room authority auto-commit, and message actions.
-- **`src/components/`** — onboarding, sidebar, chat, settings, and room modals.
+  storage, membership, room authority auto-commit, direct messages, and
+  message actions.
+- **`src/components/`** — onboarding, sidebar, chat, DM thread, settings, and
+  room modals.
 
 ## Current scope and limitations
 
@@ -62,8 +64,10 @@ and response headers for browser use.
   stay uncommitted; the relay now exposes those events through `pool.exchange`
   and `events.sync` per spec §7.7.3.
 - Group chat, room creation/join, invites, and member counts work. Direct
-  messages, reactions/edits UI, files/blobs, notifications, offline/service
-  worker support, and moderation UI are not implemented yet.
+  messages use the cached static-static v2 pair key; add a contact with their
+  signing and encryption public keys to start a conversation. Delivery acks
+  are generated automatically. Reactions/edits UI, files/blobs, notifications,
+  offline/service worker support, and moderation UI are not implemented yet.
 - The hosted client is CA-TLS dependent; self-signed certificates are a native
   client concern. HTTP hosting is dev/LAN only.
 - The room creator is not counted in `members` by the core membership

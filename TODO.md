@@ -89,7 +89,8 @@ git. Current remaining work, in priority order:
       testing.
 - [x] Retire `toloo-js`; the legacy client is archived out of tree and the
       browser client uses `toloo-wasm` + `toloo-web`.
-- [ ] Web client: direct-message UI using `PairKeyCache.makeMessage/openMessage`.
+- [x] Web client: direct-message conversations with cached pair keys, encrypted
+      send/receive, contact key storage, delivery acks, and private-event sync.
 - [x] Web client: encrypted local vault for identity/room keys, with
       setup/unlock and migration from plaintext IndexedDB records.
 - [ ] Web client: notifications, offline/service-worker shell, message

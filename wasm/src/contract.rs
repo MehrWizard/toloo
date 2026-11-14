@@ -17,7 +17,8 @@ use toloo_core::crypto::{
 use toloo_core::discovery;
 use toloo_core::envelope::{
     depth, envelope_to_json_string, innermost, make_envelope, parse_envelope, sign_envelope,
-    verify_chain, verify_chains_batch, wrap_commit as wrap_commit_envelope, DatumBodyExtra,
+    verify_chain, verify_chains_batch, wrap_commit as wrap_commit_envelope,
+    wrap_private_ack as wrap_private_ack_envelope, DatumBodyExtra,
 };
 use toloo_core::events::{self, BlobManifest};
 use toloo_core::ids::{channel_of, datum_id, eid};
@@ -483,6 +484,14 @@ pub fn wrap_commit(envelope_json: &str, room_json: &str, tc: u64) -> Result<Stri
     )?))
 }
 
+pub fn wrap_private_ack(envelope_json: &str, identity_json: &str) -> Result<String> {
+    let envelope = parse_envelope_json(envelope_json)?;
+    let node = parse_identity(identity_json)?;
+    Ok(envelope_to_json_string(&wrap_private_ack_envelope(
+        envelope, &node,
+    )?))
+}
+
 fn parse_envelope_json(json_str: &str) -> Result<Envelope> {
     let value: Value = serde_json::from_str(json_str).context("invalid envelope JSON")?;
     parse_envelope(value)
@@ -697,6 +706,34 @@ impl CachedPrivate {
         )?;
         let mut pair_key = self.cache.pair_key(&node.enc.priv_key, &cipher.from)?;
         let result = decrypt_private_v2_with_key(&cipher, &node.enc.pub_key, &pair_key);
+        pair_key.fill(0);
+        Ok(result?.to_string())
+    }
+
+    /// Verify and decrypt a private.message this node sent, using the
+    /// recipient's encryption public key.
+    pub fn open_sent_message(
+        &mut self,
+        envelope_json: &str,
+        identity_json: &str,
+        recipient_enc_pub: &str,
+    ) -> Result<String> {
+        let envelope = parse_envelope_json(envelope_json)?;
+        verify_chain(&envelope)?;
+        let node = parse_identity(identity_json)?;
+        let inner = innermost(&envelope);
+        if inner.d.t != "private.message" {
+            bail!("envelope is not a private.message");
+        }
+        let cipher = cipher_from_value(
+            inner
+                .d
+                .c
+                .as_ref()
+                .context("private.message missing content")?,
+        )?;
+        let mut pair_key = self.cache.pair_key(&node.enc.priv_key, recipient_enc_pub)?;
+        let result = decrypt_private_v2_with_key(&cipher, recipient_enc_pub, &pair_key);
         pair_key.fill(0);
         Ok(result?.to_string())
     }
@@ -1109,6 +1146,7 @@ mod tests {
     fn cached_private_envelope_round_trip() {
         let alice = generate_identity().unwrap();
         let bob = generate_identity().unwrap();
+        let alice_id: Value = serde_json::from_str(&alice).unwrap();
         let bob_id: Value = serde_json::from_str(&bob).unwrap();
         let to = field(&bob_id, "sigPub");
         let to_enc = field(&bob_id, "encPub");
@@ -1126,6 +1164,19 @@ mod tests {
         let content: Value = serde_json::from_str(&plaintext).unwrap();
         assert_eq!(content["body"], "secret body");
         assert_eq!(content["blobs"][0], "blob-eid");
+
+        let sent = alice_cache
+            .open_sent_message(&envelope, &alice, to_enc)
+            .unwrap();
+        let sent_content: Value = serde_json::from_str(&sent).unwrap();
+        assert_eq!(sent_content["body"], "secret body");
+
+        let ack = wrap_private_ack(&envelope, &bob).unwrap();
+        assert_eq!(verify_chain_result(&ack), r#"{"ok":true}"#);
+        let info: Value = serde_json::from_str(&envelope_info(&ack).unwrap()).unwrap();
+        assert_eq!(info["depth"], 2);
+        assert_eq!(info["type"], "private.message");
+        assert_eq!(info["signer"], field(&alice_id, "sigPub"));
     }
 
     #[test]

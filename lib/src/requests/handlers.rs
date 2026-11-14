@@ -68,7 +68,7 @@ pub(crate) async fn handle_request_verified(
         "events.sync" => handle_events_sync(d.c.as_ref(), pool),
         "room.sync" => handle_room_sync(d.c.as_ref(), pool),
         "room.compare" => handle_room_compare(d.c.as_ref(), pool, config),
-        "pool.exchange" => handle_pool_exchange(d.c.as_ref(), pool, config),
+        "pool.exchange" => handle_pool_exchange(d.c.as_ref(), pool, config, &d.n),
         "node.peers" => handle_node_peers(d.c.as_ref(), pool),
         "node.rooms" => handle_node_rooms(d.c.as_ref(), pool),
         "system.fetch" => handle_system_fetch(d.c.as_ref(), pool),
@@ -197,6 +197,7 @@ fn handle_pool_exchange(
     c: Option<&Value>,
     pool: &Pool,
     config: &RelayConfig,
+    requester: &str,
 ) -> Result<Vec<Vec<u8>>> {
     let c = require_object(c, "pool.exchange")?;
     let mut offered_ids: HashSet<String> = HashSet::new();
@@ -290,6 +291,25 @@ fn handle_pool_exchange(
             if !offered_ids.contains(entry.id.as_ref())
                 && !pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
             {
+                responses.push(envelope_to_json_bytes(&entry.env));
+            }
+        }
+
+        // Private events are addressed by node key, not room key. Only serve
+        // the requester's own private events, never another node's.
+        if rooms.iter().any(|node| node == requester) {
+            for entry in pool.get_private(requester)? {
+                if responses.len() >= limit {
+                    break;
+                }
+                if !type_refs.is_empty() && !type_refs.contains(&entry.event_type.as_ref()) {
+                    continue;
+                }
+                if offered_ids.contains(entry.id.as_ref())
+                    || pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
+                {
+                    continue;
+                }
                 responses.push(envelope_to_json_bytes(&entry.env));
             }
         }
@@ -949,6 +969,63 @@ mod tests {
         assert!(result
             .iter()
             .all(|v| parse_response(v).get("error").is_none()));
+    }
+
+    #[tokio::test]
+    async fn pool_exchange_serves_private_events_only_to_requester() {
+        let pool = Arc::new(Pool::memory().unwrap());
+        let relay = mk_node();
+        let requester = mk_node();
+        let peer = mk_node();
+        let stranger = mk_node();
+        let config = mk_config(relay, Arc::clone(&pool));
+
+        let incoming = mk_private_message(&peer, &requester.sig.pub_key, 10);
+        let outgoing = mk_private_message(&requester, &peer.sig.pub_key, 11);
+        let unrelated = mk_private_message(&peer, &stranger.sig.pub_key, 12);
+        pool.put(&incoming).unwrap();
+        pool.put(&outgoing).unwrap();
+        pool.put(&unrelated).unwrap();
+
+        let exchange = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "want": {
+                    "rooms": [requester.sig.pub_key],
+                    "types": ["private.message"],
+                    "limit": 100
+                }
+            }),
+        );
+        let responses = handle_request(exchange, &pool, &config).await.unwrap();
+        let ids: Vec<String> = responses
+            .iter()
+            .filter_map(|bytes| parse_envelope_response(bytes).ok())
+            .map(|env| datum_id(&env))
+            .collect();
+        assert!(ids.contains(&datum_id(&incoming)));
+        assert!(ids.contains(&datum_id(&outgoing)));
+        assert!(!ids.contains(&datum_id(&unrelated)));
+
+        let exchange = make_request(
+            &requester,
+            "pool.exchange",
+            json!({
+                "want": {
+                    "rooms": [peer.sig.pub_key],
+                    "types": ["private.message"],
+                    "limit": 100
+                }
+            }),
+        );
+        let responses = handle_request(exchange, &pool, &config).await.unwrap();
+        let ids: Vec<String> = responses
+            .iter()
+            .filter_map(|bytes| parse_envelope_response(bytes).ok())
+            .map(|env| datum_id(&env))
+            .collect();
+        assert!(ids.is_empty());
     }
 
     #[tokio::test]

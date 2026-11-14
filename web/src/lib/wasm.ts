@@ -1,4 +1,5 @@
 import init, {
+    PairKeyCache as WasmPairKeyCache,
     RoomRules as WasmRoomRules,
     buildMembership as wasmBuildMembership,
     avatarSpec as wasmAvatarSpec,
@@ -23,6 +24,7 @@ import init, {
     verifyChain as wasmVerifyChain,
     verifyChains as wasmVerifyChains,
     wrapCommit as wasmWrapCommit,
+    wrapPrivateAck as wasmWrapPrivateAck,
 } from "../generated/toloo-wasm/toloo_wasm.js";
 import wasmUrl from "../generated/toloo-wasm/toloo_wasm_bg.wasm?url";
 
@@ -68,6 +70,11 @@ export interface AvatarSpec {
     palette: number;
     grid: boolean[];
     svgPath: string;
+}
+
+export interface PrivateMessageContent {
+    body?: string;
+    blobs?: string[];
 }
 
 export interface RoomCreatePair {
@@ -160,6 +167,15 @@ export function commitEnvelope(
 ): Envelope {
     return JSON.parse(
         wasmWrapCommit(JSON.stringify(envelope), JSON.stringify(room), tc),
+    ) as Envelope;
+}
+
+export function wrapPrivateAck(
+    envelope: Envelope,
+    identity: Identity,
+): Envelope {
+    return JSON.parse(
+        wasmWrapPrivateAck(JSON.stringify(envelope), JSON.stringify(identity)),
     ) as Envelope;
 }
 
@@ -277,4 +293,44 @@ export function canonicalize(value: unknown): string {
     return wasmCanonicalize(JSON.stringify(value));
 }
 
-export { WasmRoomRules as RoomRules };
+export function makePrivateMessage(
+    cache: WasmPairKeyCache,
+    identity: Identity,
+    to: string,
+    toEncPub: string,
+    body: string,
+): Envelope {
+    return JSON.parse(
+        cache.makeMessage(JSON.stringify(identity), to, toEncPub, body, null),
+    ) as Envelope;
+}
+
+export function openPrivateMessage(
+    cache: WasmPairKeyCache,
+    envelope: Envelope | string,
+    identity: Identity,
+): PrivateMessageContent {
+    return JSON.parse(
+        cache.openMessage(
+            typeof envelope === "string" ? envelope : JSON.stringify(envelope),
+            JSON.stringify(identity),
+        ),
+    ) as PrivateMessageContent;
+}
+
+export function openSentPrivateMessage(
+    cache: WasmPairKeyCache,
+    envelope: Envelope | string,
+    identity: Identity,
+    recipientEncPub: string,
+): PrivateMessageContent {
+    return JSON.parse(
+        cache.openSentMessage(
+            typeof envelope === "string" ? envelope : JSON.stringify(envelope),
+            JSON.stringify(identity),
+            recipientEncPub,
+        ),
+    ) as PrivateMessageContent;
+}
+
+export { WasmPairKeyCache as PairKeyCache, WasmRoomRules as RoomRules };
